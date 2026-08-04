@@ -90,9 +90,42 @@ python ~/ashen/bin/analyse --list                          # show defined cases
 python ~/ashen/bin/analyse --case "qa2.1_g2.3/eta1e-3_RE" --diag zerod --diag poincare --diag profiles
 ```
 
-`--force` re-runs even where a cached `.npz`/`postproc/*.dat` already exists
-(default: skip anything already cached). This gathers and caches data only --
-plotting is not ported yet, see Status below.
+`--force` re-runs even where cached output already exists (default: reuse it).
+This gathers and caches data only -- plotting is not ported yet, see Status
+below.
+
+### Poincaré scans are incremental
+
+The Poincaré cache stores **one field line per starting point**
+(`poinc_dir/poinc_s<step>.h5`), so a scan can be grown rather than repeated:
+
+- adding a `psi_n` to `psi_n_in` traces only the new starting positions
+- raising `n_turns` resumes each line from its last puncture and traces only
+  the shortfall
+- re-running an unchanged request traces nothing at all
+
+Raising `ang_sample_freq` re-samples the flux surface, so only the positions
+that coincide with the previous sampling are reused.
+
+A resumed trace is stitched from more than one integration (`n_segments > 1` on
+the record). For stochastic lines it will not match an uninterrupted trace of
+the same length point-for-point -- it samples the same field and the same
+invariant set, so island widths, diffusion and Poincaré plots are unaffected,
+but it is not bit-reproducible. Use `--force` when a result must be.
+
+### Cores
+
+One `jorek2_poincare` process per restart step, each OpenMP-threaded over its
+own field lines. Set the split in `site.toml`:
+
+```toml
+[diagnostics]
+n_workers   = 0   # restart steps at once; 0 = derive from cpu_count
+omp_threads = 0   # OpenMP threads per process; 0 = min(8, cpu_count)
+```
+
+`--n-workers` / `--omp-threads` override per invocation. None of JOREK's
+`jorek2_*` tools use MPI, so these two are the only axes that exist.
 
 ## Layout
 
@@ -111,7 +144,7 @@ src/ashen/
   runner.py     prepare_run() + submit_*() -- what bin/run_jorek drives
   postproc.py   jorek2_postproc control scripts + output parsers
   jorek2.py     shared stage/run/collect runner for jorek2_* tools
-  diagnostics/  poincare.py, profiles.py -- thin wrappers over jorek2.py
+  diagnostics/  poincare.py + poincare_cache.py, profiles.py
   cases.py      cases.toml loader for bin/analyse
   cli/          argument handling, importable for testing
 tests/

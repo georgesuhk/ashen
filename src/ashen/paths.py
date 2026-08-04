@@ -130,12 +130,25 @@ class RunPaths:
         return self.run_dir / "poinc_dir"
 
     def poincare_cache(self, step: int | float) -> Path:
-        """The ``.npz`` written by the Poincare diagnostic and read back later.
+        """One step's Poincare cache -- see
+        :mod:`ashen.diagnostics.poincare_cache` for the layout.
 
-        Written at ``poinc_diag.py:211`` with the default width but read with
-        the sniffed one -- the mismatch this class removes.
+        One HDF5 file per step, holding one group per traced field line, so a
+        scan can be widened or extended in place. Replaces the four
+        ``poinc_t*_{psi_n,theta,R,Z}.npz`` files, whose dense
+        ``(n_psi, ang_sample_freq)`` shape made both impossible.
         """
-        return self.poinc_dir / f"poinc_t{self.step_str(step)}_psi_n.npz"
+        return self.poinc_dir / f"poinc_s{self.step_str(step)}.h5"
+
+    def poincare_cache_legacy(self, step: int | float, kind: str) -> Path:
+        """A pre-Phase-4b ``.npz``, for reading only.
+
+        ``kind`` is one of ``psi_n``/``theta``/``R``/``Z``. Written at
+        ``poinc_diag.py:211`` with the *default* pad width but read back with
+        the sniffed one -- the mismatch this class removes; caches captured
+        under the old code at a width other than 6 are simply not findable.
+        """
+        return self.poinc_dir / f"poinc_t{self.step_str(step)}_{kind}.npz"
 
     # --- inputs written by the runner ---
 

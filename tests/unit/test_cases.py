@@ -102,3 +102,18 @@ def test_malformed_toml_raises(tmp_path):
     path = _write(tmp_path, "not [ valid toml")
     with pytest.raises(CasesError, match="malformed"):
         load_cases(path)
+
+
+def test_phi_start_defaults_to_zero(tmp_path):
+    """The legacy diagnostic hardcoded phi_start = 0 (poinc_diag.py:119)."""
+    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [200]\n')
+    assert load_cases(path)["a"].phi_start == 0.0
+
+
+def test_phi_start_is_settable(tmp_path):
+    path = _write(
+        tmp_path,
+        '[defaults]\nphi_start = 0.7853981634\n\n'
+        '[cases.a]\nfolder = "a"\nsteps = [200]\n',
+    )
+    assert load_cases(path)["a"].phi_start == pytest.approx(0.7853981634)

@@ -30,6 +30,9 @@ with open("stdin_echo.txt", "w") as f:
     f.write(data)
 with open("cwd_listing.txt", "w") as f:
     f.write("\\n".join(sorted(os.listdir("."))))
+with open("env_echo.txt", "w") as f:
+    f.write(os.environ.get("OMP_NUM_THREADS", "<unset>"))
+sys.stdout.write(os.environ.get("STUB_STDOUT", ""))
 sys.exit(int(os.environ.get("STUB_EXIT", "0")))
 """
 
@@ -162,3 +165,37 @@ def test_missing_restart_raises(stub_run, tmp_path):
             stub_run, TOOL_NAME, step=999999, dest_dir=tmp_path / "dest",
             outputs=[], stdin_text="x",
         )
+
+
+# --- env / stdout, added for the batched Poincare tracer -------------------------
+
+
+def test_env_reaches_the_child(stub_run, tmp_path):
+    """OMP_NUM_THREADS must be set per invocation rather than inherited --
+    site.toml's interactive_prelude exports OMP_NUM_THREADS=10, which used to
+    leak into every diagnostic worker at once."""
+    collected = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["env_echo.txt"], stdin_text="x", env={"OMP_NUM_THREADS": "3"},
+    )
+    assert collected["env_echo.txt"].read_text(encoding="utf-8") == "3"
+
+
+def test_env_is_merged_not_replaced(stub_run, tmp_path, monkeypatch):
+    """A child given env= must still see the rest of the parent environment."""
+    monkeypatch.setenv("STUB_STDOUT", "from-parent")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["env_echo.txt"], stdin_text="x",
+        env={"OMP_NUM_THREADS": "2"}, capture_stdout=True,
+    )
+    assert result.stdout == "from-parent"
+
+
+def test_stdout_is_discarded_unless_requested(stub_run, tmp_path, monkeypatch):
+    monkeypatch.setenv("STUB_STDOUT", "chatter")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x",
+    )
+    assert result.stdout == ""

@@ -10,15 +10,15 @@ hand-edited ``diags`` list.
 ``plot_postproc_profiles``'s plotting half, ``max_fieldline_pos`` --
 the last of which calls a function, ``plot_max_fieldline_pos``, that does not
 exist anywhere in the legacy tree and would raise ``NameError`` if selected).
-This CLI gathers and caches the same ``.npz`` files the legacy plotting code
-reads, so legacy ``analysis.py`` remains usable for plotting against
-Ashen-gathered data in the meantime. See ``ashen/KNOWN_ISSUES.md``.
+Profile caches keep the ``.npz`` format the legacy plotting code reads. The
+Poincare cache does **not** -- it moved to per-line HDF5 so scans can be
+widened and extended in place, which the legacy dense format cannot express.
+See ``ashen/KNOWN_ISSUES.md`` #4 and #5.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 from ashen.cases import Case, CasesError, load_cases
@@ -54,7 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="re-run even if a cached output already exists (replaces the "
         "legacy hardcoded force_data=True at analysis.py:76)",
     )
-    parser.add_argument("--n-workers", type=int, default=None, help="parallel worker count")
+    parser.add_argument(
+        "--n-workers", type=int, default=None,
+        help="restart steps to process concurrently (default: site.toml's "
+        "[diagnostics] n_workers)",
+    )
+    parser.add_argument(
+        "--omp-threads", type=int, default=None,
+        help="OpenMP threads per jorek2_* process (default: site.toml's "
+        "[diagnostics] omp_threads)",
+    )
     parser.add_argument("--site", type=Path, default=None, help="explicit site.toml")
     parser.add_argument(
         "--show-config", action="store_true",
@@ -63,7 +72,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_case(case: Case, *, diags: list[str], force: bool, n_workers: int | None) -> None:
+def _run_case(
+    case: Case,
+    *,
+    diags: list[str],
+    force: bool,
+    n_workers: int,
+    omp_threads: int,
+) -> None:
     run_dir = Path.cwd() / case.folder
     if not run_dir.is_dir():
         raise FileNotFoundError(f"case {case.name!r}: no such folder {run_dir}")
@@ -84,24 +100,50 @@ def _run_case(case: Case, *, diags: list[str], force: bool, n_workers: int | Non
     if "poincare" in diags:
         real_psi_edge = read_float(paths.real_psi_edge)
         psi_n_in = [p * real_psi_edge for p in case.psi_n_in]
-        workers = n_workers or min(
-            case.ang_sample_freq * max(len(psi_n_in), 1), os.cpu_count() or 1
+        # No cache-existence check here any more: run_poincare_step plans
+        # against the cache per field line, so an already-satisfied step costs
+        # a read and traces nothing. --force still discards and retraces.
+        reports = poincare_diag.run_poincare_scan(
+            jrun, paths, case.steps, psi_n_in,
+            ang_sample_freq=case.ang_sample_freq,
+            n_turns=case.n_turns,
+            phi_start=case.phi_start,
+            n_workers=n_workers,
+            omp_threads=omp_threads,
+            force=force,
         )
-        for step in case.steps:
-            if force or not paths.poincare_cache(step).is_file():
-                poincare_diag.run_poincare_step(
-                    jrun, paths, step, psi_n_in,
-                    ang_sample_freq=case.ang_sample_freq,
-                    n_turns=case.n_turns,
-                    n_workers=workers,
-                )
+        for report in reports:
+            print(f"  {report}")
 
     if "profiles" in diags:
         profiles_diag.gather_profiles(
             jrun, paths, case.steps, case.vars,
             coords_var=case.coords_var, tor_mode=case.tor_mode,
-            n_points=case.n_points, n_workers=n_workers or 4, force=force,
+            n_points=case.n_points, n_workers=n_workers, force=force,
         )
+
+
+def _resolve_parallelism(args) -> tuple[int, int]:
+    """CLI flags override ``site.toml``'s ``[diagnostics]``, which in turn
+    overrides the derived default.
+
+    A missing or unreadable ``site.toml`` is not fatal here -- the analysis
+    path needs no machine paths, only a core budget -- so it falls back to the
+    same derivation an empty ``[diagnostics]`` table would give.
+    """
+    from ashen.config import Diagnostics
+
+    try:
+        diagnostics = load_site(args.site).diagnostics
+    except SiteConfigError:
+        diagnostics = Diagnostics()
+    diagnostics = Diagnostics(
+        n_workers=args.n_workers if args.n_workers is not None else diagnostics.n_workers,
+        omp_threads=(
+            args.omp_threads if args.omp_threads is not None else diagnostics.omp_threads
+        ),
+    )
+    return diagnostics.resolve()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -135,11 +177,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     diags = args.diags or ["zerod"]
+    n_workers, omp_threads = _resolve_parallelism(args)
 
     for name in selected:
         print(f"==== {name} ====")
         try:
-            _run_case(cases[name], diags=diags, force=args.force, n_workers=args.n_workers)
+            _run_case(
+                cases[name],
+                diags=diags,
+                force=args.force,
+                n_workers=n_workers,
+                omp_threads=omp_threads,
+            )
         except FileNotFoundError as exc:
             print(f"error: {exc}")
             return 1

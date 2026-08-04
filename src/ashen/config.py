@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,6 +54,46 @@ class Launch:
 
 
 @dataclass(frozen=True)
+class Diagnostics:
+    """How to spend cores on the analysis tools.
+
+    Deliberately separate from :class:`Launch`, which is solver-only: none of
+    JOREK's ``jorek2_*`` postprocessing tools use MPI at all. ``jorek2_poincare``
+    is a serial program with an OpenMP loop over field lines
+    (``jorek2_poincare.f90:204``), and JOREK's own ``convert2poincare.sh:146``
+    launches the alternative ``poincare`` tool with ``mpirun -n 1``. So the two
+    real axes are OpenMP threads *within* one restart step and processes
+    *across* steps, which is exactly what these two knobs control.
+
+    Zero means "derive from the machine" -- see :meth:`resolve`.
+    """
+
+    #: Restart steps traced concurrently, one process each.
+    n_workers: int = 0
+    #: OpenMP threads handed to each of those processes.
+    omp_threads: int = 0
+
+    def resolve(self, cpu_count: int | None = None) -> tuple[int, int]:
+        """``(n_workers, omp_threads)``, filling in whichever is zero.
+
+        Warns rather than fails on oversubscription: a login node's
+        ``cpu_count`` is not the allocation, so an explicit pair the user set
+        is not something to refuse.
+        """
+        cpus = cpu_count or os.cpu_count() or 1
+        omp = self.omp_threads or min(8, cpus)
+        workers = self.n_workers or max(1, cpus // max(omp, 1))
+        if workers * omp > cpus:
+            warnings.warn(
+                f"[diagnostics] n_workers={workers} x omp_threads={omp} = "
+                f"{workers * omp} exceeds {cpus} available cores; the tools "
+                "will oversubscribe.",
+                stacklevel=2,
+            )
+        return workers, omp
+
+
+@dataclass(frozen=True)
 class Site:
     """A resolved site configuration.
 
@@ -65,6 +106,9 @@ class Site:
     root: Path
     paths: dict[str, Path]
     launch: Launch
+    #: Optional; a site.toml with no [diagnostics] table gets the defaults, so
+    #: every existing site.toml stays valid.
+    diagnostics: Diagnostics = Diagnostics()
 
     def path(self, key: str) -> Path:
         try:
@@ -133,6 +177,15 @@ class Site:
             f"  interactive_prelude = {self.launch.interactive_prelude!r}",
             f"  batch_prelude       = {self.launch.batch_prelude!r}",
         ]
+        workers, omp = self.diagnostics.resolve()
+        lines += [
+            "",
+            "[diagnostics]",
+            f"  n_workers           = {self.diagnostics.n_workers} "
+            f"(resolved: {workers})",
+            f"  omp_threads         = {self.diagnostics.omp_threads} "
+            f"(resolved: {omp})",
+        ]
         return "\n".join(lines)
 
 
@@ -200,11 +253,11 @@ def load_site(
     except OSError as exc:
         raise SiteConfigError(f"{source}: cannot be read -- {exc}") from exc
 
-    unknown_sections = sorted(set(data) - {"paths", "launch"})
+    unknown_sections = sorted(set(data) - {"paths", "launch", "diagnostics"})
     if unknown_sections:
         raise SiteConfigError(
             f"{source}: unknown section(s) {', '.join(unknown_sections)}. "
-            "Expected [paths] and [launch]."
+            "Expected [paths], [launch] and [diagnostics]."
         )
 
     raw_paths = data.get("paths", {})
@@ -236,4 +289,22 @@ def load_site(
         )
     launch = Launch(**raw_launch)
 
-    return Site(source=source, root=root, paths=paths, launch=launch)
+    raw_diag = data.get("diagnostics", {})
+    if not isinstance(raw_diag, dict):
+        raise SiteConfigError(f"{source}: [diagnostics] must be a table.")
+    allowed = set(Diagnostics.__dataclass_fields__)
+    unknown = sorted(set(raw_diag) - allowed)
+    if unknown:
+        raise SiteConfigError(
+            f"{source}: unknown diagnostics key(s): {', '.join(unknown)}. "
+            f"Known: {', '.join(sorted(allowed))}."
+        )
+    diagnostics = Diagnostics(**raw_diag)
+
+    return Site(
+        source=source,
+        root=root,
+        paths=paths,
+        launch=launch,
+        diagnostics=diagnostics,
+    )

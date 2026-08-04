@@ -18,8 +18,8 @@ __all__ = ["Case", "CasesError", "load_cases"]
 
 #: Case fields that come from [defaults] or a case table, not computed.
 _CASE_KEYS = (
-    "folder", "note", "psi_n_in", "n_turns", "ang_sample_freq", "vars",
-    "coords_var", "tor_mode", "namelist", "n_points",
+    "folder", "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
+    "vars", "coords_var", "tor_mode", "namelist", "n_points",
 )
 
 
@@ -33,9 +33,14 @@ class Case:
     folder: str
     steps: list[int]
     note: str = ""
+    #: Poincare requests, satisfied incrementally against the cache -- widening
+    #: psi_n_in or raising n_turns costs only the increment, not a rescan.
     psi_n_in: list[float] = field(default_factory=list)
     n_turns: int = 1000
     ang_sample_freq: int = 8
+    #: Toroidal angle every field line starts from, and therefore the plane the
+    #: punctures land on. Was hardcoded to 0 in the legacy diagnostic.
+    phi_start: float = 0.0
     vars: list[str] = field(default_factory=list)
     coords_var: str = "R"
     tor_mode: str = "midplane"

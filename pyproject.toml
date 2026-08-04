@@ -15,10 +15,14 @@ dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
     "matplotlib>=3.7",
+    # Poincare caches only (ashen.diagnostics.poincare_cache), which imports it
+    # lazily so the rest of the package still imports without it. Present in the
+    # HPC environment already -- JOREK's own util scripts use it.
+    "h5py>=3",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7"]
+test = ["pytest>=7", "h5py>=3"]
 
 # No [project.scripts]: bin/run_jorek and bin/analyse are the supported entry
 # points and work from a bare clone without installing. Console scripts get

@@ -1,38 +1,111 @@
 """Field-line Poincare tracing via jorek2_poincare.
 
-Ports ``castor3d/util/diagnostics/poinc_diag.py``. The parallel fan-out
-(``ProcessPoolExecutor`` over every ``(psi_n, angular-sample)`` pair) is kept
--- it is what makes an O(1000)-turn Poincare scan tractable -- but staging and
-execution now go through :func:`ashen.jorek2.run_tool` instead of
-``poinc_diag.py``'s own copy of that logic.
+Ports ``castor3d/util/diagnostics/poinc_diag.py``, but inverts how the work is
+parallelised and cached.
+
+**Parallelism.** The legacy code (and Phase 4's faithful port of it) launched
+one ``jorek2_poincare`` process *per field line* -- ``n_lines = 1`` in every
+``stpts``, so 96 processes per step with a 12-psi_n, 8-sample scan. Each one
+independently copied the restart ``.h5`` and redid the tool's O(N^2)
+element-neighbour scan (``jorek2_poincare.f90:60-70``) before tracing a single
+line, while the tool's own OpenMP loop over field lines (``.f90:204-212``) sat
+unused. Here one invocation per step traces *all* that step's pending lines,
+with ``OMP_NUM_THREADS`` set explicitly, and :func:`run_poincare_scan` fans out
+across steps -- which the legacy code did strictly serially.
+
+``jorek2_poincare`` has no MPI at all; see :class:`ashen.config.Diagnostics`.
+
+**Demultiplexing.** All lines share one ``poinc_R-Z.dat`` / one
+``poinc_rho-theta.dat``, separated by double blank lines (``.f90:457-460``).
+The writes happen inside ``!$omp critical`` in **thread-completion order, not
+line order** (``.f90:450-455``), so a block's position does *not* identify its
+line. The same critical section prints ``=> Line{i:6d}:{ip:6d} points``
+(``.f90:449``), and :func:`_demux_blocks` uses that to assign blocks, refusing
+to guess if the two disagree. Assigning traces to the wrong starting positions
+would be an near-invisible corruption, so every mismatch raises.
+
+**Incremental caching.** Work is planned per line against the existing cache
+(:mod:`ashen.diagnostics.poincare_cache`), so widening ``psi_n_in`` traces only
+the new positions and raising ``n_turns`` traces only the shortfall.
+
+**Resuming is valid.** ``jorek2_poincare`` advances ``n_phi = 1500`` substeps
+totalling exactly one toroidal period (``.f90:162-163``) and only then records
+a puncture (``.f90:441-455``), so every puncture lies on the *same* toroidal
+plane. Restarting a line at its last puncture with its original ``phi_start``
+continues the same trajectory. Caveat, stated rather than hidden: for
+stochastic lines the resumed trajectory diverges from an uninterrupted trace of
+the same total length (exponential sensitivity, plus the element is re-located
+from a written-out ``R, Z``). It samples the same field and the same invariant
+set -- Poincare plots, island widths and diffusion statistics are unaffected --
+but it is not bit-reproducible against a single long trace. Records carry
+``n_segments`` so a stitched trace is always identifiable.
 
 **Not ported in this pass**: the plotting functions (``plot_poincare``,
-``plot_field_line_diffusion``, ``plot_connection_length``,
-``get_island_width``) in ``castor3d/util/data_jorek.py``. Those are
-visualization on top of the ``.npz`` caches this module writes, not part of
-the run-orchestration this pass targets, and several have known bugs
-(hardcoded ``R0 = 1.36`` in four places, a missing
-``plot_max_fieldline_pos``) that need their own confirmation pass -- see
-``ashen/KNOWN_ISSUES.md``.
+``plot_field_line_diffusion``, ``plot_connection_length``, ``get_island_width``)
+in ``castor3d/util/data_jorek.py``, which read the old ``.npz`` format and
+cannot read this cache -- see ``ashen/KNOWN_ISSUES.md`` #4 and #5.
 """
 
 from __future__ import annotations
 
+import re
+import subprocess
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
 import numpy as np
 
 from ashen.castor_io import load_two_col_data
+from ashen.diagnostics import poincare_cache as pc
 from ashen.jorek2 import Jorek2Error, Jorek2Run, run_tool
 from ashen.paths import RunPaths
 from ashen.postproc import flux_surface_script
 
-__all__ = ["trace_field_line", "run_poincare_step"]
+__all__ = [
+    "StepReport",
+    "resolve_start_points",
+    "trace_lines",
+    "run_poincare_step",
+    "run_poincare_scan",
+]
+
+#: ``jorek2_poincare.f90:449`` -- ``write(*,'(1x,a,i6,a,i6,a)') '=> Line',i_lines,':',ip,' points'``.
+#: The i6 fields can run together with the separators when they overflow, hence
+#: the tolerant whitespace.
+_LINE_MSG = re.compile(r"=>\s*Line\s*(\d+)\s*:\s*(\d+)\s+points")
+
+#: The JOREK executables this module drives, by the names they are symlinked
+#: into a prepared run folder under. Module-level so tests can point them at
+#: stubs -- on Windows an extensionless file cannot be executed, so a stub has
+#: to be called ``jorek2_poincare.cmd``.
+POINCARE_TOOL = "jorek2_poincare"
+POSTPROC_TOOL = "jorek2_postproc"
 
 
-def _sampled_rz(fs_file: Path, n_sample_freq: int) -> list[tuple[list[float], list[float]]]:
+@dataclass(frozen=True)
+class StepReport:
+    """What one step's scan actually had to do -- the visible payoff of the
+    incremental cache."""
+
+    step: int
+    cache: Path
+    cached: int
+    traced: int
+    extended: int
+
+    def __str__(self) -> str:
+        return (
+            f"step {self.step}: {self.cached} cached, "
+            f"{self.traced} new, {self.extended} extended"
+        )
+
+
+# --- starting positions --------------------------------------------------------
+
+
+def _sampled_rz(fs_file: Path, n_sample_freq: int) -> list[tuple[float, float]]:
     """Ports ``poinc_diag.py:51`` ``get_sampled_RZ_at_psi_N``."""
     if n_sample_freq <= 0:
         raise ValueError("n_sample_freq must be greater than 0")
@@ -40,36 +113,27 @@ def _sampled_rz(fs_file: Path, n_sample_freq: int) -> list[tuple[list[float], li
     if len(data) == 0:
         return []
     idx = np.linspace(0, len(data) - 1, num=n_sample_freq, dtype=int)
-    return [([float(data[i, 0])], [float(data[i, 1])]) for i in idx]
+    return [(float(data[i, 0]), float(data[i, 1])) for i in idx]
 
 
-def _fieldline_block(R: list[float], Z: list[float], phi: list[float], n_turns: int) -> str:
-    """Ports ``poinc_diag.py:19`` ``write_fieldline_block``, as text rather
-    than a direct write -- :func:`ashen.jorek2.run_tool` stages it."""
-    R_arr, Z_arr, phi_arr = np.asarray(R, float), np.asarray(Z, float), np.asarray(phi, float)
-    if not (len(R_arr) == len(Z_arr) == len(phi_arr)):
-        raise ValueError("R, Z, phi must have the same length")
-    lines = ["# n_lines", f"   {len(R_arr)}", "# nr    R_start   Z_start    phi_start   n_turns"]
-    for i, (r, z, p) in enumerate(zip(R_arr, Z_arr, phi_arr), start=1):
-        lines.append(f"{i:4d}  {r:10.6f}  {z:10.6f}  {p:10.6f}  {int(n_turns):6d}")
-    return "\n".join(lines) + "\n"
+def _write_flux_surface(run: Jorek2Run, step: int, psi_n: float, namelist_name: str) -> None:
+    """Generate one flux surface with ``jorek2_postproc``, in place under
+    ``run_dir/postproc/``.
 
-
-def _write_flux_surfaces(run: Jorek2Run, step: int, psi_n_list, namelist_name: str) -> None:
-    """Ports ``run_single_t``'s flux-surface-generation loop
-    (``poinc_diag.py:143-154``) -- runs ``jorek2_postproc`` in place, same as
-    :func:`ashen.jorek2.run_zero_d`, since the output is meant to land
-    directly under ``run_dir/postproc/``."""
-    import subprocess
-
-    exe = run.exe_dir / "jorek2_postproc"
+    Ports part of ``poinc_diag.py:143-154``, but for a single ``psi_n``:
+    surfaces are now only generated for the values that actually have
+    uncached lines. Runs in place (like :func:`ashen.jorek2.run_zero_d`)
+    because the output is meant to land in the run folder.
+    """
+    exe = run.exe_dir / POSTPROC_TOOL
     if not exe.is_file():
-        raise FileNotFoundError(f"jorek2_postproc not found at {exe}")
+        raise FileNotFoundError(f"{POSTPROC_TOOL} not found at {exe}")
 
-    for psi_n in psi_n_list:
-        script = flux_surface_script(namelist_name, step, psi_n)
-        script_path = run.run_dir / "postproc_fs_script.in"
-        script_path.write_text(script, encoding="utf-8")
+    script_path = run.run_dir / f"postproc_fs_script_{psi_n:.6f}.in"
+    script_path.write_text(
+        flux_surface_script(namelist_name, step, psi_n), encoding="utf-8"
+    )
+    try:
         with open(script_path, encoding="utf-8") as stdin_file:
             result = subprocess.run(
                 [str(exe)],
@@ -78,113 +142,325 @@ def _write_flux_surfaces(run: Jorek2Run, step: int, psi_n_list, namelist_name: s
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
-        if result.returncode != 0:
+    finally:
+        script_path.unlink(missing_ok=True)
+    if result.returncode != 0:
+        raise Jorek2Error(
+            f"jorek2_postproc exited {result.returncode} generating the flux "
+            f"surface at psi_n={psi_n} for step {step} in {run.run_dir}: "
+            f"{result.stderr.decode(errors='replace')}"
+        )
+
+
+def resolve_start_points(
+    run: Jorek2Run,
+    paths: RunPaths,
+    step: int,
+    psi_n_list,
+    *,
+    ang_sample_freq: int,
+    phi_start: float = 0.0,
+    known: set[float] | None = None,
+) -> list[pc.LineKey]:
+    """The starting points a scan asks for, as cache keys.
+
+    ``known`` lists ``psi_n`` values whose keys are already fully derivable
+    from the cache, so their flux surface need not be regenerated. Anything
+    else gets its surface built (and then removed again, as the legacy code
+    did -- it is a large intermediate, cheap to rebuild, and the cache now
+    records the sampled positions that were the only reason to keep it).
+    """
+    keys: list[pc.LineKey] = []
+    for psi_n in psi_n_list:
+        psi_n = float(psi_n)
+        if known and psi_n in known:
+            continue
+        fs_file = paths.flux_surface(psi_n, step)
+        made_here = not fs_file.is_file()
+        if made_here:
+            _write_flux_surface(run, step, psi_n, run.namelist.name)
+        try:
+            samples = _sampled_rz(fs_file, ang_sample_freq)
+        finally:
+            if made_here:
+                fs_file.unlink(missing_ok=True)
+        keys.extend(
+            pc.LineKey(psi_n=psi_n, R=R, Z=Z, phi=float(phi_start)).quantised()
+            for R, Z in samples
+        )
+    return keys
+
+
+# --- tracing --------------------------------------------------------------------
+
+
+def _stpts(work: list[pc.LineWork]) -> str:
+    """The ``stpts`` starting-point file for a batch of lines.
+
+    Ports ``poinc_diag.py:19`` ``write_fieldline_block``, with two changes.
+    ``n_lines`` is the whole batch rather than 1, and ``n_turns`` is per line
+    (column 5, ``jorek2_poincare.f90:108``) -- both already supported by the
+    tool, neither previously used. Values are written at full precision rather
+    than the legacy ``{:10.6f}``: the file is read list-directed
+    (``read(21,*)``, ``.f90:113``) so the format is free, and quantising a
+    resume point to ~1um for no reason would be careless.
+
+    Rows must be complete and in ascending ``nr`` order; a gap would be
+    silently *interpolated* by the tool (``.f90:132-137``).
+    """
+    if not work:
+        raise ValueError("no field lines to trace")
+    lines = ["# n_lines", f"   {len(work)}", "# nr  R_start  Z_start  phi_start  n_turns"]
+    for i, item in enumerate(work, start=1):
+        R, Z = item.start
+        lines.append(
+            f"{i:6d}  {R:.12g}  {Z:.12g}  {item.key.phi:.12g}  {int(item.n_turns):6d}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _split_blocks(path: Path) -> list[np.ndarray]:
+    """Split one of jorek2_poincare's two output files into per-line blocks.
+
+    Blocks are separated by blank lines (``.f90:457-460``); ``#`` comment
+    lines head the file (``.f90:190-196``).
+    """
+    blocks: list[np.ndarray] = []
+    current: list[tuple[float, float]] = []
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line:
+            if current:
+                blocks.append(np.asarray(current, dtype=float))
+                current = []
+            continue
+        if line.startswith("#"):
+            continue
+        parts = line.split()
+        current.append((float(parts[0]), float(parts[1])))
+    if current:
+        blocks.append(np.asarray(current, dtype=float))
+    return blocks
+
+
+def _demux_blocks(
+    stdout: str, blocks: list[np.ndarray], n_lines: int, what: str
+) -> dict[int, np.ndarray]:
+    """Map output blocks to 1-based line numbers using the tool's own log.
+
+    Blocks are emitted in OpenMP thread-completion order, so position is
+    meaningless; the ``=> Line N: M points`` messages are printed from the
+    *same* ``!$omp critical`` section as the writes, so their order matches.
+    Everything is cross-checked and any disagreement raises rather than
+    risking a silent mis-assignment of traces to starting positions.
+    """
+    reports = [(int(a), int(b)) for a, b in _LINE_MSG.findall(stdout)]
+    if not reports:
+        raise Jorek2Error(
+            f"jorek2_poincare produced no '=> Line N: M points' messages, so "
+            f"its {what} output blocks cannot be matched to field lines. "
+            "Was stdout captured?"
+        )
+    if len(reports) != len(blocks):
+        raise Jorek2Error(
+            f"jorek2_poincare reported {len(reports)} traced lines but wrote "
+            f"{len(blocks)} {what} blocks"
+        )
+
+    out: dict[int, np.ndarray] = {}
+    for (line_no, n_points), block in zip(reports, blocks):
+        if not 1 <= line_no <= n_lines:
             raise Jorek2Error(
-                f"jorek2_postproc exited {result.returncode} generating the "
-                f"flux surface at psi_n={psi_n} for step {step} in {run.run_dir}: "
-                f"{result.stderr.decode(errors='replace')}"
+                f"jorek2_poincare reported line {line_no}, outside 1..{n_lines}"
             )
+        if line_no in out:
+            raise Jorek2Error(f"jorek2_poincare reported line {line_no} twice")
+        if len(block) != n_points:
+            raise Jorek2Error(
+                f"jorek2_poincare reported {n_points} points for line "
+                f"{line_no} but its {what} block has {len(block)}"
+            )
+        out[line_no] = block
+    return out
 
 
-def trace_field_line(
+def trace_lines(
     run: Jorek2Run,
     step: int,
-    psi_n: float,
-    ang_idx: int,
+    work: list[pc.LineWork],
     *,
-    paths: RunPaths,
-    n_sample_freq: int,
-    n_turns: int,
     dest_dir: Path,
-) -> dict[str, np.ndarray]:
-    """One field line: samples a starting point on ``psi_n``'s flux surface
-    and traces it with jorek2_poincare. Ports ``poinc_diag.py:74``
-    ``run_single``.
+    omp_threads: int,
+) -> dict[pc.LineKey, dict[str, np.ndarray]]:
+    """Trace a whole batch of field lines in **one** jorek2_poincare call.
 
-    Unlike the legacy version, a tool failure or missing output raises
-    :class:`ashen.jorek2.Jorek2Error` instead of being swallowed into an
-    array of ``None`` -- see the ``jorek2`` module docstring.
+    Returns ``{key: {"R", "Z", "rho", "theta"}}``. A line the tool did not
+    report at all produced no punctures (it left the mesh immediately) and
+    comes back with empty arrays.
     """
-    fs_file = paths.flux_surface(psi_n, step)
-    samples = _sampled_rz(fs_file, n_sample_freq)
-    R, Z = samples[ang_idx]
-
-    collected = run_tool(
+    result = run_tool(
         run,
-        "jorek2_poincare",
+        POINCARE_TOOL,
         step=step,
         dest_dir=dest_dir,
         outputs=["poinc_rho-theta.dat", "poinc_R-Z.dat"],
         stdin_is_namelist=True,
-        extra_files={"stpts": _fieldline_block(R, Z, [0.0], n_turns)},
+        extra_files={"stpts": _stpts(work)},
+        env={"OMP_NUM_THREADS": str(max(int(omp_threads), 1))},
+        capture_stdout=True,
     )
-    psi_theta = np.loadtxt(collected["poinc_rho-theta.dat"])
-    r_z = np.loadtxt(collected["poinc_R-Z.dat"])
-    return {
-        "psi_n": psi_theta[:, 0] ** 2,
-        "theta": psi_theta[:, 1],
-        "R": r_z[:, 0],
-        "Z": r_z[:, 1],
-    }
+
+    rz = _demux_blocks(
+        result.stdout, _split_blocks(result["poinc_R-Z.dat"]), len(work), "R-Z"
+    )
+    rt = _demux_blocks(
+        result.stdout,
+        _split_blocks(result["poinc_rho-theta.dat"]),
+        len(work),
+        "rho-theta",
+    )
+    if rz.keys() != rt.keys():
+        raise Jorek2Error(
+            "jorek2_poincare's R-Z and rho-theta outputs cover different "
+            f"field lines for step {step} in {run.run_dir}"
+        )
+
+    empty = np.empty(0, dtype=float)
+    out: dict[pc.LineKey, dict[str, np.ndarray]] = {}
+    for i, item in enumerate(work, start=1):
+        a, b = rz.get(i), rt.get(i)
+        out[item.key] = {
+            "R": a[:, 0] if a is not None else empty,
+            "Z": a[:, 1] if a is not None else empty,
+            "rho": b[:, 0] if b is not None else empty,
+            "theta": b[:, 1] if b is not None else empty,
+        }
+    return out
+
+
+# --- one step ---------------------------------------------------------------------
 
 
 def run_poincare_step(
     run: Jorek2Run,
     paths: RunPaths,
     step: int,
-    psi_n_list: list[float],
+    psi_n_list,
     *,
     ang_sample_freq: int,
     n_turns: int,
-    n_workers: int,
-) -> dict[str, np.ndarray]:
-    """One restart step's full Poincare scan. Ports ``poinc_diag.py:135``
-    ``run_single_t``: generates flux surfaces, traces every
-    ``(psi_n, angular sample)`` pair in parallel, saves the four ``.npz``
-    caches ``run_single_t`` wrote, and returns the same arrays.
+    phi_start: float = 0.0,
+    omp_threads: int = 1,
+    force: bool = False,
+) -> StepReport:
+    """One restart step's Poincare scan, doing only the work not already cached.
+
+    Ports ``poinc_diag.py:135`` ``run_single_t``, but the four dense ``.npz``
+    files it wrote are replaced by one per-line HDF5 cache (see
+    :mod:`ashen.diagnostics.poincare_cache`), and only the missing lines are
+    traced. ``force=True`` discards the existing cache and retraces everything.
     """
-    _write_flux_surfaces(run, step, psi_n_list, run.namelist.name)
+    cache_path = paths.poincare_cache(step)
+    if force and cache_path.exists():
+        cache_path.unlink()
+
+    cached = pc.read_cache(cache_path)
+    # psi_n values whose full sample set is already cached need no flux
+    # surface -- the cache records the sampled positions, which was the only
+    # reason to keep the surface around.
+    by_psi: dict[float, int] = {}
+    for key in cached:
+        by_psi[key.psi_n] = by_psi.get(key.psi_n, 0) + 1
+    # Exactly, not at least: a psi_n cached at ang_sample_freq=16 and now
+    # requested at 8 has a *different* sample set (np.linspace re-spaces every
+    # index), so its surface must be rebuilt to find which 8 are wanted.
+    known = {p for p, n in by_psi.items() if n == ang_sample_freq}
+
+    keys = resolve_start_points(
+        run, paths, step, psi_n_list,
+        ang_sample_freq=ang_sample_freq, phi_start=phi_start, known=known,
+    )
+    # Fill in the keys for psi_n values skipped above.
+    for key in cached:
+        if key.psi_n in known:
+            keys.append(key)
+
+    new, extensions = pc.plan_work(cached, keys, n_turns)
+    report = StepReport(
+        step=step,
+        cache=cache_path,
+        cached=len(set(keys)) - len(new) - len(extensions),
+        traced=len(new),
+        extended=len(extensions),
+    )
+    if not new and not extensions:
+        return report
 
     scratch = paths.poinc_dir / f"_scratch_s{paths.step_str(step)}"
-    tasks = [(psi_n, j) for psi_n in psi_n_list for j in range(ang_sample_freq)]
-    trace_one = partial(
-        trace_field_line,
-        run,
-        step,
-        paths=paths,
-        n_sample_freq=ang_sample_freq,
-        n_turns=n_turns,
-        dest_dir=scratch,
+    batch = new + extensions
+    traced = trace_lines(
+        run, step, batch, dest_dir=scratch, omp_threads=omp_threads
     )
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        # map() over parallel positional iterables: ProcessPoolExecutor has
-        # no starmap, and a lambda unpacking tasks wouldn't be picklable.
-        results = list(executor.map(trace_one, (t[0] for t in tasks), (t[1] for t in tasks)))
-
-    for psi_n in psi_n_list:
-        fs_file = paths.flux_surface(psi_n, step)
-        if fs_file.exists():
-            fs_file.unlink()
+    for leftover in scratch.glob("poinc_*.dat"):
+        leftover.unlink()
     if scratch.is_dir() and not any(scratch.iterdir()):
         scratch.rmdir()
 
-    n_psi = len(psi_n_list)
-    psi_n_out = np.empty((n_psi, ang_sample_freq), dtype=object)
-    theta_out = np.empty((n_psi, ang_sample_freq), dtype=object)
-    R_out = np.empty((n_psi, ang_sample_freq), dtype=object)
-    Z_out = np.empty((n_psi, ang_sample_freq), dtype=object)
-    for k, (i, j) in enumerate((i, j) for i in range(n_psi) for j in range(ang_sample_freq)):
-        psi_n_out[i, j] = results[k]["psi_n"]
-        theta_out[i, j] = results[k]["theta"]
-        R_out[i, j] = results[k]["R"]
-        Z_out[i, j] = results[k]["Z"]
+    with pc.open_cache(cache_path, step=step, pad_width=run.pad_width) as handle:
+        for item in new:
+            arrays = traced[item.key]
+            pc.append_line(
+                handle, item.key, arrays,
+                n_turns=item.n_turns,
+                terminated=arrays["R"].size < item.n_turns,
+                replace=item.key in cached,
+            )
+        for item in extensions:
+            arrays = traced[item.key]
+            pc.extend_line(
+                handle, item.key, arrays,
+                added_turns=item.n_turns,
+                terminated=arrays["R"].size < item.n_turns,
+            )
+    return report
 
-    paths.poinc_dir.mkdir(parents=True, exist_ok=True)
-    t_str = paths.step_str(step)
-    save_args = {"in_val": np.asarray(psi_n_list)}
-    np.savez(paths.poinc_dir / f"poinc_t{t_str}_psi_n", out_val=psi_n_out, **save_args)
-    np.savez(paths.poinc_dir / f"poinc_t{t_str}_theta", out_val=theta_out, **save_args)
-    np.savez(paths.poinc_dir / f"poinc_t{t_str}_R", out_val=R_out, **save_args)
-    np.savez(paths.poinc_dir / f"poinc_t{t_str}_Z", out_val=Z_out, **save_args)
 
-    return {"psi_n": psi_n_out, "theta": theta_out, "R": R_out, "Z": Z_out}
+# --- a whole scan ------------------------------------------------------------------
+
+
+def run_poincare_scan(
+    run: Jorek2Run,
+    paths: RunPaths,
+    steps,
+    psi_n_list,
+    *,
+    ang_sample_freq: int,
+    n_turns: int,
+    phi_start: float = 0.0,
+    n_workers: int = 1,
+    omp_threads: int = 1,
+    force: bool = False,
+) -> list[StepReport]:
+    """Every step in a case, with steps traced concurrently.
+
+    The legacy driver looped over steps strictly serially
+    (``poinc_diag.py:234``) while fanning out over field lines; this does the
+    opposite, because each step is one process holding one restart file and
+    each process threads internally over its own lines.
+    """
+    steps = list(steps)
+    one = partial(
+        run_poincare_step,
+        run,
+        paths,
+        psi_n_list=psi_n_list,
+        ang_sample_freq=ang_sample_freq,
+        n_turns=n_turns,
+        phi_start=phi_start,
+        omp_threads=omp_threads,
+        force=force,
+    )
+    if n_workers <= 1 or len(steps) <= 1:
+        return [one(step) for step in steps]
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        return list(executor.map(one, steps))

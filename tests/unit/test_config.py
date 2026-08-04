@@ -15,6 +15,7 @@ import pytest
 from ashen.config import (
     ENV_VAR,
     REQUIRED_PATHS,
+    Diagnostics,
     Site,
     SiteConfigError,
     find_site_file,
@@ -300,3 +301,59 @@ def test_describe_mentions_source_and_flags_missing(tmp_path):
     assert str(site.source) in text
     assert "castor_root" in text
     assert "(missing)" in text
+
+
+# --- [diagnostics] -----------------------------------------------------------
+
+
+def test_diagnostics_defaults_when_the_table_is_absent(tmp_path):
+    """Every site.toml written before Phase 4b must stay valid."""
+    site = load_site(build_campaign(tmp_path) / "site.toml")
+
+    assert site.diagnostics.n_workers == 0
+    assert site.diagnostics.omp_threads == 0
+
+
+def test_diagnostics_values_are_read(tmp_path):
+    site_file = build_campaign(tmp_path) / "site.toml"
+    site_file.write_text(
+        SITE_BODY + "\n[diagnostics]\nn_workers = 3\nomp_threads = 5\n",
+        encoding="utf-8",
+    )
+
+    site = load_site(site_file)
+
+    assert (site.diagnostics.n_workers, site.diagnostics.omp_threads) == (3, 5)
+
+
+def test_unknown_diagnostics_key_is_named(tmp_path):
+    site_file = build_campaign(tmp_path) / "site.toml"
+    site_file.write_text(
+        SITE_BODY + "\n[diagnostics]\nn_threads = 3\n", encoding="utf-8"
+    )
+
+    with pytest.raises(SiteConfigError, match="n_threads"):
+        load_site(site_file)
+
+
+def test_explicit_diagnostics_values_are_used_verbatim():
+    assert Diagnostics(n_workers=2, omp_threads=4).resolve(cpu_count=64) == (2, 4)
+
+
+def test_derived_split_fills_the_machine():
+    """omp_threads caps at 8, then workers take the rest."""
+    assert Diagnostics().resolve(cpu_count=32) == (4, 8)
+    assert Diagnostics().resolve(cpu_count=4) == (1, 4)
+    assert Diagnostics().resolve(cpu_count=1) == (1, 1)
+
+
+def test_one_explicit_value_constrains_the_other():
+    assert Diagnostics(omp_threads=16).resolve(cpu_count=32) == (2, 16)
+    assert Diagnostics(n_workers=2).resolve(cpu_count=32) == (2, 8)
+
+
+def test_oversubscription_warns_but_is_allowed():
+    """A login node's cpu_count is not the batch allocation, so an explicit
+    pair is not something to refuse."""
+    with pytest.warns(UserWarning, match="oversubscribe"):
+        assert Diagnostics(n_workers=8, omp_threads=8).resolve(cpu_count=4) == (8, 8)

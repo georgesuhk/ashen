@@ -126,3 +126,31 @@ bodies where the second silently wins, breaking any caller passing `mode=`)
 and needs its own confirmation pass before porting, not a silent carry-over.
 Legacy `analysis.py` remains usable for plotting against Ashen-gathered data
 in the meantime.
+
+---
+
+## 5. Legacy plotting can no longer read the Poincaré cache
+
+**Where:** `ashen/src/ashen/diagnostics/poincare_cache.py` (new format) vs
+`castor3d/util/data_jorek.py:254`, `:354`, `:447` (`plot_field_line_diffusion`,
+`plot_poincare`, `get_island_width`), which load
+`poinc_t<step>_{psi_n,theta,R,Z}.npz`.
+
+**What changed:** the Poincaré cache moved from four dense `.npz` files per
+step, holding `(n_psi, ang_sample_freq)` pickled object arrays, to one HDF5
+file per step holding one group per field line keyed by its starting point.
+This is what makes a scan extendable — the dense shape is *why* adding a
+`psi_n` or raising `n_turns` used to force a full retrace, since both change
+the array's shape. It cannot be expressed in the old format.
+
+**Consequence, accepted deliberately (George, 2026-08-05):** legacy
+`analysis.py` plotting works against caches produced *before* this change but
+not against new ones. `read_legacy_cache` reads the old files so nothing
+already computed is lost, but those records carry no start position (the old
+format never stored one), so they are marked unextendable: the first time such
+a step is extended it is retraced from scratch, once.
+
+Unlike #1 and #2 this is not a physics question and needs no confirmation — it
+is here because it is a **capability regression with a date attached**, and it
+closes when the plotting layer in #4 is ported. Profile caches are unaffected;
+they keep the `.npz` format.

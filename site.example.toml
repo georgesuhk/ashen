@@ -24,3 +24,15 @@ batch_prelude       = "module unload impi-interactive/1.0"
 mpirun              = "mpirun -n {n}"
 n_jorek             = 4
 n_starwall          = 32
+
+[diagnostics]
+# How `analyse` spends cores. Separate from [launch], which is solver-only:
+# none of JOREK's jorek2_* postprocessing tools use MPI. jorek2_poincare is a
+# serial program with an OpenMP loop over field lines, so the two real axes
+# are threads within one restart step and processes across steps.
+#
+# 0 means derive: omp_threads = min(8, cpu_count), then n_workers fills the
+# rest. Set both explicitly on a batch node, where cpu_count is not the
+# allocation.
+n_workers   = 0   # restart steps traced concurrently
+omp_threads = 0   # OpenMP threads per jorek2_* process

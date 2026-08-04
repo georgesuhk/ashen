@@ -13,9 +13,14 @@
 [defaults]
 # Every key here seeds every [cases.*] table below, overridable per case.
 namelist        = "in_main"
+# psi_n_in, n_turns and ang_sample_freq are *requests*, satisfied incrementally
+# against the per-line Poincare cache: adding a psi_n traces only the new
+# starting positions, and raising n_turns resumes each line from its last
+# puncture rather than starting over. Neither triggers a rescan.
 psi_n_in        = [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
 n_turns         = 1000
 ang_sample_freq = 8
+phi_start       = 0.0   # toroidal plane the punctures land on
 vars            = ["Jgrad", "currdens"]
 coords_var      = "R"
 tor_mode        = "midplane"

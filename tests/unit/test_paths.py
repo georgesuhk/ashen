@@ -130,7 +130,8 @@ def test_postproc_artefact_names(tmp_path):
 
     assert paths.zero_d(10).name == "zeroD_quantities_s000010.dat"
     assert paths.flux_surface(0.5, 10).name == "fluxsurface_at_psi_0.500_s000010.dat"
-    assert paths.poincare_cache(10).name == "poinc_t000010_psi_n.npz"
+    assert paths.poincare_cache(10).name == "poinc_s000010.h5"
+    assert paths.poincare_cache_legacy(10, "psi_n").name == "poinc_t000010_psi_n.npz"
 
 
 def test_artefacts_live_under_the_run_directory(tmp_path):

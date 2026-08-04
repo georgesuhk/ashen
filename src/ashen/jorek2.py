@@ -21,20 +21,44 @@ the tool, the step, and the run directory.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from ashen.paths import RunPaths
 
-__all__ = ["Jorek2Error", "Jorek2Run", "run_tool", "run_zero_d"]
+__all__ = ["Jorek2Error", "Jorek2Run", "ToolResult", "run_tool", "run_zero_d"]
 
 
 class Jorek2Error(RuntimeError):
     """A jorek2_* tool exited non-zero, or an expected output was missing."""
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """What one :func:`run_tool` invocation produced.
+
+    ``outputs`` maps each *requested* output path to where it was copied.
+    ``stdout`` is empty unless ``capture_stdout=True`` -- it matters for
+    ``jorek2_poincare``, whose per-line progress messages are the only way to
+    tell which output block belongs to which field line (see
+    :mod:`ashen.diagnostics.poincare`).
+    """
+
+    outputs: dict[str, Path]
+    stdout: str = ""
+
+    # Ergonomics: run_tool used to return the mapping directly, and most
+    # callers only ever want that.
+    def __getitem__(self, key: str) -> Path:
+        return self.outputs[key]
+
+    def __contains__(self, key: object) -> bool:
+        return key in self.outputs
 
 
 @dataclass(frozen=True)
@@ -69,7 +93,9 @@ def run_tool(
     restart_name: str = "jorek_restart.h5",
     extra_files: dict[str, str] | None = None,
     copy_exe: bool = False,
-) -> dict[str, Path]:
+    env: Mapping[str, str] | None = None,
+    capture_stdout: bool = False,
+) -> ToolResult:
     """Stage inputs for one jorek2_* invocation, run it, collect outputs.
 
     A fresh temporary directory gets: the restart file for ``step`` (named
@@ -86,10 +112,20 @@ def run_tool(
 
     Every path in ``outputs`` (relative to the scratch dir, e.g.
     ``"postproc/exprs_midplane_s005000.dat"``) is copied into ``dest_dir``
-    before the scratch dir is discarded; the returned dict maps the
-    *requested* path to where it landed. Raises :class:`Jorek2Error` if the
-    tool exits non-zero or an expected output is missing -- see the module
-    docstring for why that matters here specifically.
+    before the scratch dir is discarded; the returned
+    :class:`ToolResult` maps the *requested* path to where it landed. Raises
+    :class:`Jorek2Error` if the tool exits non-zero or an expected output is
+    missing -- see the module docstring for why that matters here
+    specifically.
+
+    ``env`` is merged over the parent environment for the child only. This is
+    how ``OMP_NUM_THREADS`` gets set per invocation instead of being inherited
+    from whatever the shell happens to have -- ``site.toml``'s
+    ``interactive_prelude`` exports ``OMP_NUM_THREADS=10``, which used to leak
+    into every one of the diagnostics' worker processes at once.
+
+    ``capture_stdout`` returns the tool's stdout on the result rather than
+    discarding it.
     """
     if stdin_text is None and not stdin_is_namelist:
         raise ValueError("pass stdin_text, or stdin_is_namelist=True")
@@ -132,13 +168,18 @@ def run_tool(
             stdin_path = workdir / f"{tool}.in"
             stdin_path.write_text(stdin_text, encoding="utf-8")
 
+        child_env = None
+        if env:
+            child_env = {**os.environ, **{k: str(v) for k, v in env.items()}}
+
         with open(stdin_path, encoding="utf-8") as stdin_file:
             result = subprocess.run(
                 [str(exe_invoke)],
                 stdin=stdin_file,
                 cwd=workdir,
-                stdout=subprocess.DEVNULL,
+                stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
+                env=child_env,
             )
         if result.returncode != 0:
             raise Jorek2Error(
@@ -158,7 +199,10 @@ def run_tool(
             shutil.copy(src, dst)
             collected[output] = dst
 
-    return collected
+    stdout = ""
+    if capture_stdout and result.stdout is not None:
+        stdout = result.stdout.decode(errors="replace")
+    return ToolResult(outputs=collected, stdout=stdout)
 
 
 def run_zero_d(run: Jorek2Run, step: int, paths: RunPaths) -> Path:
