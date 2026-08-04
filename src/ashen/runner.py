@@ -21,6 +21,12 @@ has passed.
 - ``castor_dir``/``psi`` are computed whenever *any* of
   ffprime/T/rho/bnd-method is ``"castor"`` (the old code only checked
   ffprime/T/rho, so ``bnd_method="castor"`` alone raised ``NameError``).
+- ``prepare_run``'s ``run_sw`` parameter mirrors ``run_jorek.py:146``'s
+  ``not run_sw_flag`` guard on symlinking the archived STARWALL response in
+  -- found missing during the initial port when real POSIX symlinks on the
+  HPC (not this dev clone's copy-based bypass) turned it into a
+  ``shutil.SameFileError`` in :func:`submit_starwall`. See that function's
+  docstring.
 
 **Not fixed here -- see ``KNOWN_ISSUES.md``:** the T-profile grid and
 density-independence issues in :func:`ashen.profiles.get_t_profile_from_castor`
@@ -160,11 +166,21 @@ def prepare_run(
     *,
     replace: bool = False,
     dry_run: bool = False,
+    run_sw: bool = False,
 ) -> PreparedRun:
     """Populate a run folder from a shotfile. Validates before writing anything.
 
     Mirrors ``Columbia/run_jorek.py``'s folder-population section (roughly
     lines 124-302), with the fixes listed in this module's docstring applied.
+
+    ``run_sw`` mirrors ``run_jorek.py:146``'s ``not run_sw_flag`` guard: pass
+    ``True`` when this same invocation will also call :func:`submit_starwall`
+    to *generate* the archived response, not consume it. Without this, the
+    archived response gets symlinked in as ``starwall-response.dat`` and then
+    :func:`submit_starwall`'s archive step tries to copy that file onto
+    itself, raising ``shutil.SameFileError`` -- caught on the HPC, where real
+    symlinks exposed it; the Windows dev clone's copy-based symlink bypass
+    could not.
     """
     run_dir = Path(run_dir).resolve()
     disk = _Disk(dry_run)
@@ -291,7 +307,7 @@ def prepare_run(
     disk.symlink_dir(site.jobscripts, run_dir, "jobscripts")
     disk.symlink_files_in(site.template / "symlink" / "base", run_dir)
 
-    if params.freeboundary and not params.allow_other_starwall:
+    if params.freeboundary and not params.allow_other_starwall and not run_sw:
         starwall_src = (
             site.template / "symlink" / "starwall"
             / f"starwall-response_qa{params.qa:.1f}_g{params.g:.3f}.dat"
@@ -420,6 +436,11 @@ def submit_starwall(
     FIX applied here (confirmed with George): the equilibrium stage tees into
     ``log_eq``, matching ``submit_eq``, not ``log`` -- the old code clobbered
     the main run's log with this stage's equilibrium output.
+
+    Requires the run folder to have been prepared with
+    ``prepare_run(..., run_sw=True)`` -- otherwise ``starwall-response.dat``
+    is already a symlink to the exact archive path this function copies onto,
+    and the copy raises ``shutil.SameFileError``.
     """
     commands = []
 

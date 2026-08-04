@@ -90,7 +90,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = prepare_run(
-            params, site, run_dir, replace=args.replace, dry_run=args.dry_run
+            params, site, run_dir,
+            replace=args.replace, dry_run=args.dry_run, run_sw=args.run_sw,
         )
     except (ShotfileError, NotImplementedError, FileNotFoundError, FileExistsError) as exc:
         print(f"error: {exc}")

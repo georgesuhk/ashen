@@ -365,14 +365,21 @@ def test_submit_starwall_archives_the_response(synthetic_campaign, tmp_path, sym
     """Archiving (copy + remove) happens unconditionally after the two launch
     commands, which this mocks out -- they need a POSIX shell with `module`
     and real JOREK/STARWALL binaries, neither available in this test
-    environment (same constraint as the legacy pipeline, see CLAUDE.md)."""
+    environment (same constraint as the legacy pipeline, see CLAUDE.md).
+
+    prepare_run is called with run_sw=True, matching how the CLI wires
+    --run_sw through: this is the case where STARWALL is about to *generate*
+    the response, not consume an existing one -- see
+    test_prepare_run_skips_starwall_symlink_when_run_sw for the regression
+    this guards (a real bug found running the real symlink path on the HPC;
+    the Windows dev clone's copy-based symlink bypass couldn't catch it)."""
     import ashen.runner as runner_module
 
     monkeypatch.setattr(runner_module.subprocess, "run", lambda *a, **k: None)
 
     site, template_dir, params = synthetic_campaign
     run_dir = tmp_path / "rundir"
-    result = prepare_run(params, site, run_dir, dry_run=False)
+    result = prepare_run(params, site, run_dir, dry_run=False, run_sw=True)
     (run_dir / "starwall-response.dat").write_text("computed response\n")
 
     submit_starwall(result.paths, site, params, dry_run=False)
@@ -383,3 +390,24 @@ def test_submit_starwall_archives_the_response(synthetic_campaign, tmp_path, sym
     )
     assert archived.read_text() == "computed response\n"
     assert not (run_dir / "starwall-response.dat").exists()
+
+
+def test_prepare_run_skips_starwall_symlink_when_run_sw(
+    synthetic_campaign, tmp_path, symlinks_maybe_bypassed
+):
+    """Regression for a real bug found running with real POSIX symlinks on
+    the HPC (the Windows copy-based symlink bypass masked it): without
+    run_sw=True, prepare_run symlinks starwall-response.dat straight to the
+    archived file (site.template/symlink/starwall/...), so a later
+    submit_starwall's copy2-onto-itself raises shutil.SameFileError. Mirrors
+    run_jorek.py:146's `if freeboundary and not run_sw_flag:` guard, which
+    the initial port dropped."""
+    site, _, params = synthetic_campaign
+
+    run_dir_generating = tmp_path / "rundir_sw"
+    prepare_run(params, site, run_dir_generating, dry_run=False, run_sw=True)
+    assert not (run_dir_generating / "starwall-response.dat").exists()
+
+    run_dir_consuming = tmp_path / "rundir_main"
+    prepare_run(params, site, run_dir_consuming, dry_run=False, run_sw=False)
+    assert (run_dir_consuming / "starwall-response.dat").exists()
