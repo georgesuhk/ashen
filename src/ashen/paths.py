@@ -157,6 +157,21 @@ class RunPaths:
         return self.run_dir / "real_psi_edge.dat"
 
     @property
+    def log(self) -> Path:
+        """The main run's log, as opposed to ``log_eq`` (the equilibrium
+        stage's -- see ``runner.py``'s module docstring). ``R_axis`` and other
+        scalars extracted via :mod:`ashen.logfile` are read from here."""
+        return self.run_dir / "log"
+
+    @property
+    def figures_dir(self) -> Path:
+        """Where plotting output lands. Mirrors the legacy convention of
+        saving Poincare and connection-length figures alongside the traces
+        that produced them, in ``poinc_dir``, rather than inventing a new
+        top-level output folder."""
+        return self.poinc_dir
+
+    @property
     def in_eq(self) -> Path:
         return self.run_dir / "in_eq"
 

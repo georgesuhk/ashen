@@ -127,6 +127,36 @@ omp_threads = 0   # OpenMP threads per process; 0 = min(8, cpu_count)
 `--n-workers` / `--omp-threads` override per invocation. None of JOREK's
 `jorek2_*` tools use MPI, so these two are the only axes that exist.
 
+## Plotting
+
+`bin/plot` draws figures from data `analyse` already gathered -- it never runs
+a `jorek2_*` tool itself, and reads the same `cases.toml`:
+
+```bash
+python ~/ashen/bin/plot --list
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag poincare --diag connection_length
+```
+
+Kept as a separate command from `analyse` on purpose: gathering is slow and
+batch, plotting is fast and iterative, and re-plotting should never risk
+touching the gathering path.
+
+- `--step N` (repeatable) restricts Poincare plots to specific steps (default:
+  every step in the case).
+- `--linear` / `--smooth` control the connection-length colour maps.
+- `--dpi N` overrides the figure resolution.
+
+Covered this pass: Poincare puncture plots and the LC/LCTT connection-length
+maps -- the two that consume the per-line Poincare cache. Everything else the
+legacy `data_jorek.py` plotted (macroscopic-variable traces, field-line
+diffusion, radial profiles, stochastic factor) is not ported -- see
+`KNOWN_ISSUES.md` #8. Colour is by each line's `psi_n` through a colormap by
+default (`ashen.plotting.colors`); a discrete palette is also available.
+
+Connection lengths use `R0` extracted from the run's log
+(`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see
+`KNOWN_ISSUES.md` #6 and #7 for what changed and what's still an open question.
+
 ## Layout
 
 ```
@@ -144,8 +174,11 @@ src/ashen/
   runner.py     prepare_run() + submit_*() -- what bin/run_jorek drives
   postproc.py   jorek2_postproc control scripts + output parsers
   jorek2.py     shared stage/run/collect runner for jorek2_* tools
-  diagnostics/  poincare.py + poincare_cache.py, profiles.py
-  cases.py      cases.toml loader for bin/analyse
+  diagnostics/  poincare.py + poincare_cache.py, profiles.py,
+                connection_length.py -- pure math, no matplotlib
+  logfile.py    scalar extraction from a JOREK log (R_axis, etc.)
+  plotting/     poincare.py, connection_length.py, colors.py, style
+  cases.py      cases.toml loader for bin/analyse and bin/plot
   cli/          argument handling, importable for testing
 tests/
   unit/         run anywhere, no JOREK needed
@@ -159,13 +192,14 @@ touching `profiles.py`.
 
 ## Status
 
-Phases 1-4 (data-gathering half) are built. `run_jorek` prepares and submits
-runs end-to-end; `analyse` gathers and caches zeroD/Poincare/profile data.
-**Not yet ported:** the matplotlib plotting layer on top of that cached data
-(`plot_poincare`, `plot_field_line_diffusion`, etc. from
-`castor3d/util/data_jorek.py`) -- see `KNOWN_ISSUES.md` #4. Use the existing
-`Columbia/NL_kinks/analysis.py` for plotting against Ashen-gathered caches in
-the meantime.
+Phases 1-4 are built. `run_jorek` prepares and submits runs end-to-end;
+`analyse` gathers and caches zeroD/Poincare/profile data; `plot` draws Poincare
+and connection-length figures from it. **Not yet ported:** the rest of the
+matplotlib plotting layer (`plot_field_line_diffusion`, radial profiles,
+macroscopic-variable traces, stochastic factor -- see `KNOWN_ISSUES.md` #8).
+Legacy `Columbia/NL_kinks/analysis.py` still works for those against
+Ashen-gathered caches, except the Poincare cache itself, which moved to a new
+per-line HDF5 format legacy plotting cannot read (`KNOWN_ISSUES.md` #5).
 
 ## Tests
 

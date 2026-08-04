@@ -154,3 +154,87 @@ Unlike #1 and #2 this is not a physics question and needs no confirmation — it
 is here because it is a **capability regression with a date attached**, and it
 closes when the plotting layer in #4 is ported. Profile caches are unaffected;
 they keep the `.npz` format.
+
+---
+
+## 6. Connection-length `R0` now comes from the log, not a hardcoded constant
+
+**Where:** `ashen/src/ashen/diagnostics/connection_length.py` vs
+`castor3d/util/data_jorek.py:497,531` (`R0 = 1.36`, used) and `:409,452`
+(same constant, dead), and `gather_profiles.py:140` (`R0=1.369`, a different
+value, also dead — never referenced in that function's body).
+
+**What changed:** `line_connection_length` now takes `R0` from
+`ashen.logfile.r_axis(paths.log)`, which extracts the JOREK-computed
+`R_axis` the same way the one already-correct legacy call site did
+(`postproc_get_q`, `gather_profiles.py:130-138`). This is a **numeric**
+change: every connection length is `L = n_inside * 2*pi*R0`, so the result
+scales linearly with whatever `R0` was wrong by. For `qa2.1_g2.3/eta1e-3_RE`
+the log-extracted value is ~1.363, vs the hardcoded 1.36 — under 0.3%, but it
+is a real change to published-shape numbers, not a no-op.
+
+**Decision (George, 2026-08-05):** extract from the log and fail loudly
+(`LogfileError`) rather than falling back to the old constant — a
+missing/unreadable log should stop the calculation, not silently reintroduce
+the guessed value. `ashen/cli/plot.py` catches `LogfileError` per case and
+reports it rather than crashing the whole run.
+
+---
+
+## 7. Connection-length `psi_n` may be double-normalised by `real_psi_edge`
+
+**Where:** `ashen/src/ashen/diagnostics/connection_length.py:line_connection_length`
+vs `castor3d/util/data_jorek.py:546` (`psi_n_out[n_t][i] =
+np.array(psi_n_out[n_t][i])/psi_edge`).
+
+**What's suspicious:** `jorek2_poincare`'s own output is already normalised
+to the boundary — the file header in `poinc_rho-theta.dat` states
+`psi_n=(psi - psi_axis)/(psi_bnd - psi_axis)` — so `record.psi_n` (derived
+from that file) should already be in `[0, ~1+]` before any division. Legacy
+`plot_connection_length` divides by `real_psi_edge` a second time anyway. If
+`real_psi_edge` (a CASTOR3D-derived quantity written to `real_psi_edge.dat`
+by the runner) is not numerically equal to JOREK's own internal `psi_bnd`,
+this second division shifts the `psi_n < 1` inside/outside threshold and
+therefore every connection length.
+
+**Status:** not resolved. `ashen`'s port preserves the exact same second
+division (`ashen/diagnostics/connection_length.py`'s
+`line_connection_length` divides by `real_psi_edge`) rather than silently
+dropping it, because either choice changes numbers and this needs George's
+judgement on what `real_psi_edge` actually represents relative to JOREK's
+`psi_bnd`. Flagging here rather than guessing, in the same spirit as #1/#2.
+
+---
+
+## 8. Plotting layer: scope of this pass, and what's still legacy-only
+
+**Status:** Phase 4c ports two of the legacy plots against the Phase 4b
+per-line cache: Poincare puncture plots (`ashen/plotting/poincare.py`, ports
+`data_jorek.py:354 plot_poincare`) and the LC/LCTT connection-length colour
+maps (`ashen/plotting/connection_length.py`, ports
+`data_jorek.py:597 color_con_length_plot`), driven by a new `bin/plot` /
+`ashen/cli/plot.py` that reads the same `cases.toml` as `analyse`.
+
+**Deliberately not ported this pass** (recorded here as future work, per
+George, 2026-08-05):
+- `plot_field_line_diffusion` (`data_jorek.py:180`) — the scatter-by-time
+  diffusion-extent plot. Its inline island-width computation duplicates
+  `get_island_width` exactly (see #4's note on that duplication).
+- `connection_length_line_plot` (`data_jorek.py:570`, the `L2_`/`L2TT_` line
+  plots) — the *other* half of `plot_connection_length`; only the colour-map
+  half (LC/LCTT) was in scope this pass.
+- `plot_macro_var` (`data_jorek.py:137`) — macroscopic-variable time series
+  from `macroscopic_vars.dat`. Leaks figures (no `plt.close()`).
+- `plot_postproc_profs` / `postproc_get_q` (`gather_profiles.py:130,140`) —
+  radial profile plots and the q-profile calculation. `dJ/dr` at the q=2
+  surface currently exists only as unsaved scatter points inside this
+  function (`gather_profiles.py:163-175`) and would need extracting, same as
+  connection length was.
+- `calc_stochast_factor` (`data_jorek.py:702`) — computed, never plotted;
+  the `"plot_stochastic_factor"` diag name in legacy `analysis.py:171`
+  is a misnomer that actually calls `plot_connection_length`.
+- `plot_max_fieldline_pos` — still does not exist anywhere in the legacy
+  tree (see #4); implementing it is new work, not a port.
+- The CASTOR3D-scan plots in `castor3d/util/data.py` (`create_li_gr_plot`
+  and friends) are a separate lineage entirely, out of scope for the JOREK
+  wrapper migration.

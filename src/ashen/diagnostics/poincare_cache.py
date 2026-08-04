@@ -57,6 +57,7 @@ __all__ = [
     "LineWork",
     "read_cache",
     "read_legacy_cache",
+    "read_step",
     "open_cache",
     "append_line",
     "extend_line",
@@ -228,6 +229,19 @@ def read_cache(path: Path | str) -> dict[LineKey, LineRecord]:
                 **{a: np.asarray(group[a][:]) for a in _ARRAYS},
             )
     return records
+
+
+def read_step(paths, step: int | float) -> dict[LineKey, LineRecord]:
+    """A step's cache, new format if present, else the legacy ``.npz`` set.
+
+    Convenience for readers (plotting, notebooks) that don't want to know
+    which format a given step happens to be in -- gathering always writes the
+    new format, but a step traced before Phase 4b only has the old one.
+    """
+    records = read_cache(paths.poincare_cache(step))
+    if records:
+        return records
+    return read_legacy_cache(paths.poinc_dir, paths.step_str(step))
 
 
 def read_legacy_cache(poinc_dir: Path | str, step_str: str) -> dict[LineKey, LineRecord]:
