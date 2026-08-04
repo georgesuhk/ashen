@@ -102,3 +102,27 @@ grid has exactly one fewer point than the full-mesh grid -- which plausibly
 explains the `[1:]` slice as intentional mesh alignment, not a bug. Whether
 the alignment direction is physically correct (`[1:]` vs. some other offset)
 is still open but not urgent. `profiles.py` preserves it as-is.
+
+---
+
+## 4. Diagnostics plotting layer not yet ported (Phase 4 scope note, not a bug)
+
+**Where:** `castor3d/util/data_jorek.py`'s plotting functions -- `plot_poincare`,
+`plot_field_line_diffusion`, `plot_connection_length`, `get_island_width`,
+`postproc_get_q` / `plot_postproc_profs`'s plotting half -- and
+`analysis.py`'s `max_fieldline_pos` diag, which calls `plot_max_fieldline_pos`,
+a function **that does not exist anywhere in the tree** and would raise
+`NameError` if selected.
+
+**Status:** Phase 4 (`ashen/jorek2.py`, `ashen/diagnostics/{poincare,profiles}.py`,
+`ashen/cases.py`, `ashen/cli/analyse.py` + `bin/analyse`) ports the *data
+gathering* these functions consume -- zeroD caching, Poincare tracing, radial
+profile extraction, all writing the same `.npz` files the legacy plotting code
+already reads -- but not the matplotlib code itself. That code carries its own
+bugs independent of anything above (`R0 = 1.36` hardcoded in four places in
+`data_jorek.py` instead of using the log-extracted value `postproc_get_q`
+already computes correctly; `get_island_width` defined twice with identical
+bodies where the second silently wins, breaking any caller passing `mode=`)
+and needs its own confirmation pass before porting, not a silent carry-over.
+Legacy `analysis.py` remains usable for plotting against Ashen-gathered data
+in the meantime.

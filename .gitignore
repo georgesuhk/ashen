@@ -1,5 +1,6 @@
-# Real site config is machine-specific; only site.example.toml is tracked.
+# Real site/case config is campaign-specific; only the *.example.toml are tracked.
 site.toml
+cases.toml
 
 .venv/
 __pycache__/

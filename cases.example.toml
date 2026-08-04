@@ -1,0 +1,33 @@
+# Ashen case definitions, for `bin/analyse`.
+#
+# Copy to a campaign folder (e.g. Columbia/NL_kinks/cases.toml) and edit.
+# `bin/analyse --list` shows what's defined; `bin/analyse --case NAME --diag
+# zerod --diag poincare --diag profiles` gathers data for one case.
+#
+# Replaces analysis.py's ~25 stacked reassignments of the same two variables
+# (restart_times, run_folders), where only the last line took effect and
+# everything above was commented-out-by-overwrite history -- every
+# investigation gets a name here instead, and old ones stay listable rather
+# than being silently shadowed.
+
+[defaults]
+# Every key here seeds every [cases.*] table below, overridable per case.
+namelist        = "in_main"
+psi_n_in        = [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
+n_turns         = 1000
+ang_sample_freq = 8
+vars            = ["Jgrad", "currdens"]
+coords_var      = "R"
+tor_mode        = "midplane"
+n_points        = 100
+
+[cases."qa2.1_g2.3/eta1e-3_RE"]
+folder = "qa2.1_g2.3/eta1e-3_RE"
+steps  = { start = 200, stop = 5800, step = 200 }
+note   = "internal kink investigation"
+
+# steps also accepts an explicit list where a range doesn't fit the data:
+# [cases."qa2.8_g1.8/eta1e-5_RE_ntor11"]
+# folder = "qa2.8_g1.8/eta1e-5_RE_ntor11"
+# steps  = [11800, 12000, 12100, 12200, 12300, 12400, 12420, 12430]
+# note   = "ntor=11 island growth"

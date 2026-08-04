@@ -79,6 +79,21 @@ current directory → `~/.config/ashen/site.toml`.
 
 `site.toml` is gitignored; only `site.example.toml` is tracked.
 
+## Gathering analysis data for a case
+
+Copy `cases.example.toml` to a campaign folder as `cases.toml` and define a
+named entry per investigation -- see the file for the format. Then, from
+anywhere:
+
+```bash
+python ~/ashen/bin/analyse --list                          # show defined cases
+python ~/ashen/bin/analyse --case "qa2.1_g2.3/eta1e-3_RE" --diag zerod --diag poincare --diag profiles
+```
+
+`--force` re-runs even where a cached `.npz`/`postproc/*.dat` already exists
+(default: skip anything already cached). This gathers and caches data only --
+plotting is not ported yet, see Status below.
+
 ## Layout
 
 ```
@@ -91,10 +106,17 @@ src/ashen/
   castor_io.py  shared CASTOR3D two-column file parser
   boundary.py   plasma boundary geometry, psi-grid extension
   profiles.py   CASTOR3D -> JOREK profile translation
+  shotfile.py   ShotParams dataclass + validating loader
+  fs.py         copy/symlink helpers used when populating a run folder
+  runner.py     prepare_run() + submit_*() -- what bin/run_jorek drives
+  postproc.py   jorek2_postproc control scripts + output parsers
+  jorek2.py     shared stage/run/collect runner for jorek2_* tools
+  diagnostics/  poincare.py, profiles.py -- thin wrappers over jorek2.py
+  cases.py      cases.toml loader for bin/analyse
   cli/          argument handling, importable for testing
 tests/
   unit/         run anywhere, no JOREK needed
-  golden/       reference run-folder outputs (Phase 3)
+  golden/       reference run-folder outputs, captured from the real HPC script
   fixtures/     vendored CASTOR3D inputs
 ```
 
@@ -104,21 +126,25 @@ touching `profiles.py`.
 
 ## Status
 
-Phase 2 of the refactor: the leaf modules above are complete and unit-tested,
-several verified numerically against real CASTOR3D fixture data. `shotfile.py`
-and `runner.py` (Phase 3, what actually makes `run_jorek` runnable) do not
-exist yet -- the CLI's run stages still print "not implemented". Use the
-existing `Columbia/run_jorek.py` until Phase 3 lands.
+Phases 1-4 (data-gathering half) are built. `run_jorek` prepares and submits
+runs end-to-end; `analyse` gathers and caches zeroD/Poincare/profile data.
+**Not yet ported:** the matplotlib plotting layer on top of that cached data
+(`plot_poincare`, `plot_field_line_diffusion`, etc. from
+`castor3d/util/data_jorek.py`) -- see `KNOWN_ISSUES.md` #4. Use the existing
+`Columbia/NL_kinks/analysis.py` for plotting against Ashen-gathered caches in
+the meantime.
 
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/unit -q    # Windows
-python -m pytest tests/unit -q                      # HPC
+.venv/Scripts/python.exe -m pytest tests/unit tests/golden -q    # Windows
+python -m pytest tests/unit tests/golden -q                      # HPC
 ```
 
-Unit tests must pass on both Windows and the HPC, so they never follow symlinks
-or require JOREK.
+Unit tests must pass on both Windows and the HPC, so they never follow
+symlinks or require JOREK. The golden suite compares `prepare_run`'s output
+against a real HPC capture (`tests/golden/reference/`) and skips itself if
+that reference hasn't been captured.
 
 ## Related code
 
