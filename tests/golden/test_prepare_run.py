@@ -62,8 +62,21 @@ def produced_run(real_campaign, symlinks_maybe_bypassed, tmp_path):
 # --- namelists: semantic comparison -----------------------------------------
 
 
+def _is_boundary_field(key: str) -> bool:
+    return key == "n_boundary" or key.startswith(("r_boundary(", "z_boundary(", "psi_boundary("))
+
+
 @pytest.mark.parametrize("name", NAMELISTS)
 def test_namelist_matches_legacy_semantically(produced_run, name):
+    """For in_main/in_main_r, boundary fields are EXPECTED to differ from
+    legacy -- see test_in_main_boundary_diverges_from_legacy_by_design for
+    why, and test_in_main_boundary_matches_in_eq for what they should match
+    instead. Confirmed on the real qa2.1_g2.3/eta1e-3_RE capture: legacy's
+    in_main/in_main_r kept the template's stale boundary (psi_boundary=0.98)
+    because the old script never wrote a fresh one there; in_eq and in_bnd
+    both independently show 0.98 -> the true fresh value is 1.19, which
+    Ashen (correctly) now writes everywhere.
+    """
     run_dir, _ = produced_run
     reference = REFERENCE_DIR / name
     if not reference.is_file():
@@ -71,6 +84,10 @@ def test_namelist_matches_legacy_semantically(produced_run, name):
 
     produced_fields = effective_fields(run_dir / name)
     reference_fields = effective_fields(reference)
+
+    if name in ("in_main", "in_main_r"):
+        produced_fields = {k: v for k, v in produced_fields.items() if not _is_boundary_field(k)}
+        reference_fields = {k: v for k, v in reference_fields.items() if not _is_boundary_field(k)}
 
     missing = set(reference_fields) - set(produced_fields)
     extra = set(produced_fields) - set(reference_fields)
@@ -104,15 +121,45 @@ def test_in_eq_boundary_is_a_single_clean_block(produced_run):
     assert text.lower().count("n_boundary") == 1
 
 
-def test_boundary_now_present_in_main_namelists_too(produced_run):
-    """The confirmed fix: the legacy script only ever wrote the boundary into
-    in_eq. Ashen writes it to all three -- this can't be checked against the
-    reference (which won't have it in in_main/in_main_r), only asserted."""
+def test_in_main_boundary_diverges_from_legacy_by_design(produced_run):
+    """Documents, rather than merely tolerates, the expected divergence.
+
+    Confirmed on the real capture: legacy's in_main psi_boundary is 0.98 (the
+    template's stale value -- the old script never wrote a fresh boundary
+    there), while the true fresh value -- independently confirmed by in_eq's
+    *effective* (last-wins) block and by in_bnd, both computed fresh every
+    run -- is 1.19. If this test ever fails because the values now agree, the
+    legacy reference was likely recaptured after the campaign's boundary
+    changed, not because Ashen regressed.
+    """
+    reference = REFERENCE_DIR / "in_main"
+    if not reference.is_file():
+        pytest.skip(f"{reference} not captured")
+
+    legacy_in_main = effective_fields(reference)["psi_boundary(1)"]
+    legacy_in_bnd = effective_fields(REFERENCE_DIR / "in_bnd")["psi_boundary(1)"]
+
+    assert legacy_in_main != pytest.approx(legacy_in_bnd), (
+        "legacy in_main now matches in_bnd -- the bug this test documents "
+        "may no longer be present in the captured reference"
+    )
+
+
+@pytest.mark.parametrize("name", ["in_main", "in_main_r"])
+def test_boundary_matches_in_eq_not_legacy(produced_run, name):
+    """What in_main/in_main_r's boundary SHOULD match post-fix: Ashen's own
+    in_eq (both freshly computed in the same run), not the legacy reference
+    (which has the bug this fix addresses)."""
     run_dir, _ = produced_run
 
-    for name in ("in_main", "in_main_r"):
-        fields = effective_fields(run_dir / name)
-        assert "r_boundary(1)" in fields
+    in_eq_fields = effective_fields(run_dir / "in_eq")
+    other_fields = effective_fields(run_dir / name)
+
+    for key in in_eq_fields:
+        if _is_boundary_field(key):
+            assert _values_match(in_eq_fields[key], other_fields.get(key)), (
+                f"{name}: {key} = {other_fields.get(key)}, in_eq has {in_eq_fields[key]}"
+            )
 
 
 # --- byte-exact files ----------------------------------------------------------
@@ -120,13 +167,22 @@ def test_boundary_now_present_in_main_namelists_too(produced_run):
 
 @pytest.mark.parametrize("name", BYTE_EXACT_FILES)
 def test_byte_exact_files_match(produced_run, name):
+    """Line-ending-normalized, not truly byte-exact.
+
+    The reference files are captured on the HPC (LF) then transferred through
+    a Windows machine to get here, which can introduce \\r\\n without changing
+    any actual content -- confirmed on the real qa2.1_g2.3/eta1e-3_RE capture,
+    where in_bnd differed only in line endings. Comparing after universal
+    newline splitting treats that as equal, matching what git/diff already do
+    for text files, without masking a genuine content difference.
+    """
     run_dir, _ = produced_run
     reference = REFERENCE_DIR / name
     if not reference.is_file():
         pytest.skip(f"{reference} not captured")
 
-    produced = (run_dir / name).read_bytes()
-    expected = reference.read_bytes()
+    produced = (run_dir / name).read_text(encoding="utf-8").splitlines()
+    expected = reference.read_text(encoding="utf-8").splitlines()
     assert produced == expected, f"{name} differs from the legacy reference"
 
 

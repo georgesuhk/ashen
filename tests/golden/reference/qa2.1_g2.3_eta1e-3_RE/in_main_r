@@ -1,0 +1,155 @@
+ &in1
+ ! --- TIME STEPPING ---
+ restart = .t.
+ tstep_n = 0.1!10 
+ nstep_n = 3000!  20000! 10000
+ !tstep = 1.0  !1
+ !nstep = 0 !0
+ nout = 100
+ time_evol_scheme = 'Gears'
+ linear_run = .f.
+ keep_current_prof = .f.
+ write_ps = .f.
+ iter_precon = 40
+ fix_axis_nodes = .f.
+ force_central_node = .f.
+ treat_axis = .t.
+ 
+ gmres_max_iter = 200
+
+ filter_perp  = 0.d0
+ filter_hyper = 1d-10
+ filter_par   = 1.d0
+ filter_perp_n0  = 0.d0
+ filter_hyper_n0 = 1d-10
+ filter_par_n0   = 1.d0 
+ 
+ use_mumps_eq =.true.
+ use_pastix_eq = .false.
+ use_pastix = .false.
+ use_strumpack = .true.
+
+ ! --- GRID PARAMETERS ---
+ n_R      = 0
+ n_Z      = 0
+ n_radial = 60
+ n_pol    = 60
+
+ n_flux   = 0
+ n_leg            = 0
+ n_private        = 0
+ dPSI_open        = 0
+ dPSI_private     = 0
+
+ fbnd(1)   = 2.
+ fbnd(2:4) = 0.
+ mf        = -1
+
+ xsig   = 1.
+ xpoint = .f.
+ xcase  = 1
+ R_geo  = 1.368
+ Z_geo  = 0.0156
+ 
+
+ F0    = 3.7
+ psi_axis_init = -0.01
+ amix = 0.
+ equil_accuracy = 1.d-8
+ freeboundary = .t.
+
+ T_min_neg = 1.d-6
+
+ ! --- VISCO-RESISTIVE PARAMETERS ---
+ eta              =  0.001!1d-10
+ visco            =  3d-6
+ visco_par        =  3d-8
+ eta_num          =  1d-8 !1d-15
+ visco_num        =  1d-10
+ eta_T_dependent  =  .false.
+ visco_T_dependent=  .false.
+ 
+ ! --- DIFFUSIVITY PROFILES ---
+ D_par       = 0.d0
+ D_perp      = 1.d-8
+ ZK_par      = 10000.d0
+ ZK_par_max  = 1000.d0
+ ZK_perp     = 1.d-8
+ d_perp_num       =  1d-16
+ zk_perp_num      =  1d-12
+ ZKpar_T_dependent= .true.
+
+ ! --- SOURCES ---
+ particlesource = 0.0
+ particlesource_psin = 0.9
+ particlesource_sig = 0
+ heatsource = 0 !2.d-7
+ heatsource_psin = 0.8
+ heatsource_sig = 0.1
+
+ central_density = 0.01
+ central_mass = 2.0
+ ffprime_file = 'ffprime_prof.dat'
+ T_file       = 'T_prof.dat'
+ rho_file     = 'rho_prof.dat'
+
+ re_initialize = 2
+ initial_re_current_fraction = 1
+ vpar_re_sign = 1
+ re_adv_fact = 0.01
+ Dre_num = 1.d-12
+ Dre_par = 1.d-06
+ Dre_iso = 0
+ n_boundary = 50
+R_boundary(  1) = 1.81, Z_boundary(  1) = 0.02, psi_boundary(  1) = 0.98
+R_boundary(  2) = 1.80, Z_boundary(  2) = 0.07, psi_boundary(  2) = 0.98
+R_boundary(  3) = 1.79, Z_boundary(  3) = 0.13, psi_boundary(  3) = 0.98
+R_boundary(  4) = 1.78, Z_boundary(  4) = 0.18, psi_boundary(  4) = 0.98
+R_boundary(  5) = 1.76, Z_boundary(  5) = 0.23, psi_boundary(  5) = 0.98
+R_boundary(  6) = 1.73, Z_boundary(  6) = 0.28, psi_boundary(  6) = 0.98
+R_boundary(  7) = 1.69, Z_boundary(  7) = 0.33, psi_boundary(  7) = 0.98
+R_boundary(  8) = 1.65, Z_boundary(  8) = 0.37, psi_boundary(  8) = 0.98
+R_boundary(  9) = 1.61, Z_boundary(  9) = 0.40, psi_boundary(  9) = 0.98
+R_boundary( 10) = 1.56, Z_boundary( 10) = 0.43, psi_boundary( 10) = 0.98
+R_boundary( 11) = 1.51, Z_boundary( 11) = 0.46, psi_boundary( 11) = 0.98
+R_boundary( 12) = 1.46, Z_boundary( 12) = 0.47, psi_boundary( 12) = 0.98
+R_boundary( 13) = 1.40, Z_boundary( 13) = 0.48, psi_boundary( 13) = 0.98
+R_boundary( 14) = 1.35, Z_boundary( 14) = 0.48, psi_boundary( 14) = 0.98
+R_boundary( 15) = 1.29, Z_boundary( 15) = 0.47, psi_boundary( 15) = 0.98
+R_boundary( 16) = 1.24, Z_boundary( 16) = 0.46, psi_boundary( 16) = 0.98
+R_boundary( 17) = 1.18, Z_boundary( 17) = 0.43, psi_boundary( 17) = 0.98
+R_boundary( 18) = 1.14, Z_boundary( 18) = 0.40, psi_boundary( 18) = 0.98
+R_boundary( 19) = 1.09, Z_boundary( 19) = 0.37, psi_boundary( 19) = 0.98
+R_boundary( 20) = 1.05, Z_boundary( 20) = 0.33, psi_boundary( 20) = 0.98
+R_boundary( 21) = 1.02, Z_boundary( 21) = 0.28, psi_boundary( 21) = 0.98
+R_boundary( 22) = 0.99, Z_boundary( 22) = 0.23, psi_boundary( 22) = 0.98
+R_boundary( 23) = 0.97, Z_boundary( 23) = 0.18, psi_boundary( 23) = 0.98
+R_boundary( 24) = 0.96, Z_boundary( 24) = 0.13, psi_boundary( 24) = 0.98
+R_boundary( 25) = 0.95, Z_boundary( 25) = 0.07, psi_boundary( 25) = 0.98
+R_boundary( 26) = 0.95, Z_boundary( 26) = 0.01, psi_boundary( 26) = 0.98
+R_boundary( 27) = 0.95, Z_boundary( 27) = -0.04, psi_boundary( 27) = 0.98
+R_boundary( 28) = 0.96, Z_boundary( 28) = -0.10, psi_boundary( 28) = 0.98
+R_boundary( 29) = 0.98, Z_boundary( 29) = -0.15, psi_boundary( 29) = 0.98
+R_boundary( 30) = 1.00, Z_boundary( 30) = -0.20, psi_boundary( 30) = 0.98
+R_boundary( 31) = 1.02, Z_boundary( 31) = -0.25, psi_boundary( 31) = 0.98
+R_boundary( 32) = 1.06, Z_boundary( 32) = -0.30, psi_boundary( 32) = 0.98
+R_boundary( 33) = 1.09, Z_boundary( 33) = -0.34, psi_boundary( 33) = 0.98
+R_boundary( 34) = 1.14, Z_boundary( 34) = -0.38, psi_boundary( 34) = 0.98
+R_boundary( 35) = 1.19, Z_boundary( 35) = -0.41, psi_boundary( 35) = 0.98
+R_boundary( 36) = 1.24, Z_boundary( 36) = -0.43, psi_boundary( 36) = 0.98
+R_boundary( 37) = 1.29, Z_boundary( 37) = -0.44, psi_boundary( 37) = 0.98
+R_boundary( 38) = 1.35, Z_boundary( 38) = -0.45, psi_boundary( 38) = 0.98
+R_boundary( 39) = 1.40, Z_boundary( 39) = -0.45, psi_boundary( 39) = 0.98
+R_boundary( 40) = 1.46, Z_boundary( 40) = -0.44, psi_boundary( 40) = 0.98
+R_boundary( 41) = 1.51, Z_boundary( 41) = -0.43, psi_boundary( 41) = 0.98
+R_boundary( 42) = 1.56, Z_boundary( 42) = -0.40, psi_boundary( 42) = 0.98
+R_boundary( 43) = 1.61, Z_boundary( 43) = -0.37, psi_boundary( 43) = 0.98
+R_boundary( 44) = 1.66, Z_boundary( 44) = -0.34, psi_boundary( 44) = 0.98
+R_boundary( 45) = 1.69, Z_boundary( 45) = -0.30, psi_boundary( 45) = 0.98
+R_boundary( 46) = 1.73, Z_boundary( 46) = -0.25, psi_boundary( 46) = 0.98
+R_boundary( 47) = 1.76, Z_boundary( 47) = -0.20, psi_boundary( 47) = 0.98
+R_boundary( 48) = 1.78, Z_boundary( 48) = -0.15, psi_boundary( 48) = 0.98
+R_boundary( 49) = 1.79, Z_boundary( 49) = -0.10, psi_boundary( 49) = 0.98
+R_boundary( 50) = 1.80, Z_boundary( 50) = -0.04, psi_boundary( 50) = 0.98
+
+&end

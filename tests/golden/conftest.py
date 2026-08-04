@@ -35,9 +35,19 @@ def _real_tree_available() -> bool:
     return SHOTFILE_PATH.is_file() and TEMPLATE_DIR.is_dir() and CASTOR_ROOT.is_dir()
 
 
+#: A copy of the shotfile.py actually used for the HPC capture, if provided.
+#: Preferred over the live shotfile: the live one is George's working copy
+#: and will keep changing for reasons that have nothing to do with Ashen's
+#: correctness (confirmed in practice -- tstep_n drifted between the first
+#: capture and when this comparator was built). A golden test that re-reads
+#: a moving target isn't golden.
+FROZEN_SHOTFILE = REFERENCE_DIR / "shotfile.py"
+
+
 @pytest.fixture
 def real_campaign():
-    """The actual qa2.1_g2.3/eta1e-3_RE shotfile against the real template.
+    """The shotfile actually used for the HPC capture (frozen copy preferred,
+    live one as fallback) against the real template.
 
     castor_params.machine_folder is overridden from the shotfile's hardcoded
     HPC path (/tokp/work/geosu/castor3d/DIIID_low_pres) to this checkout's
@@ -51,9 +61,18 @@ def real_campaign():
             f"(looked for {SHOTFILE_PATH}, {TEMPLATE_DIR}, {CASTOR_ROOT})"
         )
 
+    shotfile_path = FROZEN_SHOTFILE if FROZEN_SHOTFILE.is_file() else SHOTFILE_PATH
+    if shotfile_path is SHOTFILE_PATH:
+        warnings.warn(
+            f"No frozen shotfile at {FROZEN_SHOTFILE}; comparing against the "
+            "live shotfile, which may have changed since the reference was "
+            "captured. Copy the shotfile.py used for capture there to pin it.",
+            stacklevel=2,
+        )
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # expected: shot_folder/template_folder/etc
-        params = load_shotfile(SHOTFILE_PATH)
+        params = load_shotfile(shotfile_path)
 
     local_castor_params = dict(params.castor_params)
     local_castor_params["machine_folder"] = str(CASTOR_ROOT / "DIIID_low_pres")

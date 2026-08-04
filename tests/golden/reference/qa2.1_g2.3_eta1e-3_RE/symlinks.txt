@@ -1,0 +1,19 @@
+-rw-r--r--  1 geosu grp-tok-ipp 10200 Aug  4 16:47 ffprime_prof.dat
+-rw-r--r--  1 geosu grp-tok-ipp  3690 Aug  4 16:47 in_bnd
+-rw-------  1 geosu grp-tok-ipp 31445 Aug  4 16:47 in_eq
+-rw-------  1 geosu grp-tok-ipp  5599 Aug  4 16:47 in_main
+-rw-------  1 geosu grp-tok-ipp  5599 Aug  4 16:47 in_main_r
+-rw-r--r--  1 geosu grp-tok-ipp  1304 Jun 29 21:52 input_starwall
+lrwxrwxrwx  1 geosu grp-tok-ipp    36 Aug  4 16:47 jobscripts -> /tokp/work/geosu/Columbia/jobscripts
+lrwxrwxrwx  1 geosu grp-tok-ipp    70 Aug  4 16:47 jorek2_poincare -> /tokp/work/geosu/Columbia/NL_kinks/template/symlink/RE/jorek2_poincare
+lrwxrwxrwx  1 geosu grp-tok-ipp    70 Aug  4 16:47 jorek2_postproc -> /tokp/work/geosu/Columbia/NL_kinks/template/symlink/RE/jorek2_postproc
+-rw-r--r--  1 geosu grp-tok-ipp 18225 Aug  4 16:47 original_bnd.dat
+drwxr-xr-x  2 geosu grp-tok-ipp  4096 Aug  4 16:47 __pycache__
+-rw-r--r--  1 geosu grp-tok-ipp    23 Aug  4 16:47 real_psi_edge.dat
+-rw-r--r--  1 geosu grp-tok-ipp 10000 Aug  4 16:47 rho_prof.dat
+-rw-r--r--  1 geosu grp-tok-ipp   958 Aug  4 16:47 shotfile.py
+lrwxrwxrwx  1 geosu grp-tok-ipp    66 Aug  4 16:47 starwall-response.dat -> ../../template/symlink/starwall/starwall-response_qa2.1_g2.300.dat
+lrwxrwxrwx  1 geosu grp-tok-ipp    62 Aug  4 16:47 stpts -> /tokp/work/geosu/Columbia/NL_kinks/template/symlink/base/stpts
+lrwxrwxrwx  1 geosu grp-tok-ipp    72 Aug  4 16:47 submit_jorek.sh -> /tokp/work/geosu/Columbia/NL_kinks/template/symlink/base/submit_jorek.sh
+-rw-r--r--  1 geosu grp-tok-ipp 10000 Aug  4 16:47 T_prof.dat
+lrwxrwxrwx  1 geosu grp-tok-ipp    39 Aug  4 16:47 util -> /tokp/work/geosu/Columbia/jorek_RE/util

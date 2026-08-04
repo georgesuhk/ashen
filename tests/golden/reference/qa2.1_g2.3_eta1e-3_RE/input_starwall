@@ -1,0 +1,50 @@
+&PARAMS
+  ! Calculate response matrix for:
+  !   0=no wall, 1=ideal wall, 2=resistive wall
+  i_response = 2,
+ 
+  ! Number of toroidal modes
+  n_harm     = 2,
+ 
+  ! Toroidal mode numbers n_tor(i) for i=1...n_harm
+  n_tor      = 1,2,
+ 
+  ! Number of toroidal grid points for real space representation
+  nv         = 40
+ 
+  ! B_par is computed on a surface shifted by delta into the vacuum domain
+  ! (numerical parameter: leave unchanged)
+  delta      = 0.001,
+ 
+  ! Number of grid points per boundary element
+  n_points   = 10
+ 
+  ! Number of unconnected wall components
+  ! (CURRENTLY UNUSED)
+  nwall      = 1,
+ 
+  ! Representation of the wall:
+  !   1=Fourier series, 2=triangles, 3=triangles+index fu.
+  iwall      = 1,
+/
+ 
+&PARAMS_WALL
+  eta_thin_w = 1.d-4  
+ 
+  ! Wall grid points in poloidal direction
+  nwu        = 32
+ 
+  ! Wall grid points in toroidal direction
+  nwv        = 32
+ 
+  ! Number of Fourier harmonics
+  mn_w       = 2,
+ 
+  ! Modes characterizing the wall shape
+  n_w        =    0,      0,         ! Toroidal mode numbers
+  m_w        =    0,      1,         ! Poloidal mode numbers
+  rc_w       =    1.4,   0.7,       ! R cos-mode
+  rs_w       =    0.,     0.,        ! R sin-mode
+  zc_w       =    0.,     0.,        ! Z cos-mode
+  zs_w       =    0.,     0.7,       ! Z sin-mode
+/
