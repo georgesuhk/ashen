@@ -28,6 +28,8 @@ __all__ = [
     "DEFAULT_PAD_WIDTH",
     "PaddingError",
     "RunPaths",
+    "read_float",
+    "write_float",
     "detect_pad_width",
     "step_str",
 ]
@@ -45,6 +47,16 @@ class PaddingError(RuntimeError):
 def step_str(step: int | float, width: int = DEFAULT_PAD_WIDTH) -> str:
     """Zero-pad a step index. Prefer :meth:`RunPaths.step_str`."""
     return f"{int(step):0{width}d}"
+
+
+def write_float(path: Path | str, value: float) -> None:
+    """Write a single float, full double precision. Ports ``basics.py:17``."""
+    Path(path).write_text(f"{value:.16e}\n", encoding="utf-8")
+
+
+def read_float(path: Path | str) -> float:
+    """Read a single float written by :func:`write_float`. Ports ``basics.py:21``."""
+    return float(Path(path).read_text(encoding="utf-8").strip())
 
 
 def detect_pad_width(directory: Path | str = ".") -> int:
