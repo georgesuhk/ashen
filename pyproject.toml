@@ -29,5 +29,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "tests" (not just "src") so tests/support.py is importable by both
+# tests/unit/conftest.py and tests/golden/conftest.py without a sys.path hack.
+pythonpath = ["src", "tests"]
 addopts = "-ra"

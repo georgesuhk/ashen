@@ -13,20 +13,7 @@ import pytest
 
 from ashen.config import Launch, Site
 from ashen.shotfile import ShotParams
-
-
-def _symlinks_supported(tmp_path) -> bool:
-    probe_target = tmp_path / "_probe_target"
-    probe_target.mkdir()
-    probe_link = tmp_path / "_probe_link"
-    try:
-        probe_link.symlink_to(probe_target, target_is_directory=True)
-        return True
-    except OSError:
-        return False
-    finally:
-        if probe_link.exists() or probe_link.is_symlink():
-            probe_link.unlink()
+from support import install_symlink_bypass, symlinks_supported
 
 
 @pytest.fixture
@@ -34,7 +21,7 @@ def require_symlinks(tmp_path):
     """Skip a test on machines that can't create symlinks (e.g. Windows
     without Developer Mode). Shared by test_fs.py and test_runner.py.
     """
-    if not _symlinks_supported(tmp_path):
+    if not symlinks_supported(tmp_path):
         pytest.skip("symlinks not permitted on this machine (no Developer Mode / not root)")
 
 
@@ -42,7 +29,7 @@ def require_symlinks(tmp_path):
 def symlinks_maybe_bypassed(monkeypatch, tmp_path):
     """Runs real symlink creation where supported; on a machine that can't
     (this Windows box without Developer Mode), replaces ashen.fs's symlink
-    functions with plain-copy equivalents instead.
+    functions with plain-copy equivalents instead (see tests/support.py).
 
     Exists so prepare_run's namelist/profile/boundary-writing logic -- the
     part that actually matters for correctness -- gets exercised on every
@@ -50,48 +37,9 @@ def symlinks_maybe_bypassed(monkeypatch, tmp_path):
     verify real symlinks are created (require_symlinks tests do that); it
     verifies everything downstream of "the folder got populated somehow".
     """
-    if _symlinks_supported(tmp_path):
+    if symlinks_supported(tmp_path):
         return  # real symlinks work here -- nothing to bypass
-
-    import shutil
-
-    from ashen import runner as runner_module
-
-    def fake_symlink_dir(src, dst, link_name=None):
-        from pathlib import Path
-
-        src, dst = Path(src), Path(dst)
-        dst.mkdir(parents=True, exist_ok=True)
-        target = dst / (link_name or src.name)
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(src, target)
-        return target
-
-    def fake_symlink_files_in(src, dst):
-        from pathlib import Path
-
-        src, dst = Path(src), Path(dst)
-        dst.mkdir(parents=True, exist_ok=True)
-        created = []
-        for entry in src.iterdir():
-            if entry.is_file():
-                target = dst / entry.name
-                shutil.copy2(entry, target)
-                created.append(target)
-        return created
-
-    def fake_symlink_file(src, dst):
-        from pathlib import Path
-
-        src, dst = Path(src), Path(dst)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        return dst
-
-    monkeypatch.setattr(runner_module.fs, "symlink_dir", fake_symlink_dir)
-    monkeypatch.setattr(runner_module.fs, "symlink_files_in", fake_symlink_files_in)
-    monkeypatch.setattr(runner_module.fs, "symlink_file", fake_symlink_file)
+    install_symlink_bypass(monkeypatch)
 
 
 def _write_two_col(path, x, y):
