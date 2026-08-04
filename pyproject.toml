@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ashen"
+version = "0.1.0"
+description = "A wrapper around JOREK for preparing, running and analysing shots"
+readme = "README.md"
+# 3.11 for stdlib tomllib. The HPC runs 3.13; keep syntax within 3.11 so the
+# package imports on both. (Note castor3d/util/diagnostics/gather_profiles.py
+# currently uses 3.12-only f-string syntax -- do not carry that over.)
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+# No [project.scripts]: bin/run_jorek and bin/analyse are the supported entry
+# points and work from a bare clone without installing. Console scripts get
+# added in Phase 3 only if pip installation proves useful.
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

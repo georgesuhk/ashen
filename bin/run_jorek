@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Prepare and submit a JOREK run.
+
+This shim puts ``src/`` on ``sys.path`` relative to its own location, so a bare
+``git clone`` works with no install and no PYTHONPATH:
+
+    python ~/ashen/bin/run_jorek --show-config
+
+That bootstrap is the whole reason this file exists -- it replaces the
+``sys.path.append("/tokp/work/geosu/castor3d/")`` that used to be copied into
+every consumer. Library modules must never do this themselves.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from ashen.cli.run_jorek import main  # noqa: E402  (import follows bootstrap)
+
+if __name__ == "__main__":
+    sys.exit(main())

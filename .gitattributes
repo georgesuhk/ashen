@@ -1,0 +1,8 @@
+# This repo is authored on Windows and run on a Linux HPC. Force LF in the
+# working tree: bin/ scripts carry a shebang, and CRLF there produces
+# "bad interpreter: /usr/bin/env python3^M" on the cluster.
+* text=auto eol=lf
+
+# Reference outputs are compared byte-for-byte; never let git rewrite them.
+tests/golden/** -text
+tests/fixtures/** -text

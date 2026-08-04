@@ -1,0 +1,26 @@
+# Ashen site configuration.
+#
+# Copy to the campaign root -- e.g. Columbia/NL_kinks/site.toml -- and edit.
+# Running from any run folder underneath finds it by walking up.
+#
+# Relative entries resolve against THIS FILE'S directory, never the current
+# directory. Keeping them relative is what makes the campaign self-describing:
+# rename it, move it, or clone it to another machine and nothing needs editing.
+# Use an absolute path only where the target genuinely lives elsewhere.
+
+[paths]
+exe         = "./exe"                     # JOREK + STARWALL binaries
+template    = "./template"                # copy/ and symlink/ run templates
+jobscripts  = "../jobscripts"             # SLURM jobscripts
+jorek       = "../jorek"                  # standard JOREK checkout
+jorek_re    = "../jorek_RE"               # runaway-electron JOREK checkout
+castor_root = "/tokp/work/geosu/castor3d" # CASTOR3D tree (absolute: different filesystem)
+
+[launch]
+# Shell preambles, lifted out of the driver where they were previously
+# duplicated across five near-identical heredocs.
+interactive_prelude = "export OMP_NUM_THREADS=10\nmodule load impi-interactive/"
+batch_prelude       = "module unload impi-interactive/1.0"
+mpirun              = "mpirun -n {n}"
+n_jorek             = 4
+n_starwall          = 32
