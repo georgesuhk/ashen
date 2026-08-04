@@ -5,23 +5,13 @@ Ports, from ``castor3d/util/run_jorek_util.py``: ``get_psi_from_castor:206``,
 ``create_profiles_from_castor:281``; and from ``castor3d/util/data.py``:
 ``resample_profile:17``, ``smooth_profile_preserve_center:76``.
 
-**Faithfully replicated, not yet fixed -- read before changing anything here.**
-
-``get_t_profile_from_castor`` recomputes its own psi grid from file rather
-than using the caller's, so with an extended boundary T sits on the
-*unextended* grid while ffprime sits on the extended one. This is almost
-certainly a bug, but fixing it changes numerical output for every
-extended-boundary run already published. **Do not fix without confirming with
-George first** -- see the "T profile grid" item in the refactor plan. This
-module intentionally reproduces the old behaviour so golden tests can compare
-against it; the fix, once approved, lands as its own isolated commit.
-
-The ``jpol[1::]`` slice in ``get_ffprime_profile_from_castor`` was flagged in
-an earlier pass as a length-mismatch bug; verified false against the real
-`qa2.1_g2.300` fixtures (both arrays are length 1000 after slicing). The
-`xn_h*` vs `xn_f*` naming is the standard VMEC/NEMEC half-mesh/full-mesh
-convention, so the slice plausibly aligns two grids on purpose. Preserved
-as-is.
+**Faithfully replicated, not yet fixed -- see ``KNOWN_ISSUES.md`` at the repo
+root before changing anything in ``get_t_profile_from_castor`` or
+``get_ffprime_profile_from_castor``.** Both contain behaviour preserved
+deliberately pending George's physics judgement (a wrong-grid bug and a
+formula that cancels out density entirely in T; a half-mesh alignment
+question in ffprime). That file is the single source of truth for these --
+this docstring intentionally does not duplicate the detail.
 
 **Suffix threaded explicitly** rather than hardcoded, same as `boundary.py`.
 """
@@ -120,24 +110,17 @@ def get_t_profile_from_castor(
 ) -> np.ndarray:
     """The temperature profile JOREK needs.
 
-    KNOWN GRID BUG, PRESERVED INTENTIONALLY: this recomputes its own psi grid
-    from ``xn_fpol_stor0_{suffix}`` rather than accepting the caller's,
-    exactly as the old ``get_T_prof_from_castor`` did. When the boundary is
-    extended, this means T ends up on the unextended grid while ffprime (which
-    does take the caller's ``psi``, see above) sits on the extended one. Do
-    not fix without confirming with George -- it changes published numbers.
+    Preserves two behaviours deliberately, pending George's physics judgement
+    -- see ``KNOWN_ISSUES.md`` #1 and #2 at the repo root for the full
+    explanation and verification:
 
-    SEPARATE FINDING, ALSO UNCONFIRMED: ``rho_profile`` has **no effect on the
-    output**. ``T_eV = pres / (rho*e)`` followed by
-    ``T_jorek = T_eV * (rho*e*MU_0)`` cancels ``rho`` and ``e`` exactly, so
-    ``T_jorek`` reduces algebraically to ``pres * MU_0`` (plus the near-zero
-    floor) regardless of what density is passed in. Verified numerically
-    against the real `qa2.1_g2.300` fixture across several very different
-    ``rho_profile`` values (scalar and full-length array) -- output was
-    bit-for-bit identical every time. This is preserved as-is because it is
-    not clear whether it is a bug (rho was meant to matter and doesn't due to
-    a formula error) or intentional (the "T" JOREK receives may be a
-    normalised quantity where this cancellation is by design). Ask George.
+    1. Recomputes its own psi grid from file instead of using the caller's,
+       so T sits on the unextended grid even when the boundary is extended.
+    2. ``rho_profile`` cancels out of the output algebraically and has no
+       effect on the result, verified against the real fixture.
+
+    Do not change either without confirming first -- both alter published
+    numbers.
     """
     rho_profile = np.asarray(rho_profile, dtype=float)
     psi = np.abs(load_two_col_data(f"{cotrans_dir}/xn_fpol_stor0_{suffix}")[:, 1])

@@ -85,6 +85,12 @@ current directory → `~/.config/ashen/site.toml`.
 bin/            entry-point shims; the only place sys.path is touched
 src/ashen/
   config.py     site.toml discovery and path resolution
+  namelist.py   Fortran namelist reading and editing
+  paths.py      run-folder conventions, restart-step padding
+  physics.py    constants used on the JOREK path
+  castor_io.py  shared CASTOR3D two-column file parser
+  boundary.py   plasma boundary geometry, psi-grid extension
+  profiles.py   CASTOR3D -> JOREK profile translation
   cli/          argument handling, importable for testing
 tests/
   unit/         run anywhere, no JOREK needed
@@ -92,10 +98,16 @@ tests/
   fixtures/     vendored CASTOR3D inputs
 ```
 
+**`KNOWN_ISSUES.md`** tracks physics-affecting behaviour found during the port
+and deliberately left unfixed pending George's judgement -- read it before
+touching `profiles.py`.
+
 ## Status
 
-Phase 1 of the refactor. `config.py` and `--show-config` are complete and
-tested; the run stages are declared in the CLI but not yet implemented. Use the
+Phase 2 of the refactor: the leaf modules above are complete and unit-tested,
+several verified numerically against real CASTOR3D fixture data. `shotfile.py`
+and `runner.py` (Phase 3, what actually makes `run_jorek` runnable) do not
+exist yet -- the CLI's run stages still print "not implemented". Use the
 existing `Columbia/run_jorek.py` until Phase 3 lands.
 
 ## Tests
