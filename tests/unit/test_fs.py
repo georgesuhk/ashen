@@ -3,7 +3,8 @@
 Symlink creation needs elevated privileges on Windows without Developer Mode
 enabled. Rather than skip the whole module, each symlink-dependent test probes
 capability first and skips itself if unsupported -- copy_all_files tests
-always run everywhere.
+always run everywhere. The ``require_symlinks`` fixture lives in conftest.py
+so test_runner.py can share it.
 """
 
 from __future__ import annotations
@@ -11,27 +12,6 @@ from __future__ import annotations
 import pytest
 
 from ashen.fs import copy_all_files, symlink_dir, symlink_file, symlink_files_in
-
-
-def _symlinks_supported(tmp_path) -> bool:
-    probe_target = tmp_path / "_probe_target"
-    probe_target.mkdir()
-    probe_link = tmp_path / "_probe_link"
-    try:
-        probe_link.symlink_to(probe_target, target_is_directory=True)
-        return True
-    except OSError:
-        return False
-    finally:
-        if probe_link.exists() or probe_link.is_symlink():
-            probe_link.unlink()
-
-
-@pytest.fixture
-def require_symlinks(tmp_path):
-    if not _symlinks_supported(tmp_path):
-        pytest.skip("symlinks not permitted on this machine (no Developer Mode / not root)")
-
 
 # --- copy_all_files (no symlinks involved, runs everywhere) --------------------
 

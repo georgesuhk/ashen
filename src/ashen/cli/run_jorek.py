@@ -1,10 +1,4 @@
-"""``run_jorek`` entry point.
-
-Phase 1 implements only ``--show-config``. The run stages (``--run_eq``,
-``--run``, ``--run_r``, ``--run_sw``, ``--dry-run``) arrive in Phase 3 once
-shotfile validation and the runner exist; they are declared here already so the
-CLI surface is visible and stable.
-"""
+"""``run_jorek`` entry point: prepare a run folder and submit JOREK jobs."""
 
 from __future__ import annotations
 
@@ -12,11 +6,14 @@ import argparse
 from pathlib import Path
 
 from ashen.config import SiteConfigError, load_site
-
-NOT_YET = (
-    "Not implemented yet (Phase 3). Phase 1 provides --show-config only; use "
-    "the existing Columbia/run_jorek.py until the runner lands."
+from ashen.runner import (
+    prepare_run,
+    submit_eq,
+    submit_main,
+    submit_restart,
+    submit_starwall,
 )
+from ashen.shotfile import ShotfileError, load_shotfile
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,7 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "shot_file",
         nargs="?",
-        help="shotfile.py describing the run (default: ./shotfile.py)",
+        default=None,
+        help="shotfile.py describing the run (required unless --show-config)",
     )
     parser.add_argument(
         "--show-config",
@@ -41,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="explicit site.toml (default: $ASHEN_SITE, then upward search)",
     )
 
-    stages = parser.add_argument_group("run stages (Phase 3)")
+    stages = parser.add_argument_group("run stages")
     stages.add_argument("--dry-run", action="store_true",
                         help="show planned actions without touching disk")
     stages.add_argument("--run", action="store_true", help="submit the main run")
@@ -72,12 +70,52 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
 
-    stage_flags = (
-        args.run, args.run_i, args.run_r, args.run_eq, args.run_sw, args.dry_run
-    )
-    if any(stage_flags) or args.shot_file:
-        print(f"error: {NOT_YET}")
-        return 2
+    if args.shot_file is None:
+        build_parser().print_help()
+        return 0
 
-    build_parser().print_help()
+    try:
+        params = load_shotfile(args.shot_file)
+    except ShotfileError as exc:
+        print(f"error: {exc}")
+        return 1
+
+    try:
+        site = load_site(args.site)
+    except SiteConfigError as exc:
+        print(f"error: {exc}")
+        return 1
+
+    run_dir = Path.cwd()
+
+    try:
+        result = prepare_run(
+            params, site, run_dir, replace=args.replace, dry_run=args.dry_run
+        )
+    except (ShotfileError, NotImplementedError, FileNotFoundError, FileExistsError) as exc:
+        print(f"error: {exc}")
+        return 1
+
+    if args.dry_run:
+        print("Dry run -- no files were written. Planned actions:")
+        for action in result.actions:
+            print(f"  {action}")
+    else:
+        print(f"with_refluid: {params.with_refluid}")
+        print(f"freeboundary: {params.freeboundary}")
+        print(f"extend_bnd:   {params.extend_bnd}")
+        print(f"eta:          {params.eta}")
+        print(f"JOREK shot folder populated at: {run_dir}")
+
+    if args.run_eq:
+        submit_eq(result.paths, site, params, dry_run=args.dry_run)
+    if args.run_i:
+        submit_main(result.paths, site, params, interactive=True, dry_run=args.dry_run)
+    if args.run:
+        submit_main(result.paths, site, params, interactive=False, dry_run=args.dry_run)
+    if args.run_r:
+        submit_restart(result.paths, site, params, dry_run=args.dry_run)
+    if args.run_sw:
+        submit_starwall(result.paths, site, params, dry_run=args.dry_run)
+
     return 0
