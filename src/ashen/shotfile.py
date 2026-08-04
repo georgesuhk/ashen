@@ -117,6 +117,12 @@ class ShotParams:
                 "castor_params is required when any of ffprime_method/T_method/"
                 "rho_method/bnd_method is 'castor'"
             )
+        if uses_castor and not ({"machine", "machine_folder"} & self.castor_params.keys()):
+            raise ShotfileError(
+                "castor_params needs 'machine' (a subfolder name under site.toml's "
+                "castor_root, e.g. 'DIIID_low_pres') or, for backward compatibility, "
+                "an explicit absolute 'machine_folder'"
+            )
         if self.rho_method == "const" and self.rho_const is None:
             raise ShotfileError("rho_const is required when rho_method='const'")
         if self.bnd_method == "file" and self.bnd_file is None:

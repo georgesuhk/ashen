@@ -77,11 +77,15 @@ def test_the_real_shotfile_loads(repo_root):
     assert params.with_refluid is True
     assert params.re_initialize == 2
     assert params.castor_params["scan_folder"] == "eta1e-6_rf"
+    # castor_master_folder was migrated away (see the refactor plan's "Gap
+    # found and fixed" note) in favour of castor_params["machine"], resolved
+    # against site.toml's castor_root -- so it's no longer present to warn
+    # about, but shot_folder/template_folder still are.
+    assert params.castor_params["machine"] == "DIIID_low_pres"
     # n0 = 1e18 is a scratch variable feeding rho_const -- must not raise.
     deprecated = {str(w.message) for w in caught}
     assert any("shot_folder" in msg for msg in deprecated)
     assert any("template_folder" in msg for msg in deprecated)
-    assert any("castor_master_folder" in msg for msg in deprecated)
 
 
 @pytest.fixture
@@ -184,6 +188,31 @@ def test_castor_params_required_when_any_method_is_castor(tmp_path):
 
 def test_castor_params_not_required_when_no_method_is_castor(tmp_path):
     load_shotfile(write_shotfile(tmp_path, MINIMAL))  # all "file"/"const" -- fine
+
+
+def test_castor_params_needs_machine_or_machine_folder(tmp_path):
+    """Neither "machine" (subfolder name, resolved against site.toml's
+    castor_root) nor the legacy absolute "machine_folder" is present --
+    should fail loudly at load time, not with a KeyError deep inside
+    runner.py's prepare_run."""
+    body = MINIMAL.replace(
+        'bnd_method = "file"', 'bnd_method = "castor"'
+    ) + 'castor_params = {"scan_folder": "eta1e-6_rf", "qa": 2.1, "g": 2.3}\n'
+
+    with pytest.raises(ShotfileError, match="machine"):
+        load_shotfile(write_shotfile(tmp_path, body))
+
+
+def test_castor_params_machine_key_is_sufficient(tmp_path):
+    body = MINIMAL.replace(
+        'bnd_method = "file"', 'bnd_method = "castor"'
+    ) + (
+        'castor_params = {"machine": "DIIID_low_pres", '
+        '"scan_folder": "eta1e-6_rf", "qa": 2.1, "g": 2.3}\n'
+    )
+
+    params = load_shotfile(write_shotfile(tmp_path, body))
+    assert params.castor_params["machine"] == "DIIID_low_pres"
 
 
 def test_rho_const_required_for_const_method(tmp_path):

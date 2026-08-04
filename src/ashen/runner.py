@@ -27,6 +27,11 @@ has passed.
   HPC (not this dev clone's copy-based bypass) turned it into a
   ``shutil.SameFileError`` in :func:`submit_starwall`. See that function's
   docstring.
+- ``castor_params["machine_folder"]`` no longer has to be a hand-built
+  absolute path in every shotfile: ``castor_params["machine"]`` (just the
+  subfolder name, e.g. ``"DIIID_low_pres"``) is now joined onto
+  ``site.toml``'s ``castor_root``. ``"machine_folder"`` still wins if a
+  shotfile sets it explicitly, for backward compatibility.
 
 **Not fixed here -- see ``KNOWN_ISSUES.md``:** the T-profile grid and
 density-independence issues in :func:`ashen.profiles.get_t_profile_from_castor`
@@ -203,8 +208,13 @@ def prepare_run(
 
     if _uses_castor(params):
         cp = params.castor_params
-        cotrans_dir = f"{cp['machine_folder']}/equilib/cotrans/qa{cp['qa']:.1f}/a1.00_g{cp['g']:.3f}"
-        castor_dir = f"{cp['machine_folder']}/castor3d/{cp['scan_folder']}/qa{cp['qa']:.1f}/a1.00_g{cp['g']:.3f}"
+        # "machine_folder" (an absolute path) wins if a shotfile still sets it
+        # directly; otherwise "machine" (just the subfolder name, e.g.
+        # "DIIID_low_pres") is joined onto site.toml's castor_root. See the
+        # refactor plan's "Gap found and fixed" note on castor_master_folder.
+        machine_folder = cp.get("machine_folder") or str(site.castor_root / cp["machine"])
+        cotrans_dir = f"{machine_folder}/equilib/cotrans/qa{cp['qa']:.1f}/a1.00_g{cp['g']:.3f}"
+        castor_dir = f"{machine_folder}/castor3d/{cp['scan_folder']}/qa{cp['qa']:.1f}/a1.00_g{cp['g']:.3f}"
 
         castor_psi = prof_mod.get_psi_from_castor(cotrans_dir, params.castor_suffix)
         psi, psi_n = castor_psi.psi, castor_psi.psi_n

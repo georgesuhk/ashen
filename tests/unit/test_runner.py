@@ -74,6 +74,48 @@ def test_dry_run_computes_a_real_psi_edge(synthetic_campaign, tmp_path):
     assert 0 < result.real_psi_edge < 1
 
 
+def test_castor_params_machine_resolves_against_site_castor_root(synthetic_campaign, tmp_path):
+    """castor_params["machine"] (just the subfolder name) should resolve to
+    the exact same machine_folder as the legacy explicit absolute path --
+    see the refactor plan's "Gap found and fixed" note on
+    castor_master_folder. synthetic_campaign's fixture data lives at
+    site.castor_root / "TESTMACHINE", matching castor_params["machine_folder"]
+    used elsewhere in this file.
+    """
+    site, template_dir, params = synthetic_campaign
+    legacy_machine_folder = params.castor_params["machine_folder"]
+    assert legacy_machine_folder == str(site.castor_root / "TESTMACHINE")
+
+    new_style_params = dataclasses.replace(
+        params,
+        castor_params={
+            k: v for k, v in params.castor_params.items() if k != "machine_folder"
+        }
+        | {"machine": "TESTMACHINE"},
+    )
+
+    legacy_result = prepare_run(params, site, tmp_path / "legacy", dry_run=True)
+    new_style_result = prepare_run(new_style_params, site, tmp_path / "new_style", dry_run=True)
+
+    assert new_style_result.real_psi_edge == pytest.approx(legacy_result.real_psi_edge)
+
+
+def test_castor_params_explicit_machine_folder_wins_over_machine(synthetic_campaign, tmp_path):
+    """If both are present, the explicit absolute path takes precedence --
+    lets an existing shotfile keep working exactly as before even if
+    "machine" is added alongside it for some other reason."""
+    site, template_dir, params = synthetic_campaign
+    params = dataclasses.replace(
+        params,
+        castor_params={**params.castor_params, "machine": "does-not-exist-anywhere"},
+    )
+
+    # Would raise (missing CASTOR3D files) if "machine" won instead of
+    # "machine_folder".
+    result = prepare_run(params, site, tmp_path / "rundir", dry_run=True)
+    assert 0 < result.real_psi_edge < 1
+
+
 def test_dry_run_still_validates_missing_starwall_response(synthetic_campaign, tmp_path):
     """Validation happens before any side effect, but this specific check
     (starwall response existence) is itself a side-effect-adjacent read that
