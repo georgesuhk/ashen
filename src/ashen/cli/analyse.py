@@ -92,7 +92,12 @@ def _run_case(
         pad_width=paths.pad_width,
     )
 
-    if "zerod" in diags:
+    # poincare implies zerod even if not requested explicitly: `plot`'s LCTT
+    # figure reads each step's true time from the zeroD cache
+    # (cli/plot.py:_plot_connection_length), so a poincare-only gather that
+    # skipped it would leave LCTT with nothing to read. Cache-gated per step,
+    # so this costs nothing once zerod has already run.
+    if "zerod" in diags or "poincare" in diags:
         total = len(case.steps)
         for i, step in enumerate(case.steps, start=1):
             if force or not paths.zero_d(step).is_file():
