@@ -17,6 +17,10 @@ namelist        = "in_main"
 # against the per-line Poincare cache: adding a psi_n traces only the new
 # starting positions, and raising n_turns resumes each line from its last
 # puncture rather than starting over. Neither triggers a rescan.
+#
+# psi_n_in accepts either an explicit list (as below), or a generated range:
+#   psi_n_in = { start = 0.05, stop = 0.95, step = 0.05 }   # fixed spacing
+#   psi_n_in = { start = 0.05, stop = 0.95, n = 20 }        # fixed point count
 psi_n_in        = [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
 n_turns         = 1000
 ang_sample_freq = 8
@@ -35,10 +39,17 @@ n_points        = 100
 # deltaphi    = 0.3
 # nsmallsteps = 3
 # rad_range   = [0.001, 0.999]
-# Restricts `plot --diag connection_length`'s psi_n axis to [min, max] --
-# plot-time only, doesn't affect what analyse gathers. Omit to plot every
-# gathered psi_n_in; --psi-range on the command line overrides this per run.
-# lc_psi_range = [0.2, 0.8]
+# Which of the gathered psi_n_in to plot for `plot --diag connection_length`
+# -- plot-time only, doesn't affect what analyse gathers, and can only
+# select/reorder *already-traced* surfaces (no interpolation: a value not
+# actually gathered above shows as a blank/black cell, not an error). Omit to
+# plot every gathered psi_n_in. Same three formats as psi_n_in, plus a
+# min/max bounds filter over whatever psi_n_in resolved to:
+#   lc_psi_n_in = [0.3, 0.5, 0.7]                          # explicit subset
+#   lc_psi_n_in = { start = 0.1, stop = 0.9, step = 0.2 }  # generated range
+#   lc_psi_n_in = { min = 0.2, max = 0.8 }                 # bounds filter
+# --psi-range MIN MAX on the command line applies on top of this per run.
+# lc_psi_n_in = { min = 0.2, max = 0.8 }
 
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 folder = "qa2.1_g2.3/eta1e-3_RE"

@@ -151,14 +151,14 @@ def test_cli_psi_range_with_no_matches_reports_error(campaign, capsys):
     assert "no psi_n_in within range" in capsys.readouterr().out
 
 
-def test_case_lc_psi_range_is_used_without_cli_override(campaign, monkeypatch):
+def test_case_lc_psi_n_in_is_used_without_cli_override(campaign, monkeypatch):
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
         '[cases.test]\n'
         'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
         'steps = [100, 200]\n'
         'psi_n_in = [0.2, 0.5]\n'
-        'lc_psi_range = [0.4, 0.6]\n',
+        'lc_psi_n_in = [0.5]\n',
         encoding="utf-8",
     )
     captured = {}
@@ -167,14 +167,16 @@ def test_case_lc_psi_range_is_used_without_cli_override(campaign, monkeypatch):
     assert captured["targets"] == [0.5]
 
 
-def test_cli_psi_range_overrides_case_lc_psi_range(campaign, monkeypatch):
+def test_cli_psi_range_overrides_case_lc_psi_n_in(campaign, monkeypatch):
+    """--psi-range further narrows whatever lc_psi_n_in already resolved to,
+    rather than replacing it outright."""
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
         '[cases.test]\n'
         'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
         'steps = [100, 200]\n'
         'psi_n_in = [0.2, 0.5]\n'
-        'lc_psi_range = [0.1, 0.3]\n',
+        'lc_psi_n_in = [0.2, 0.5]\n',
         encoding="utf-8",
     )
     captured = {}

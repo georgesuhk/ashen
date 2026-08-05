@@ -102,22 +102,142 @@ def test_four_params_are_overridable_per_case(tmp_path):
     assert case.ntht == 64
 
 
-def test_lc_psi_range_defaults_to_none(tmp_path):
+def test_lc_psi_n_in_defaults_to_none(tmp_path):
     path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\n')
-    assert load_cases(path)["a"].lc_psi_range is None
+    assert load_cases(path)["a"].lc_psi_n_in is None
 
 
-def test_lc_psi_range_is_settable_per_case(tmp_path):
+def test_psi_n_in_as_explicit_list(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\npsi_n_in = [0.1, 0.5, 0.9]\n',
+    )
+    assert load_cases(path)["a"].psi_n_in == [0.1, 0.5, 0.9]
+
+
+def test_psi_n_in_range_with_step(tmp_path):
     path = _write(
         tmp_path,
         """
         [cases.a]
         folder = "a"
         steps = [1]
-        lc_psi_range = [0.2, 0.8]
+        psi_n_in = { start = 0.1, stop = 0.5, step = 0.1 }
         """,
     )
-    assert load_cases(path)["a"].lc_psi_range == [0.2, 0.8]
+    got = load_cases(path)["a"].psi_n_in
+    assert got == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5])
+
+
+def test_psi_n_in_range_with_count(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        folder = "a"
+        steps = [1]
+        psi_n_in = { start = 0.0, stop = 1.0, n = 5 }
+        """,
+    )
+    got = load_cases(path)["a"].psi_n_in
+    assert got == pytest.approx([0.0, 0.25, 0.5, 0.75, 1.0])
+
+
+def test_psi_n_in_range_rejects_both_step_and_n(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        folder = "a"
+        steps = [1]
+        psi_n_in = { start = 0.0, stop = 1.0, step = 0.1, n = 5 }
+        """,
+    )
+    with pytest.raises(CasesError, match="'step' and 'n'"):
+        load_cases(path)
+
+
+def test_psi_n_in_range_requires_step_or_n(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\npsi_n_in = { start = 0.0, stop = 1.0 }\n',
+    )
+    with pytest.raises(CasesError, match="needs 'step' or 'n'"):
+        load_cases(path)
+
+
+def test_psi_n_in_range_rejects_nonpositive_step(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\n'
+        'psi_n_in = { start = 0.0, stop = 1.0, step = 0.0 }\n',
+    )
+    with pytest.raises(CasesError, match="step must be positive"):
+        load_cases(path)
+
+
+def test_psi_n_in_range_rejects_stop_before_start(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\n'
+        'psi_n_in = { start = 1.0, stop = 0.0, step = 0.1 }\n',
+    )
+    with pytest.raises(CasesError, match="stop must be >= start"):
+        load_cases(path)
+
+
+def test_psi_n_in_range_missing_bounds_raises(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\npsi_n_in = { step = 0.1 }\n',
+    )
+    with pytest.raises(CasesError, match="missing"):
+        load_cases(path)
+
+
+def test_lc_psi_n_in_as_explicit_list(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\n'
+        'psi_n_in = [0.1, 0.3, 0.5, 0.7, 0.9]\n'
+        'lc_psi_n_in = [0.3, 0.7]\n',
+    )
+    assert load_cases(path)["a"].lc_psi_n_in == [0.3, 0.7]
+
+
+def test_lc_psi_n_in_as_range(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        folder = "a"
+        steps = [1]
+        lc_psi_n_in = { start = 0.2, stop = 0.6, step = 0.2 }
+        """,
+    )
+    got = load_cases(path)["a"].lc_psi_n_in
+    assert got == pytest.approx([0.2, 0.4, 0.6])
+
+
+def test_lc_psi_n_in_bounds_filter_selects_from_psi_n_in(tmp_path):
+    """{min, max} filters the case's own (already-resolved) psi_n_in, rather
+    than generating new values -- the common "just zoom into a sub-range"
+    case."""
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\n'
+        'psi_n_in = [0.1, 0.3, 0.5, 0.7, 0.9]\n'
+        'lc_psi_n_in = { min = 0.25, max = 0.75 }\n',
+    )
+    assert load_cases(path)["a"].lc_psi_n_in == [0.3, 0.5, 0.7]
+
+
+def test_lc_psi_n_in_bounds_filter_with_no_psi_n_in_is_empty(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\nlc_psi_n_in = { min = 0.25, max = 0.75 }\n',
+    )
+    assert load_cases(path)["a"].lc_psi_n_in == []
 
 
 def test_missing_folder_raises(tmp_path):

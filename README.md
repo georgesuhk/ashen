@@ -112,6 +112,10 @@ The Poincaré cache stores **one field line per starting point**
 Raising `ang_sample_freq` re-samples the flux surface, so only the positions
 that coincide with the previous sampling are reused.
 
+`psi_n_in` accepts an explicit list, or a generated range --
+`{ start, stop, step }` (fixed spacing) or `{ start, stop, n }` (fixed point
+count, like the legacy `np.linspace(min, max, 20)`).
+
 A resumed trace is stitched from more than one integration (`n_segments > 1` on
 the record). For stochastic lines it will not match an uninterrupted trace of
 the same length point-for-point -- it samples the same field and the same
@@ -163,10 +167,31 @@ touching the gathering path.
 - `--step N` (repeatable) restricts Poincare plots to specific steps (default:
   every step in the case).
 - `--linear` / `--smooth` control the connection-length colour maps.
-- `--psi-range MIN MAX` restricts the connection-length psi_n axis to a
-  subset of the gathered `psi_n_in` -- plot-time only, no re-gather needed.
-  Overrides a case's own `lc_psi_range`, if it has one.
+- `--psi-range MIN MAX` further bounds-filters whichever psi_n_in list is
+  already in effect for connection-length -- plot-time only, no re-gather
+  needed.
 - `--dpi N` overrides the figure resolution.
+
+### Plotting a different psi_n selection than you gathered
+
+`lc_psi_n_in` is a separate, plot-time-only case setting for
+`connection_length` -- independent of `psi_n_in`, which controls what
+`analyse` actually traces. It takes the same list/range formats as
+`psi_n_in`, plus a `{ min, max }` bounds filter over whatever `psi_n_in`
+resolved to:
+
+```toml
+lc_psi_n_in = [0.3, 0.5, 0.7]                          # explicit subset
+lc_psi_n_in = { start = 0.1, stop = 0.9, step = 0.2 }  # generated range
+lc_psi_n_in = { min = 0.2, max = 0.8 }                 # bounds filter
+```
+
+Omit it to plot every gathered `psi_n_in`, as before. **No interpolation**:
+`connection_lengths_for_step` matches a plot-time psi_n against the cache
+exactly (same quantisation `LineKey` uses), so a value that wasn't actually
+traced during gathering renders as a visible black cell rather than an
+error -- widening `lc_psi_n_in` beyond what was gathered doesn't add real
+data, only `analyse --diag poincare` with a wider/denser `psi_n_in` does.
 
 Covered this pass: Poincare puncture plots and the LC/LCTT connection-length
 maps -- the two that consume the per-line Poincare cache. Everything else the

@@ -78,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--psi-range", type=float, nargs=2, metavar=("MIN", "MAX"), default=None,
         help="connection_length: restrict the plotted psi_n axis to [MIN, MAX] "
-        "(default: the case's lc_psi_range, or every gathered psi_n_in)",
+        "(applied on top of the case's lc_psi_n_in, or psi_n_in if unset)",
     )
     parser.add_argument("--site", type=Path, default=None, help="explicit site.toml")
     parser.add_argument(
@@ -144,7 +144,7 @@ def _plot_connection_length(
         print(f"  error: {exc}")
         return
 
-    psi_n_in = case.psi_n_in
+    psi_n_in = case.lc_psi_n_in if case.lc_psi_n_in is not None else case.psi_n_in
     if psi_range is not None:
         lo, hi = psi_range
         psi_n_in = [p for p in psi_n_in if lo <= p <= hi]
@@ -215,18 +215,14 @@ def _run_case(
     paths = RunPaths.detect(run_dir)
     case_steps = steps or case.steps
 
-    # --psi-range overrides the case's own lc_psi_range; neither given plots
-    # every gathered psi_n_in, as before.
-    effective_psi_range = psi_range
-    if effective_psi_range is None and case.lc_psi_range is not None:
-        effective_psi_range = tuple(case.lc_psi_range)
-
     if "poincare" in diags:
         _plot_poincare(case, paths, case_steps, dpi=dpi, n_workers=n_workers)
     if "connection_length" in diags:
+        # --psi-range (if given) further bounds-filters whichever list is
+        # already in effect (case.lc_psi_n_in, or case.psi_n_in if unset).
         _plot_connection_length(
             case, paths, case_steps, log=log, smooth=smooth, dpi=dpi,
-            psi_range=effective_psi_range,
+            psi_range=psi_range,
         )
 
 

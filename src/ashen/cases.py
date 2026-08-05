@@ -14,6 +14,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 __all__ = ["Case", "CasesError", "load_cases"]
 
 #: Case fields that come from [defaults] or a case table, not computed.
@@ -21,7 +23,7 @@ _CASE_KEYS = (
     "folder", "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
-    "lc_psi_range",
+    "lc_psi_n_in",
 )
 
 
@@ -56,11 +58,11 @@ class Case:
     deltaphi: float = 0.3
     nsmallsteps: int = 3
     rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
-    #: Restricts the LC/LCTT connection-length plot's psi_n axis to a
-    #: [min, max] subset of psi_n_in -- None (default) plots every gathered
-    #: value. Plot-time only: does not affect what analyse gathers, so
-    #: narrowing this needs no re-gather.
-    lc_psi_range: list[float] | None = None
+    #: Which of the gathered psi_n_in to plot for LC/LCTT -- None (default)
+    #: plots every one. Plot-time only: does not affect what analyse gathers,
+    #: and can only select/reorder *already-traced* surfaces (see
+    #: _psi_from_spec's docstring) -- it cannot invent new ones.
+    lc_psi_n_in: list[float] | None = None
 
 
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:
@@ -77,6 +79,62 @@ def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]
     raise CasesError(
         f"{source}: case {case_name!r} steps must be a list or a "
         f"{{start, stop, step}} table, got {spec!r}"
+    )
+
+
+def _psi_from_spec(
+    spec: object, *, case_name: str, source: Path, field_name: str
+) -> list[float]:
+    """Resolve a psi_n_in / lc_psi_n_in spec into explicit values.
+
+    Either an explicit list, or a ``{start, stop, step}`` / ``{start, stop,
+    n}`` table generating an evenly spaced, *inclusive-of-stop* range via
+    ``np.linspace`` -- computing the point count up front (rather than
+    ``np.arange``) avoids float-accumulation drift landing just short of
+    ``stop``. ``n`` mirrors the legacy ``np.linspace(min, max, 20))``
+    convention at ``Columbia/NL_kinks/analysis.py:81``.
+
+    A generated or listed value only produces real connection-length data at
+    plot time if a field line was actually traced at that (quantised) psi_n
+    during gathering -- ``connection_lengths_for_step`` matches exactly, with
+    no interpolation. A value with no match comes back ``nan``, rendered as a
+    visible black cell rather than silently missing or erroring.
+    """
+    if isinstance(spec, list):
+        return [float(p) for p in spec]
+    if isinstance(spec, dict):
+        missing = {"start", "stop"} - set(spec)
+        if missing:
+            raise CasesError(
+                f"{source}: case {case_name!r} {field_name} table missing {sorted(missing)}"
+            )
+        start, stop = float(spec["start"]), float(spec["stop"])
+        if "step" in spec and "n" in spec:
+            raise CasesError(
+                f"{source}: case {case_name!r} {field_name} table cannot have "
+                "both 'step' and 'n'"
+            )
+        if "step" in spec:
+            step = float(spec["step"])
+            if step <= 0:
+                raise CasesError(
+                    f"{source}: case {case_name!r} {field_name} step must be positive"
+                )
+            n = round((stop - start) / step) + 1
+        elif "n" in spec:
+            n = int(spec["n"])
+        else:
+            raise CasesError(
+                f"{source}: case {case_name!r} {field_name} table needs 'step' or 'n'"
+            )
+        if n < 1:
+            raise CasesError(
+                f"{source}: case {case_name!r} {field_name} stop must be >= start"
+            )
+        return [float(p) for p in np.linspace(start, stop, n)]
+    raise CasesError(
+        f"{source}: case {case_name!r} {field_name} must be a list, or a "
+        f"{{start, stop, step}}/{{start, stop, n}} table, got {spec!r}"
     )
 
 
@@ -108,6 +166,22 @@ def load_cases(path: Path | str) -> dict[str, Case]:
         if "steps" not in merged:
             raise CasesError(f"{path}: case {name!r} has no 'steps'")
         steps = _steps_from_spec(merged.pop("steps"), case_name=name, source=path)
+
+        if "psi_n_in" in merged:
+            merged["psi_n_in"] = _psi_from_spec(
+                merged["psi_n_in"], case_name=name, source=path, field_name="psi_n_in"
+            )
+
+        if "lc_psi_n_in" in merged:
+            spec = merged["lc_psi_n_in"]
+            if isinstance(spec, dict) and {"min", "max"} <= set(spec):
+                lo, hi = float(spec["min"]), float(spec["max"])
+                base = merged.get("psi_n_in", [])
+                merged["lc_psi_n_in"] = [p for p in base if lo <= p <= hi]
+            else:
+                merged["lc_psi_n_in"] = _psi_from_spec(
+                    spec, case_name=name, source=path, field_name="lc_psi_n_in"
+                )
 
         unknown = sorted(set(merged) - set(_CASE_KEYS))
         if unknown:
