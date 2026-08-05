@@ -402,11 +402,19 @@ def run_poincare_step(
         if key.psi_n in known:
             keys.append(key)
 
+    # A duplicate psi_n in psi_n_list (or two values that quantise to the same
+    # (R, Z, phi)) would otherwise reach plan_work as two identical requests;
+    # since neither is in `cached` yet, both get classified as "new" and the
+    # second append_line for that key fails -- it was created by the first
+    # within this same run, not in the pre-existing cache that gates
+    # append_line's replace=True.
+    keys = list(dict.fromkeys(keys))
+
     new, extensions = pc.plan_work(cached, keys, n_turns)
     report = StepReport(
         step=step,
         cache=cache_path,
-        cached=len(set(keys)) - len(new) - len(extensions),
+        cached=len(keys) - len(new) - len(extensions),
         traced=len(new),
         extended=len(extensions),
     )
