@@ -31,11 +31,22 @@ from typing import Mapping, Sequence
 
 from ashen.paths import RunPaths
 
-__all__ = ["Jorek2Error", "Jorek2Run", "ToolResult", "run_tool", "run_zero_d"]
+__all__ = [
+    "Jorek2Error", "MissingRestartError", "Jorek2Run", "ToolResult", "run_tool", "run_zero_d",
+]
 
 
 class Jorek2Error(RuntimeError):
     """A jorek2_* tool exited non-zero, or an expected output was missing."""
+
+
+class MissingRestartError(FileNotFoundError):
+    """The restart file for a requested step doesn't exist.
+
+    Distinguished from a bare :class:`FileNotFoundError` (e.g. a missing
+    executable) so per-step gather loops can catch this specifically, warn,
+    and move on to the next step instead of aborting the whole scan.
+    """
 
 
 @dataclass(frozen=True)
@@ -87,7 +98,8 @@ def run_tool(
     *,
     step: int,
     dest_dir: Path | str,
-    outputs: Sequence[str],
+    outputs: Sequence[str] = (),
+    output_glob: str | None = None,
     stdin_text: str | None = None,
     stdin_is_namelist: bool = False,
     restart_name: str = "jorek_restart.h5",
@@ -118,6 +130,15 @@ def run_tool(
     missing -- see the module docstring for why that matters here
     specifically.
 
+    ``output_glob``, if given, additionally collects every top-level file
+    matching that pattern -- for a tool like ``jorek2_four`` whose output
+    filenames depend on the model (which variables it carries) and the run's
+    own namelist (how many toroidal harmonics), so they can't be listed in
+    ``outputs`` ahead of time. Collected files are keyed by name in the same
+    ``ToolResult.outputs`` mapping. Raises :class:`Jorek2Error` if nothing
+    matches -- a tool that "succeeded" but produced none of its expected
+    output is exactly the silent failure this function exists to prevent.
+
     ``env`` is merged over the parent environment for the child only. This is
     how ``OMP_NUM_THREADS`` gets set per invocation instead of being inherited
     from whatever the shell happens to have -- ``site.toml``'s
@@ -137,7 +158,7 @@ def run_tool(
         raise FileNotFoundError(f"{tool} not found at {exe}")
     restart_src = run.restart_path(step)
     if not restart_src.is_file():
-        raise FileNotFoundError(f"restart file not found: {restart_src}")
+        raise MissingRestartError(f"restart file not found: {restart_src}")
 
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -199,6 +220,18 @@ def run_tool(
             shutil.copy(src, dst)
             collected[output] = dst
 
+        if output_glob is not None:
+            matches = sorted(p for p in workdir.glob(output_glob) if p.is_file())
+            if not matches:
+                raise Jorek2Error(
+                    f"{tool} produced no output matching {output_glob!r} for "
+                    f"step {step} in {run.run_dir}"
+                )
+            for src in matches:
+                dst = dest_dir / src.name
+                shutil.copy(src, dst)
+                collected[src.name] = dst
+
     stdout = ""
     if capture_stdout and result.stdout is not None:
         stdout = result.stdout.decode(errors="replace")
@@ -215,26 +248,40 @@ def run_zero_d(run: Jorek2Run, step: int, paths: RunPaths) -> Path:
     restart files already present in the run folder, and the output
     (``postproc/zeroD_quantities_s<step>.dat``) is meant to persist there as
     a cache, not be collected and discarded.
+
+    The control script is written to a unique temp file rather than a fixed
+    name in ``run_dir`` -- ``analyse``'s zerod gathering now fans out across
+    processes sharing the same ``run_dir``, and a fixed name would let one
+    step's process overwrite another's script before it's read, exactly the
+    race :func:`ashen.diagnostics.poincare._write_flux_surface` was fixed for.
     """
     from ashen.postproc import zero_d_script
 
     exe = run.exe_dir / "jorek2_postproc"
     if not exe.is_file():
         raise FileNotFoundError(f"jorek2_postproc not found at {exe}")
+    restart_src = run.restart_path(step)
+    if not restart_src.is_file():
+        raise MissingRestartError(f"restart file not found: {restart_src}")
 
     paths.postproc_dir.mkdir(parents=True, exist_ok=True)
-    script_path = run.run_dir / "postproc_zeroD_script.in"
-    script_path.write_text(
-        zero_d_script(run.namelist.name, paths.step_str(step)), encoding="utf-8"
+    fd, script_name = tempfile.mkstemp(
+        prefix="postproc_zeroD_script_", suffix=".in", dir=run.run_dir
     )
-    with open(script_path, encoding="utf-8") as stdin_file:
-        result = subprocess.run(
-            [str(exe)],
-            stdin=stdin_file,
-            cwd=run.run_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+    script_path = Path(script_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(zero_d_script(run.namelist.name, paths.step_str(step)))
+        with open(script_path, encoding="utf-8") as stdin_file:
+            result = subprocess.run(
+                [str(exe)],
+                stdin=stdin_file,
+                cwd=run.run_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+    finally:
+        script_path.unlink(missing_ok=True)
     if result.returncode != 0:
         raise Jorek2Error(
             f"jorek2_postproc exited {result.returncode} for zeroD at step "

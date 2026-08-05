@@ -17,7 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from ashen.jorek2 import Jorek2Error, Jorek2Run, run_tool
+from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_tool, run_zero_d
+from ashen.paths import RunPaths
 
 TOOL_NAME = "stub_tool.cmd" if os.name == "nt" else "stub_tool"
 
@@ -32,6 +33,10 @@ with open("cwd_listing.txt", "w") as f:
     f.write("\\n".join(sorted(os.listdir("."))))
 with open("env_echo.txt", "w") as f:
     f.write(os.environ.get("OMP_NUM_THREADS", "<unset>"))
+for name in os.environ.get("STUB_GLOB_FILES", "").split(os.pathsep):
+    if name:
+        with open(name, "w") as f:
+            f.write("x")
 sys.stdout.write(os.environ.get("STUB_STDOUT", ""))
 sys.exit(int(os.environ.get("STUB_EXIT", "0")))
 """
@@ -167,6 +172,34 @@ def test_missing_restart_raises(stub_run, tmp_path):
         )
 
 
+def test_missing_restart_raises_missing_restart_error(stub_run, tmp_path):
+    """MissingRestartError is a FileNotFoundError subclass so old catches
+    still work, but callers that want to distinguish "no restart for this
+    step" from any other missing-file failure can catch it specifically."""
+    with pytest.raises(MissingRestartError):
+        run_tool(
+            stub_run, TOOL_NAME, step=999999, dest_dir=tmp_path / "dest",
+            outputs=[], stdin_text="x",
+        )
+
+
+def test_run_zero_d_missing_restart_raises(tmp_path):
+    """run_zero_d never stages anything (it runs in place), so it must check
+    for the restart file itself rather than relying on jorek2_postproc to
+    fail -- this is what lets analyse's zerod loop distinguish "no restart
+    yet for this step" from a genuine tool crash and skip just that step."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "jorek2_postproc").write_text("x", encoding="utf-8")
+    namelist = run_dir / "in_main"
+    namelist.write_text("&in1\n&end\n", encoding="utf-8")
+    run = Jorek2Run(run_dir=run_dir, exe_dir=run_dir, namelist=namelist, pad_width=6)
+    paths = RunPaths(run_dir, pad_width=6)
+
+    with pytest.raises(MissingRestartError):
+        run_zero_d(run, 100, paths)
+
+
 # --- env / stdout, added for the batched Poincare tracer -------------------------
 
 
@@ -199,3 +232,33 @@ def test_stdout_is_discarded_unless_requested(stub_run, tmp_path, monkeypatch):
         outputs=["stdin_echo.txt"], stdin_text="x",
     )
     assert result.stdout == ""
+
+
+# --- output_glob, added for jorek2_four's dynamically-named outputs --------------
+
+
+def test_output_glob_collects_matching_files(stub_run, tmp_path, monkeypatch):
+    monkeypatch.setenv("STUB_GLOB_FILES", "Psi_modes_n000" + os.pathsep + "u_modes_n000")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        output_glob="*_modes_n???", stdin_text="x",
+    )
+    assert set(result.outputs) == {"Psi_modes_n000", "u_modes_n000"}
+    assert result["Psi_modes_n000"].read_text(encoding="utf-8") == "x"
+
+
+def test_output_glob_and_outputs_can_combine(stub_run, tmp_path, monkeypatch):
+    monkeypatch.setenv("STUB_GLOB_FILES", "Psi_modes_n000")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], output_glob="*_modes_n???", stdin_text="x",
+    )
+    assert set(result.outputs) == {"stdin_echo.txt", "Psi_modes_n000"}
+
+
+def test_output_glob_raises_when_nothing_matches(stub_run, tmp_path):
+    with pytest.raises(Jorek2Error, match="produced no output matching"):
+        run_tool(
+            stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+            output_glob="*_modes_n???", stdin_text="x",
+        )

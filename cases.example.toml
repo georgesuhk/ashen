@@ -2,7 +2,7 @@
 #
 # Copy to a campaign folder (e.g. Columbia/NL_kinks/cases.toml) and edit.
 # `bin/analyse --list` shows what's defined; `bin/analyse --case NAME --diag
-# zerod --diag poincare --diag profiles` gathers data for one case.
+# zerod --diag poincare --diag profiles --diag four` gathers data for one case.
 #
 # Replaces analysis.py's ~25 stacked reassignments of the same two variables
 # (restart_times, run_folders), where only the last line took effect and
@@ -25,6 +25,16 @@ vars            = ["Jgrad", "currdens"]
 coords_var      = "R"
 tor_mode        = "midplane"
 n_points        = 100
+# jorek2_four's own field-line-tracing (magnetic-coordinate) parameters,
+# normally supplied by a hand-written four_params.nml -- `analyse` generates
+# that file itself per step from these. Commented values below are
+# jorek2_four's own built-in defaults; an unconfigured case reproduces them.
+# nstpts      = 30
+# ntht        = 32
+# nmaxsteps   = 2500
+# deltaphi    = 0.3
+# nsmallsteps = 3
+# rad_range   = [0.001, 0.999]
 
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 folder = "qa2.1_g2.3/eta1e-3_RE"

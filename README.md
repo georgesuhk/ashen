@@ -87,12 +87,17 @@ anywhere:
 
 ```bash
 python ~/ashen/bin/analyse --list                          # show defined cases
-python ~/ashen/bin/analyse --case "qa2.1_g2.3/eta1e-3_RE" --diag zerod --diag poincare --diag profiles
+python ~/ashen/bin/analyse --case "qa2.1_g2.3/eta1e-3_RE" --diag zerod --diag poincare --diag profiles --diag four
 ```
 
 `--force` re-runs even where cached output already exists (default: reuse it).
 This gathers and caches data only -- plotting is not ported yet, see Status
 below.
+
+`--diag poincare` also runs `zerod` even if not requested explicitly: `plot`'s
+LCTT figure reads each step's true time from the zeroD cache, so a
+poincare-only gather would otherwise leave it with nothing to read. Cache-gated
+per step, so this costs nothing once zerod has already run.
 
 ### Poincaré scans are incremental
 
@@ -113,10 +118,24 @@ the same length point-for-point -- it samples the same field and the same
 invariant set, so island widths, diffusion and Poincaré plots are unaffected,
 but it is not bit-reproducible. Use `--force` when a result must be.
 
+### Fourier decomposition (jorek2_four)
+
+`--diag four` gathers a toroidal Fourier decomposition of each restart step,
+one `jorek2_four` process per step. Unlike Poincare tracing this isn't
+incremental -- a decomposition of a single restart isn't resumable, so a step
+with an existing cache (`four_dir/four_s<step>.h5`) is skipped whole unless
+`--force` is given.
+
+`jorek2_four`'s own `nstpts`/`nTht`/`nmaxsteps`/`deltaphi`/`nsmallsteps`/
+`rad_range` knobs (normally read from a hand-written `four_params.nml`) come
+from the case's `[defaults]`/`[cases.*]` entries instead -- `analyse` generates
+that file itself per step. An unconfigured case reproduces `jorek2_four`'s own
+built-in defaults exactly.
+
 ### Cores
 
-One `jorek2_poincare` process per restart step, each OpenMP-threaded over its
-own field lines. Set the split in `site.toml`:
+One `jorek2_poincare` or `jorek2_four` process per restart step, each
+OpenMP-threaded internally. Set the split in `site.toml`:
 
 ```toml
 [diagnostics]

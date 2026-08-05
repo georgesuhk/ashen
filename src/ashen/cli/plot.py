@@ -22,6 +22,8 @@ stochastic factor, the never-implemented ``max_fieldline_pos``) is not ported
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
 from pathlib import Path
 
 from ashen.cases import Case, CasesError, load_cases
@@ -61,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dpi", type=int, default=None, help="override figure DPI")
     parser.add_argument(
+        "--n-workers", type=int, default=None,
+        help="poincare steps rendered concurrently (default: site.toml's "
+        "[diagnostics] n_workers)",
+    )
+    parser.add_argument(
         "--linear", action="store_true",
         help="connection_length: linear colour scale instead of the default log",
     )
@@ -76,16 +83,43 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _plot_poincare(case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None) -> None:
+def _render_poincare_step(step: int, records, *, paths: RunPaths, kwargs: dict) -> Path:
+    """Module-level so it can be pickled for :class:`ProcessPoolExecutor`."""
+    out = paths.figures_dir / f"{step}_poincare.png"
+    plot_poincare_step(records, out, title=f"t={step}", **kwargs)
+    return out
+
+
+def _plot_poincare(
+    case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1
+) -> None:
     kwargs = {} if dpi is None else {"dpi": dpi}
+
+    to_render: list[tuple[int, dict]] = []
     for step in steps:
         records = read_step(paths, step)
         if not records:
             print(f"  step {step}: no Poincare cache, skipped")
             continue
-        out = paths.figures_dir / f"{step}_poincare.png"
-        plot_poincare_step(records, out, title=f"t={step}", **kwargs)
-        print(f"  step {step}: {out}")
+        to_render.append((step, records))
+
+    if not to_render:
+        return
+
+    if n_workers <= 1 or len(to_render) <= 1:
+        for step, records in to_render:
+            out = _render_poincare_step(step, records, paths=paths, kwargs=kwargs)
+            print(f"  step {step}: {out}")
+        return
+
+    one = partial(_render_poincare_step, paths=paths, kwargs=kwargs)
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(one, step, records): step for step, records in to_render}
+        outputs: dict[int, Path] = {}
+        for future in as_completed(futures):
+            outputs[futures[future]] = future.result()
+    for step, _ in to_render:
+        print(f"  step {step}: {outputs[step]}")
 
 
 def _plot_connection_length(
@@ -125,6 +159,25 @@ def _plot_connection_length(
         print(f"  {out}")
 
 
+def _resolve_n_workers(args) -> int:
+    """``--n-workers`` if given, else ``site.toml``'s ``[diagnostics]
+    n_workers`` if that's explicitly set, else 1 (serial).
+
+    Unlike ``cli/analyse.py``'s ``_resolve_parallelism``, an *unset*
+    ``[diagnostics]`` (or no ``site.toml`` at all) does not derive a worker
+    count from the machine's core count: rendering a handful of PNGs is cheap
+    enough that auto-parallelising by default would just spawn processes for
+    no measurable benefit, so plotting stays serial unless asked otherwise.
+    """
+    if args.n_workers is not None:
+        return max(1, args.n_workers)
+    try:
+        diagnostics = load_site(args.site).diagnostics
+    except SiteConfigError:
+        return 1
+    return max(1, diagnostics.n_workers) if diagnostics.n_workers else 1
+
+
 def _run_case(
     case: Case,
     *,
@@ -133,6 +186,7 @@ def _run_case(
     log: bool,
     smooth: bool,
     dpi: int | None,
+    n_workers: int = 1,
 ) -> None:
     run_dir = Path.cwd() / case.folder
     if not run_dir.is_dir():
@@ -141,7 +195,7 @@ def _run_case(
     case_steps = steps or case.steps
 
     if "poincare" in diags:
-        _plot_poincare(case, paths, case_steps, dpi=dpi)
+        _plot_poincare(case, paths, case_steps, dpi=dpi, n_workers=n_workers)
     if "connection_length" in diags:
         _plot_connection_length(case, paths, case_steps, log=log, smooth=smooth, dpi=dpi)
 
@@ -177,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     diags = args.diags or list(DIAG_CHOICES)
+    n_workers = _resolve_n_workers(args)
 
     for name in selected:
         print(f"==== {name} ====")
@@ -188,6 +243,7 @@ def main(argv: list[str] | None = None) -> int:
                 log=not args.linear,
                 smooth=args.smooth,
                 dpi=args.dpi,
+                n_workers=n_workers,
             )
         except FileNotFoundError as exc:
             print(f"error: {exc}")

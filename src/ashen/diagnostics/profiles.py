@@ -14,6 +14,7 @@ plotting code carries.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ashen.jorek2 import Jorek2Run, run_tool
+from ashen.jorek2 import Jorek2Run, MissingRestartError, run_tool
 from ashen.paths import RunPaths, step_str
 from ashen.postproc import profile_script, read_postproc_profile
 
@@ -142,7 +143,12 @@ def gather_profiles(
         done = 0
         for future in as_completed(futures):
             step, var, cache = futures[future]
-            coords_out, var_out = future.result()
+            try:
+                coords_out, var_out = future.result()
+            except MissingRestartError as exc:
+                warnings.warn(f"skipping profile step {step} var {var!r}: {exc}", stacklevel=2)
+                done += 1
+                continue
             np.savez_compressed(cache, x=coords_out, y=var_out)
             done += 1
             if on_progress is not None:

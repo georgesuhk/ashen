@@ -20,6 +20,7 @@ __all__ = ["Case", "CasesError", "load_cases"]
 _CASE_KEYS = (
     "folder", "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
+    "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
 )
 
 
@@ -46,6 +47,14 @@ class Case:
     tor_mode: str = "midplane"
     namelist: str = "in_main"
     n_points: int = 100
+    #: jorek2_four's own defaults (jorek2_four.f90:44-50) -- an unconfigured
+    #: case reproduces exactly what a bare jorek2_four run would do.
+    nstpts: int = 30
+    ntht: int = 32
+    nmaxsteps: int = 2500
+    deltaphi: float = 0.3
+    nsmallsteps: int = 3
+    rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
 
 
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:

@@ -52,6 +52,7 @@ import os
 import re
 import subprocess
 import tempfile
+import warnings
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -62,7 +63,7 @@ import numpy as np
 
 from ashen.castor_io import load_two_col_data
 from ashen.diagnostics import poincare_cache as pc
-from ashen.jorek2 import Jorek2Error, Jorek2Run, run_tool
+from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_tool
 from ashen.paths import RunPaths
 from ashen.postproc import flux_surface_script
 
@@ -378,6 +379,10 @@ def run_poincare_step(
     :mod:`ashen.diagnostics.poincare_cache`), and only the missing lines are
     traced. ``force=True`` discards the existing cache and retraces everything.
     """
+    restart_src = run.restart_path(step)
+    if not restart_src.is_file():
+        raise MissingRestartError(f"restart file not found: {restart_src}")
+
     cache_path = paths.poincare_cache(step)
     if force and cache_path.exists():
         cache_path.unlink()
@@ -495,7 +500,11 @@ def run_poincare_scan(
     if n_workers <= 1 or len(steps) <= 1:
         reports = []
         for i, step in enumerate(steps, start=1):
-            report = one(step)
+            try:
+                report = one(step)
+            except MissingRestartError as exc:
+                warnings.warn(f"skipping poincare step {step}: {exc}", stacklevel=2)
+                continue
             reports.append(report)
             if on_progress is not None:
                 on_progress(i, total, report)
@@ -507,8 +516,14 @@ def run_poincare_scan(
         done = 0
         for future in as_completed(futures):
             idx = futures[future]
-            reports[idx] = future.result()
+            step = steps[idx]
+            try:
+                reports[idx] = future.result()
+            except MissingRestartError as exc:
+                warnings.warn(f"skipping poincare step {step}: {exc}", stacklevel=2)
+                done += 1
+                continue
             done += 1
             if on_progress is not None:
                 on_progress(done, total, reports[idx])
-    return reports
+    return [r for r in reports if r is not None]

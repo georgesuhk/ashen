@@ -19,16 +19,20 @@ See ``ashen/KNOWN_ISSUES.md`` #4 and #5.
 from __future__ import annotations
 
 import argparse
+import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
 from pathlib import Path
 
 from ashen.cases import Case, CasesError, load_cases
 from ashen.config import SiteConfigError, load_site
+from ashen.diagnostics import four as four_diag
 from ashen.diagnostics import poincare as poincare_diag
 from ashen.diagnostics import profiles as profiles_diag
-from ashen.jorek2 import Jorek2Run, run_zero_d
+from ashen.jorek2 import Jorek2Run, MissingRestartError, run_zero_d
 from ashen.paths import RunPaths, read_float
 
-DIAG_CHOICES = ("zerod", "poincare", "profiles")
+DIAG_CHOICES = ("zerod", "poincare", "profiles", "four")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -72,6 +76,49 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _gather_zero_d(
+    jrun: Jorek2Run, paths: RunPaths, steps: list[int], *, force: bool, n_workers: int
+) -> None:
+    """zeroD for every step, cache-gated and fanned out across processes --
+    same shape as :func:`ashen.diagnostics.poincare.run_poincare_scan`.
+
+    A step whose restart file is missing is warned about and skipped rather
+    than aborting the whole case: restart files for a run still in progress
+    are routinely incomplete for the tail of a requested step range.
+    """
+    total = len(steps)
+    tasks: list[tuple[int, int]] = []
+    for i, step in enumerate(steps, start=1):
+        if force or not paths.zero_d(step).is_file():
+            tasks.append((i, step))
+        else:
+            print(f"  zerod {i}/{total}: step {step} [cached]")
+
+    if not tasks:
+        return
+
+    if n_workers <= 1 or len(tasks) <= 1:
+        for i, step in tasks:
+            print(f"  zerod {i}/{total}: step {step}")
+            try:
+                run_zero_d(jrun, step, paths)
+            except MissingRestartError as exc:
+                warnings.warn(f"skipping zerod step {step}: {exc}", stacklevel=2)
+        return
+
+    one = partial(run_zero_d, jrun, paths=paths)
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(one, step): (i, step) for i, step in tasks}
+        for future in as_completed(futures):
+            i, step = futures[future]
+            try:
+                future.result()
+            except MissingRestartError as exc:
+                warnings.warn(f"skipping zerod step {step}: {exc}", stacklevel=2)
+                continue
+            print(f"  zerod {i}/{total}: step {step}")
+
+
 def _run_case(
     case: Case,
     *,
@@ -98,13 +145,7 @@ def _run_case(
     # skipped it would leave LCTT with nothing to read. Cache-gated per step,
     # so this costs nothing once zerod has already run.
     if "zerod" in diags or "poincare" in diags:
-        total = len(case.steps)
-        for i, step in enumerate(case.steps, start=1):
-            if force or not paths.zero_d(step).is_file():
-                print(f"  zerod {i}/{total}: step {step}")
-                run_zero_d(jrun, step, paths)
-            else:
-                print(f"  zerod {i}/{total}: step {step} [cached]")
+        _gather_zero_d(jrun, paths, case.steps, force=force, n_workers=n_workers)
 
     if "poincare" in diags:
         real_psi_edge = read_float(paths.real_psi_edge)
@@ -137,6 +178,20 @@ def _run_case(
             coords_var=case.coords_var, tor_mode=case.tor_mode,
             n_points=case.n_points, n_workers=n_workers, force=force,
             on_progress=_profiles_progress,
+        )
+
+    if "four" in diags:
+
+        def _four_progress(done: int, total: int, report) -> None:
+            print(f"  four {done}/{total}: {report}")
+
+        four_diag.run_four_scan(
+            jrun, paths, case.steps,
+            nstpts=case.nstpts, ntht=case.ntht, nmaxsteps=case.nmaxsteps,
+            deltaphi=case.deltaphi, nsmallsteps=case.nsmallsteps,
+            rad_range=tuple(case.rad_range),
+            n_workers=n_workers, omp_threads=omp_threads, force=force,
+            on_progress=_four_progress,
         )
 
 

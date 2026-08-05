@@ -150,6 +150,22 @@ class RunPaths:
         """
         return self.poinc_dir / f"poinc_t{self.step_str(step)}_{kind}.npz"
 
+    # --- jorek2_four artefacts ---
+
+    @property
+    def four_dir(self) -> Path:
+        return self.run_dir / "four_dir"
+
+    def four_cache(self, step: int | float) -> Path:
+        """One step's Fourier-decomposition cache -- see
+        :mod:`ashen.diagnostics.four_cache` for the layout.
+
+        One HDF5 file per step, written whole: unlike the Poincare cache
+        there is no incremental "extend" concept here, since a Fourier
+        decomposition of a single restart isn't resumable.
+        """
+        return self.four_dir / f"four_s{self.step_str(step)}.h5"
+
     # --- inputs written by the runner ---
 
     @property

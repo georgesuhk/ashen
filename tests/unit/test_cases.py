@@ -69,6 +69,39 @@ def test_defaults_are_inherited_and_overridable(tmp_path):
     assert cases["b"].vars == ["Jgrad", "currdens"]
 
 
+def test_four_defaults_match_jorek2_four_own_fallback(tmp_path):
+    """An unconfigured case must reproduce jorek2_four.f90:44-50's own
+    defaults, so a case with no [four] knobs behaves like a bare run."""
+    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.nstpts == 30
+    assert case.ntht == 32
+    assert case.nmaxsteps == 2500
+    assert case.deltaphi == 0.3
+    assert case.nsmallsteps == 3
+    assert case.rad_range == [0.001, 0.999]
+
+
+def test_four_params_are_overridable_per_case(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [defaults]
+        nstpts = 50
+        rad_range = [0.01, 0.9]
+
+        [cases.a]
+        folder = "a"
+        steps = [1]
+        ntht = 64
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.nstpts == 50
+    assert case.rad_range == [0.01, 0.9]
+    assert case.ntht == 64
+
+
 def test_missing_folder_raises(tmp_path):
     path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     with pytest.raises(CasesError, match="folder"):
