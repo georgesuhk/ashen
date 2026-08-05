@@ -48,8 +48,10 @@ cannot read this cache -- see ``ashen/KNOWN_ISSUES.md`` #4 and #5.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from functools import partial
@@ -124,16 +126,31 @@ def _write_flux_surface(run: Jorek2Run, step: int, psi_n: float, namelist_name: 
     surfaces are now only generated for the values that actually have
     uncached lines. Runs in place (like :func:`ashen.jorek2.run_zero_d`)
     because the output is meant to land in the run folder.
+
+    **The script file must be unique per call, not just per ``psi_n``.**
+    :func:`ashen.diagnostics.poincare.run_poincare_scan` runs multiple steps
+    concurrently, each in its own OS process, all against the same
+    ``run_dir``. A name keyed only on ``psi_n`` collides across steps: two
+    processes tracing the same ``psi_n`` at different steps can overwrite or
+    delete each other's control script before ``jorek2_postproc`` reads it,
+    so the tool generates the wrong step's surface (or none), and the step
+    that actually asked for it then fails with a genuine
+    ``FileNotFoundError`` on its own flux-surface path. The script is only
+    ever consumed via stdin, never looked up by name, so a real per-call
+    temp file (rather than a step-qualified but still-guessable name) removes
+    the race outright instead of narrowing it.
     """
     exe = run.exe_dir / POSTPROC_TOOL
     if not exe.is_file():
         raise FileNotFoundError(f"{POSTPROC_TOOL} not found at {exe}")
 
-    script_path = run.run_dir / f"postproc_fs_script_{psi_n:.6f}.in"
-    script_path.write_text(
-        flux_surface_script(namelist_name, step, psi_n), encoding="utf-8"
+    fd, script_name = tempfile.mkstemp(
+        prefix="postproc_fs_script_", suffix=".in", dir=run.run_dir
     )
+    script_path = Path(script_name)
     try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(flux_surface_script(namelist_name, step, psi_n))
         with open(script_path, encoding="utf-8") as stdin_file:
             result = subprocess.run(
                 [str(exe)],
