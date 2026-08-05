@@ -157,7 +157,7 @@ a `jorek2_*` tool itself, and reads the same `cases.toml`:
 
 ```bash
 python ~/ashen/bin/plot --list
-python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag poincare --diag connection_length
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag poincare --diag connection_length --diag four
 ```
 
 Kept as a separate command from `analyse` on purpose: gathering is slow and
@@ -170,6 +170,8 @@ touching the gathering path.
 - `--psi-range MIN MAX` further bounds-filters whichever psi_n_in list is
   already in effect for connection-length -- plot-time only, no re-gather
   needed.
+- `--four-linear` draws four's mode amplitudes on a linear scale instead of
+  the default log.
 - `--dpi N` overrides the figure resolution.
 
 ### Plotting a different psi_n selection than you gathered
@@ -193,12 +195,37 @@ traced during gathering renders as a visible black cell rather than an
 error -- widening `lc_psi_n_in` beyond what was gathered doesn't add real
 data, only `analyse --diag poincare` with a wider/denser `psi_n_in` does.
 
-Covered this pass: Poincare puncture plots and the LC/LCTT connection-length
-maps -- the two that consume the per-line Poincare cache. Everything else the
-legacy `data_jorek.py` plotted (macroscopic-variable traces, field-line
+Covered this pass: Poincare puncture plots, the LC/LCTT connection-length
+maps, and jorek2_four mode-amplitude time series -- see below. Everything else
+the legacy `data_jorek.py` plotted (macroscopic-variable traces, field-line
 diffusion, radial profiles, stochastic factor) is not ported -- see
 `KNOWN_ISSUES.md` #8. Colour is by each line's `psi_n` through a colormap by
 default (`ashen.plotting.colors`); a discrete palette is also available.
+
+### jorek2_four mode-amplitude time series
+
+`--diag four` draws one figure per variable, one coloured line per `(n, m)`
+mode -- the peak `|amplitude|` over the radial (psi_n) grid at each restart
+step, from the caches `analyse --diag four` already wrote
+(`four_dir/four_s<step>.h5`). Saved to `four_dir/<variable>_modes.png`.
+
+X-axis is true time in microseconds if the zeroD cache covers every requested
+step, else raw step index (with a printed note) -- unlike connection_length's
+LC/LCTT split, this is always a single figure per variable, so it falls back
+rather than skipping.
+
+`four_vars` and `four_modes` (case fields, plot-time only) restrict which
+variables/`(n, m)` pairs get drawn; empty (default) draws everything found in
+the cache:
+
+```toml
+four_vars  = ["Psi", "T"]
+four_modes = [[0, 1], [1, 1], [2, 1]]   # [n, m] pairs
+```
+
+A step or `(variable, n, m)` combination missing from the cache shows as a
+gap (`nan`) in that line rather than an error. `--four-linear` switches the
+default log amplitude scale to linear.
 
 Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see

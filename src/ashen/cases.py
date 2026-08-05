@@ -23,7 +23,7 @@ _CASE_KEYS = (
     "folder", "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
-    "lc_psi_n_in",
+    "lc_psi_n_in", "four_vars", "four_modes",
 )
 
 
@@ -63,6 +63,11 @@ class Case:
     #: and can only select/reorder *already-traced* surfaces (see
     #: _psi_from_spec's docstring) -- it cannot invent new ones.
     lc_psi_n_in: list[float] | None = None
+    #: Which variables/(n, m) modes `plot --diag four` draws -- plot-time
+    #: only, does not affect what analyse gathers via jorek2_four. Empty
+    #: (default) means every one found in the cache.
+    four_vars: list[str] = field(default_factory=list)
+    four_modes: list[list[int]] = field(default_factory=list)
 
 
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:
@@ -182,6 +187,15 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                 merged["lc_psi_n_in"] = _psi_from_spec(
                     spec, case_name=name, source=path, field_name="lc_psi_n_in"
                 )
+
+        if "four_modes" in merged:
+            for mode in merged["four_modes"]:
+                if not (isinstance(mode, list) and len(mode) == 2):
+                    raise CasesError(
+                        f"{path}: case {name!r} four_modes entries must be "
+                        f"[n, m] pairs, got {mode!r}"
+                    )
+            merged["four_modes"] = [[int(n), int(m)] for n, m in merged["four_modes"]]
 
         unknown = sorted(set(merged) - set(_CASE_KEYS))
         if unknown:

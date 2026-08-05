@@ -29,14 +29,16 @@ from pathlib import Path
 from ashen.cases import Case, CasesError, load_cases
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
+from ashen.diagnostics.four_modes import max_amplitude_series
 from ashen.diagnostics.poincare_cache import read_step
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.connection_length import plot_connection_length_map
+from ashen.plotting.four_modes import plot_mode_amplitudes
 from ashen.plotting.poincare import plot_poincare_step
 from ashen.postproc import read_zeroD
 
-DIAG_CHOICES = ("poincare", "connection_length")
+DIAG_CHOICES = ("poincare", "connection_length", "four")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list", action="store_true", help="list defined cases and exit")
     parser.add_argument(
         "--diag", action="append", dest="diags", choices=DIAG_CHOICES,
-        help="which figure(s) to draw (repeatable; default: both)",
+        help="which figure(s) to draw (repeatable; default: all)",
     )
     parser.add_argument(
         "--step", type=int, action="append", dest="steps",
@@ -79,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--psi-range", type=float, nargs=2, metavar=("MIN", "MAX"), default=None,
         help="connection_length: restrict the plotted psi_n axis to [MIN, MAX] "
         "(applied on top of the case's lc_psi_n_in, or psi_n_in if unset)",
+    )
+    parser.add_argument(
+        "--four-linear", action="store_true",
+        help="four: linear amplitude scale instead of the default log",
     )
     parser.add_argument("--site", type=Path, default=None, help="explicit site.toml")
     parser.add_argument(
@@ -179,6 +185,48 @@ def _plot_connection_length(
         print(f"  {out}")
 
 
+def _time_axis(paths: RunPaths, steps: list[int]) -> tuple[list[float], str]:
+    """True time in microseconds if the zeroD cache covers every step, else
+    raw step indices -- unlike connection_length's LC/LCTT split (which draws
+    both variants and skips LCTT if true time is unavailable), four-mode
+    plots are single figures, so this always produces *something* to plot
+    against rather than skipping.
+    """
+    true_times = []
+    for step in steps:
+        try:
+            true_times.append(read_zeroD(paths.zero_d(step))["Time"])
+        except (FileNotFoundError, KeyError):
+            true_times = None
+            break
+    if true_times is not None:
+        return [t * 1e6 for t in true_times], r"t [$\mu s$]"
+    print("  no zeroD cache for one or more steps (run analyse --diag zerod); "
+          "using step index for the time axis")
+    return list(steps), "Time step"
+
+
+def _plot_four_modes(
+    case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None
+) -> None:
+    series = max_amplitude_series(
+        paths, steps,
+        variables=case.four_vars or None,
+        modes=[tuple(m) for m in case.four_modes] if case.four_modes else None,
+    )
+    if not series:
+        print("  no jorek2_four cache found for any requested step/variable/mode "
+              "(run analyse --diag four)")
+        return
+
+    x, xlabel = _time_axis(paths, steps)
+    kwargs = {} if dpi is None else {"dpi": dpi}
+    for variable in sorted({var for var, _, _ in series}):
+        out = paths.four_dir / f"{variable}_modes.png"
+        plot_mode_amplitudes(x, series, variable, out, log=log, xlabel=xlabel, **kwargs)
+        print(f"  {out}")
+
+
 def _resolve_n_workers(args) -> int:
     """``--n-workers`` if given, else ``site.toml``'s ``[diagnostics]
     n_workers`` if that's explicitly set, else 1 (serial).
@@ -208,6 +256,7 @@ def _run_case(
     dpi: int | None,
     n_workers: int = 1,
     psi_range: tuple[float, float] | None = None,
+    four_log: bool = True,
 ) -> None:
     run_dir = Path.cwd() / case.folder
     if not run_dir.is_dir():
@@ -224,6 +273,8 @@ def _run_case(
             case, paths, case_steps, log=log, smooth=smooth, dpi=dpi,
             psi_range=psi_range,
         )
+    if "four" in diags:
+        _plot_four_modes(case, paths, case_steps, log=four_log, dpi=dpi)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -272,6 +323,7 @@ def main(argv: list[str] | None = None) -> int:
                 dpi=args.dpi,
                 n_workers=n_workers,
                 psi_range=psi_range,
+                four_log=not args.four_linear,
             )
         except FileNotFoundError as exc:
             print(f"error: {exc}")

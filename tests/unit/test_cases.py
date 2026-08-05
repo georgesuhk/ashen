@@ -240,6 +240,38 @@ def test_lc_psi_n_in_bounds_filter_with_no_psi_n_in_is_empty(tmp_path):
     assert load_cases(path)["a"].lc_psi_n_in == []
 
 
+def test_four_vars_and_modes_default_empty(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.four_vars == []
+    assert case.four_modes == []
+
+
+def test_four_vars_and_modes_are_settable(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        folder = "a"
+        steps = [1]
+        four_vars = ["Psi", "u"]
+        four_modes = [[0, 1], [1, 0]]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.four_vars == ["Psi", "u"]
+    assert case.four_modes == [[0, 1], [1, 0]]
+
+
+def test_four_modes_rejects_non_pair_entries(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\nfour_modes = [[0, 1, 2]]\n',
+    )
+    with pytest.raises(CasesError, match="\\[n, m\\] pairs"):
+        load_cases(path)
+
+
 def test_missing_folder_raises(tmp_path):
     path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     with pytest.raises(CasesError, match="folder"):

@@ -15,10 +15,26 @@ import numpy as np
 import pytest
 
 from ashen.cli import plot as plot_cli
+from ashen.diagnostics import four_cache as four_cache_mod
 from ashen.diagnostics import poincare_cache as pc
-from ashen.paths import write_float
+from ashen.paths import RunPaths, write_float
 
 pytest.importorskip("h5py")
+
+
+def _write_four_cache(run_dir, step, *, records):
+    paths = RunPaths(run_dir, pad_width=6)
+    four_cache_mod.write_cache(
+        paths.four_cache(step), step=step, pad_width=6, records=records
+    )
+
+
+def _four_record(variable, n, m, *, real_peak):
+    psi_n = np.linspace(0.0, 1.0, 4)
+    real = np.array([0.1, real_peak, 0.2, 0.05], dtype=np.float32)
+    return four_cache_mod.FourRecord(
+        variable=variable, n=n, m=m, psi_n=psi_n, real=real, imag=np.zeros(4, dtype=np.float32)
+    )
 
 
 def _write_cache(run_dir, step, *, pad_width=6):
@@ -185,3 +201,43 @@ def test_cli_psi_range_overrides_case_lc_psi_n_in(campaign, monkeypatch):
         ["--case", "test", "--diag", "connection_length", "--psi-range", "0.4", "0.6"]
     ) == 0
     assert captured["targets"] == [0.5]
+
+
+# --- jorek2_four mode-amplitude time series ---------------------------------------------
+
+
+def test_four_diag_writes_one_file_per_variable(campaign):
+    _write_four_cache(campaign, 100, records=[
+        _four_record("Psi", 0, 1, real_peak=1.0),
+        _four_record("u", 0, 0, real_peak=2.0),
+    ])
+    _write_four_cache(campaign, 200, records=[
+        _four_record("Psi", 0, 1, real_peak=1.5),
+        _four_record("u", 0, 0, real_peak=2.5),
+    ])
+    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert (campaign / "four_dir" / "Psi_modes.png").is_file()
+    assert (campaign / "four_dir" / "u_modes.png").is_file()
+
+
+def test_four_diag_with_no_cache_reports_and_does_not_crash(campaign, capsys):
+    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert "no jorek2_four cache found" in capsys.readouterr().out
+
+
+def test_four_vars_filters_which_files_are_written(campaign):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases.test]\n'
+        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["Psi"]\n',
+        encoding="utf-8",
+    )
+    _write_four_cache(campaign, 100, records=[
+        _four_record("Psi", 0, 1, real_peak=1.0),
+        _four_record("u", 0, 0, real_peak=2.0),
+    ])
+    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert (campaign / "four_dir" / "Psi_modes.png").is_file()
+    assert not (campaign / "four_dir" / "u_modes.png").exists()
