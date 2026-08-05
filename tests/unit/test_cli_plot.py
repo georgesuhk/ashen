@@ -117,3 +117,69 @@ def test_default_diags_run_both(campaign):
     assert plot_cli.main(["--case", "test"]) == 0
     assert (campaign / "poinc_dir" / "100_poincare.png").is_file()
     assert list((campaign / "poinc_dir").glob("LC_*.png"))
+
+
+# --- psi range restriction for connection_length ----------------------------------------
+
+
+def _spy_on_matrix_targets(monkeypatch, captured):
+    """Records the psi_n_targets connection_length_matrix is actually called
+    with, so the tests can assert on what got filtered without reaching into
+    the plotted figure itself."""
+    original = plot_cli.connection_length_matrix
+
+    def spy(records_by_step, steps, psi_n_targets, **kwargs):
+        captured["targets"] = psi_n_targets
+        return original(records_by_step, steps, psi_n_targets, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "connection_length_matrix", spy)
+
+
+def test_cli_psi_range_filters_plotted_psi_n(campaign, monkeypatch):
+    captured = {}
+    _spy_on_matrix_targets(monkeypatch, captured)
+    assert plot_cli.main(
+        ["--case", "test", "--diag", "connection_length", "--psi-range", "0.4", "0.6"]
+    ) == 0
+    assert captured["targets"] == [0.5]
+
+
+def test_cli_psi_range_with_no_matches_reports_error(campaign, capsys):
+    assert plot_cli.main(
+        ["--case", "test", "--diag", "connection_length", "--psi-range", "0.6", "0.9"]
+    ) == 0
+    assert "no psi_n_in within range" in capsys.readouterr().out
+
+
+def test_case_lc_psi_range_is_used_without_cli_override(campaign, monkeypatch):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases.test]\n'
+        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        'lc_psi_range = [0.4, 0.6]\n',
+        encoding="utf-8",
+    )
+    captured = {}
+    _spy_on_matrix_targets(monkeypatch, captured)
+    assert plot_cli.main(["--case", "test", "--diag", "connection_length"]) == 0
+    assert captured["targets"] == [0.5]
+
+
+def test_cli_psi_range_overrides_case_lc_psi_range(campaign, monkeypatch):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases.test]\n'
+        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        'lc_psi_range = [0.1, 0.3]\n',
+        encoding="utf-8",
+    )
+    captured = {}
+    _spy_on_matrix_targets(monkeypatch, captured)
+    assert plot_cli.main(
+        ["--case", "test", "--diag", "connection_length", "--psi-range", "0.4", "0.6"]
+    ) == 0
+    assert captured["targets"] == [0.5]

@@ -21,6 +21,7 @@ _CASE_KEYS = (
     "folder", "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
+    "lc_psi_range",
 )
 
 
@@ -55,6 +56,11 @@ class Case:
     deltaphi: float = 0.3
     nsmallsteps: int = 3
     rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
+    #: Restricts the LC/LCTT connection-length plot's psi_n axis to a
+    #: [min, max] subset of psi_n_in -- None (default) plots every gathered
+    #: value. Plot-time only: does not affect what analyse gathers, so
+    #: narrowing this needs no re-gather.
+    lc_psi_range: list[float] | None = None
 
 
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:

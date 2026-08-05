@@ -75,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--smooth", action="store_true",
         help="connection_length: smooth over time, ignoring confined (inf) cells",
     )
+    parser.add_argument(
+        "--psi-range", type=float, nargs=2, metavar=("MIN", "MAX"), default=None,
+        help="connection_length: restrict the plotted psi_n axis to [MIN, MAX] "
+        "(default: the case's lc_psi_range, or every gathered psi_n_in)",
+    )
     parser.add_argument("--site", type=Path, default=None, help="explicit site.toml")
     parser.add_argument(
         "--show-config", action="store_true",
@@ -123,7 +128,14 @@ def _plot_poincare(
 
 
 def _plot_connection_length(
-    case: Case, paths: RunPaths, steps: list[int], *, log: bool, smooth: bool, dpi: int | None
+    case: Case,
+    paths: RunPaths,
+    steps: list[int],
+    *,
+    log: bool,
+    smooth: bool,
+    dpi: int | None,
+    psi_range: tuple[float, float] | None = None,
 ) -> None:
     real_psi_edge = read_float(paths.real_psi_edge)
     try:
@@ -132,7 +144,15 @@ def _plot_connection_length(
         print(f"  error: {exc}")
         return
 
-    psi_n_targets = [p * real_psi_edge for p in case.psi_n_in]
+    psi_n_in = case.psi_n_in
+    if psi_range is not None:
+        lo, hi = psi_range
+        psi_n_in = [p for p in psi_n_in if lo <= p <= hi]
+        if not psi_n_in:
+            print(f"  error: no psi_n_in within range {psi_range}")
+            return
+
+    psi_n_targets = [p * real_psi_edge for p in psi_n_in]
     records_by_step = {step: read_step(paths, step) for step in steps}
     matrix = connection_length_matrix(
         records_by_step, steps, psi_n_targets, real_psi_edge=real_psi_edge, R0=R0
@@ -152,7 +172,7 @@ def _plot_connection_length(
             print("  skipping LCTT: no zeroD cache for one or more steps (run analyse --diag zerod)")
             continue
         out = plot_connection_length_map(
-            matrix, steps, case.psi_n_in, paths.figures_dir,
+            matrix, steps, psi_n_in, paths.figures_dir,
             true_times=true_times, plot_true_times=plot_true_times,
             log=log, smooth=smooth, **kwargs,
         )
@@ -187,6 +207,7 @@ def _run_case(
     smooth: bool,
     dpi: int | None,
     n_workers: int = 1,
+    psi_range: tuple[float, float] | None = None,
 ) -> None:
     run_dir = Path.cwd() / case.folder
     if not run_dir.is_dir():
@@ -194,10 +215,19 @@ def _run_case(
     paths = RunPaths.detect(run_dir)
     case_steps = steps or case.steps
 
+    # --psi-range overrides the case's own lc_psi_range; neither given plots
+    # every gathered psi_n_in, as before.
+    effective_psi_range = psi_range
+    if effective_psi_range is None and case.lc_psi_range is not None:
+        effective_psi_range = tuple(case.lc_psi_range)
+
     if "poincare" in diags:
         _plot_poincare(case, paths, case_steps, dpi=dpi, n_workers=n_workers)
     if "connection_length" in diags:
-        _plot_connection_length(case, paths, case_steps, log=log, smooth=smooth, dpi=dpi)
+        _plot_connection_length(
+            case, paths, case_steps, log=log, smooth=smooth, dpi=dpi,
+            psi_range=effective_psi_range,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -232,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
 
     diags = args.diags or list(DIAG_CHOICES)
     n_workers = _resolve_n_workers(args)
+    psi_range = tuple(args.psi_range) if args.psi_range is not None else None
 
     for name in selected:
         print(f"==== {name} ====")
@@ -244,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
                 smooth=args.smooth,
                 dpi=args.dpi,
                 n_workers=n_workers,
+                psi_range=psi_range,
             )
         except FileNotFoundError as exc:
             print(f"error: {exc}")

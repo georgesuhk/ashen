@@ -163,6 +163,9 @@ touching the gathering path.
 - `--step N` (repeatable) restricts Poincare plots to specific steps (default:
   every step in the case).
 - `--linear` / `--smooth` control the connection-length colour maps.
+- `--psi-range MIN MAX` restricts the connection-length psi_n axis to a
+  subset of the gathered `psi_n_in` -- plot-time only, no re-gather needed.
+  Overrides a case's own `lc_psi_range`, if it has one.
 - `--dpi N` overrides the figure resolution.
 
 Covered this pass: Poincare puncture plots and the LC/LCTT connection-length

@@ -102,6 +102,24 @@ def test_four_params_are_overridable_per_case(tmp_path):
     assert case.ntht == 64
 
 
+def test_lc_psi_range_defaults_to_none(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\n')
+    assert load_cases(path)["a"].lc_psi_range is None
+
+
+def test_lc_psi_range_is_settable_per_case(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        folder = "a"
+        steps = [1]
+        lc_psi_range = [0.2, 0.8]
+        """,
+    )
+    assert load_cases(path)["a"].lc_psi_range == [0.2, 0.8]
+
+
 def test_missing_folder_raises(tmp_path):
     path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     with pytest.raises(CasesError, match="folder"):

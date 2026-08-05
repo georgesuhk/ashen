@@ -35,6 +35,10 @@ n_points        = 100
 # deltaphi    = 0.3
 # nsmallsteps = 3
 # rad_range   = [0.001, 0.999]
+# Restricts `plot --diag connection_length`'s psi_n axis to [min, max] --
+# plot-time only, doesn't affect what analyse gathers. Omit to plot every
+# gathered psi_n_in; --psi-range on the command line overrides this per run.
+# lc_psi_range = [0.2, 0.8]
 
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 folder = "qa2.1_g2.3/eta1e-3_RE"
