@@ -93,17 +93,25 @@ def _run_case(
     )
 
     if "zerod" in diags:
-        for step in case.steps:
+        total = len(case.steps)
+        for i, step in enumerate(case.steps, start=1):
             if force or not paths.zero_d(step).is_file():
+                print(f"  zerod {i}/{total}: step {step}")
                 run_zero_d(jrun, step, paths)
+            else:
+                print(f"  zerod {i}/{total}: step {step} [cached]")
 
     if "poincare" in diags:
         real_psi_edge = read_float(paths.real_psi_edge)
         psi_n_in = [p * real_psi_edge for p in case.psi_n_in]
+
+        def _poincare_progress(done: int, total: int, report) -> None:
+            print(f"  poincare {done}/{total}: {report}")
+
         # No cache-existence check here any more: run_poincare_step plans
         # against the cache per field line, so an already-satisfied step costs
         # a read and traces nothing. --force still discards and retraces.
-        reports = poincare_diag.run_poincare_scan(
+        poincare_diag.run_poincare_scan(
             jrun, paths, case.steps, psi_n_in,
             ang_sample_freq=case.ang_sample_freq,
             n_turns=case.n_turns,
@@ -111,15 +119,19 @@ def _run_case(
             n_workers=n_workers,
             omp_threads=omp_threads,
             force=force,
+            on_progress=_poincare_progress,
         )
-        for report in reports:
-            print(f"  {report}")
 
     if "profiles" in diags:
+
+        def _profiles_progress(done: int, total: int, step: int, var: str) -> None:
+            print(f"  profiles {done}/{total}: step {step} {var}")
+
         profiles_diag.gather_profiles(
             jrun, paths, case.steps, case.vars,
             coords_var=case.coords_var, tor_mode=case.tor_mode,
             n_points=case.n_points, n_workers=n_workers, force=force,
+            on_progress=_profiles_progress,
         )
 
 

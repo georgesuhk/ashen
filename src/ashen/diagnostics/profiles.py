@@ -14,7 +14,8 @@ plotting code carries.
 
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
 
@@ -97,6 +98,7 @@ def gather_profiles(
     n_points: int = 100,
     n_workers: int = 4,
     force: bool = False,
+    on_progress: Callable[[int, int, int, str], None] | None = None,
 ) -> None:
     """Gathers every ``(step, var)`` profile in parallel and caches each as
     ``postproc/{coords_var}_{var}_{step}.npz``. Ports
@@ -105,6 +107,10 @@ def gather_profiles(
     ``force`` replaces the legacy ``force_data = True`` hardcoded at
     ``analysis.py:76`` (which meant every diagnostic always re-ran, cache or
     not) with a real opt-in flag.
+
+    ``on_progress(done, total, step, var)``, if given, fires as each
+    ``(step, var)`` pair finishes -- in completion order, not submission
+    order, since that's the only order a process pool can report in.
     """
     variables = expand_compound_vars(variables)
     paths.postproc_dir.mkdir(parents=True, exist_ok=True)
@@ -116,6 +122,9 @@ def gather_profiles(
             if force or not cache.is_file():
                 tasks.append((step, var, cache))
 
+    if not tasks:
+        return
+
     extract_one = partial(
         extract_profile,
         run,
@@ -124,10 +133,17 @@ def gather_profiles(
         tor_mode=tor_mode,
         dest_dir=paths.postproc_dir / "_scratch",
     )
+    total = len(tasks)
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        # map() over parallel positional iterables, not a lambda -- lambdas
-        # aren't picklable, which ProcessPoolExecutor requires.
-        results = list(executor.map(extract_one, (t[0] for t in tasks), (t[1] for t in tasks)))
-
-    for (step, var, cache), (coords_out, var_out) in zip(tasks, results):
-        np.savez_compressed(cache, x=coords_out, y=var_out)
+        futures = {
+            executor.submit(extract_one, step, var): (step, var, cache)
+            for step, var, cache in tasks
+        }
+        done = 0
+        for future in as_completed(futures):
+            step, var, cache = futures[future]
+            coords_out, var_out = future.result()
+            np.savez_compressed(cache, x=coords_out, y=var_out)
+            done += 1
+            if on_progress is not None:
+                on_progress(done, total, step, var)

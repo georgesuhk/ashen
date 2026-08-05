@@ -52,7 +52,8 @@ import os
 import re
 import subprocess
 import tempfile
-from concurrent.futures import ProcessPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -465,6 +466,7 @@ def run_poincare_scan(
     n_workers: int = 1,
     omp_threads: int = 1,
     force: bool = False,
+    on_progress: Callable[[int, int, StepReport], None] | None = None,
 ) -> list[StepReport]:
     """Every step in a case, with steps traced concurrently.
 
@@ -472,8 +474,13 @@ def run_poincare_scan(
     (``poinc_diag.py:234``) while fanning out over field lines; this does the
     opposite, because each step is one process holding one restart file and
     each process threads internally over its own lines.
+
+    ``on_progress(done, total, report)``, if given, fires as each step
+    finishes -- in completion order under the process pool, which need not
+    match ``steps``' order. The returned list is always in ``steps`` order.
     """
     steps = list(steps)
+    total = len(steps)
     one = partial(
         run_poincare_step,
         run,
@@ -486,6 +493,22 @@ def run_poincare_scan(
         force=force,
     )
     if n_workers <= 1 or len(steps) <= 1:
-        return [one(step) for step in steps]
+        reports = []
+        for i, step in enumerate(steps, start=1):
+            report = one(step)
+            reports.append(report)
+            if on_progress is not None:
+                on_progress(i, total, report)
+        return reports
+
+    reports: list[StepReport | None] = [None] * total
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        return list(executor.map(one, steps))
+        futures = {executor.submit(one, step): idx for idx, step in enumerate(steps)}
+        done = 0
+        for future in as_completed(futures):
+            idx = futures[future]
+            reports[idx] = future.result()
+            done += 1
+            if on_progress is not None:
+                on_progress(done, total, reports[idx])
+    return reports
