@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ashen.postproc import (
     flux_surface_script,
     parse_macroscopic_vars,
@@ -115,6 +117,44 @@ def test_read_zeroD(tmp_path):
     path = tmp_path / "zeroD_quantities_s000100.dat"
     path.write_text("Time Energy\n1.5e-3 2.0e6\n", encoding="utf-8")
     assert read_zeroD(path) == {"Time": 1.5e-3, "Energy": 2.0e6}
+
+
+def test_read_zeroD_recovers_a_dropped_three_digit_exponent(tmp_path):
+    """Fortran's fixed-width E format drops the 'E' when a 3-digit exponent
+    overflows the field it budgeted for a 2-digit one -- reproduces the
+    crash from a real run's jorek-units zeroD_quantities output."""
+    path = tmp_path / "zeroD_quantities_s000100.dat"
+    path.write_text("Time Energy\n-1.114495214678738-107 2.0e6\n", encoding="utf-8")
+    result = read_zeroD(path)
+    assert result["Time"] == pytest.approx(-1.114495214678738e-107)
+    assert result["Energy"] == pytest.approx(2.0e6)
+
+
+def test_read_zeroD_dropped_positive_exponent(tmp_path):
+    path = tmp_path / "zeroD_quantities_s000100.dat"
+    path.write_text("Time\n1.234567890123456+123\n", encoding="utf-8")
+    assert read_zeroD(path)["Time"] == pytest.approx(1.234567890123456e123)
+
+
+def test_read_zeroD_two_digit_dropped_exponent(tmp_path):
+    path = tmp_path / "zeroD_quantities_s000100.dat"
+    path.write_text("Time\n1.5-99\n", encoding="utf-8")
+    assert read_zeroD(path)["Time"] == pytest.approx(1.5e-99)
+
+
+def test_read_zeroD_genuinely_malformed_value_still_raises(tmp_path):
+    path = tmp_path / "zeroD_quantities_s000100.dat"
+    path.write_text("Time\nnotanumber\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        read_zeroD(path)
+
+
+def test_read_zeroD_plain_negative_integer_is_unaffected(tmp_path):
+    """A token that's just a small signed integer (no embedded exponent)
+    must not be mistaken for a dropped-exponent value."""
+    path = tmp_path / "zeroD_quantities_s000100.dat"
+    path.write_text("Count\n-107\n", encoding="utf-8")
+    assert read_zeroD(path)["Count"] == pytest.approx(-107.0)
 
 
 def test_read_postproc_profile(tmp_path):

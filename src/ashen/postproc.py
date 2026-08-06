@@ -13,9 +13,30 @@ directory itself, so building the text is a pure, testable function.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
+
+#: Fortran's fixed-width E/ES format drops the 'E' when a 3-digit exponent
+#: would overflow the field it budgeted for a 2-digit one -- e.g.
+#: "-1.114495214678738E-107" is written as "-1.114495214678738-107". Matches
+#: a trailing 2-3 digit signed exponent glued directly onto a preceding
+#: digit, so a real reinserted 'E' can be re-parsed by float().
+_MISSING_EXPONENT_RE = re.compile(r"(?<=[0-9])([+-]\d{2,3})$")
+
+
+def _parse_fortran_float(token: str) -> float:
+    """``float()``, tolerating Fortran's dropped-'E' 3-digit-exponent quirk
+    (see :data:`_MISSING_EXPONENT_RE`) -- raises the original
+    :class:`ValueError` if the token still doesn't parse after that fix-up,
+    so a genuinely malformed value isn't silently swallowed.
+    """
+    try:
+        return float(token)
+    except ValueError:
+        fixed = _MISSING_EXPONENT_RE.sub(lambda m: "E" + m.group(1), token, count=1)
+        return float(fixed)
 
 __all__ = [
     "profile_script",
@@ -154,7 +175,7 @@ def read_zeroD(path: Path | str) -> dict[str, float]:
     """Ports ``io.py:7`` ``read_zeroD``."""
     lines = Path(path).read_text(encoding="utf-8").splitlines()
     keys = lines[0].split()
-    values = [float(v) for v in lines[1].split()]
+    values = [_parse_fortran_float(v) for v in lines[1].split()]
     return dict(zip(keys, values))
 
 
