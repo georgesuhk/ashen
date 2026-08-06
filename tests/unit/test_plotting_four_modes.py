@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
+from ashen.diagnostics.four_modes import GrowthFit
 from ashen.plotting.four_modes import draw_mode_amplitudes, plot_mode_amplitudes
 
 
@@ -150,5 +151,41 @@ def test_plot_mode_amplitudes_accepts_rational_series(series, tmp_path):
     rational = {("Psi", 0, 1): np.array([1.5, 2.5, 3.5])}
     out = plot_mode_amplitudes(
         [100, 200, 300], series, "Psi", tmp_path / "Psi_modes.png", rational_series=rational,
+    )
+    assert out.is_file()
+
+
+# --- growth_fits: legend annotation ------------------------------------------------
+
+
+def test_growth_fit_is_appended_to_the_legend_label(series):
+    growth_fits = {("Psi", 0, 1): GrowthFit(gamma=1.23e5, intercept=0.0, n_points=10)}
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", growth_fits=growth_fits)
+    labels = {line.get_label() for line in ax.lines}
+    assert any("1.23e+05" in label for label in labels)
+    plt.close(fig)
+
+
+def test_growth_fit_does_not_add_extra_lines(series):
+    growth_fits = {("Psi", 0, 1): GrowthFit(gamma=1.0, intercept=0.0, n_points=10)}
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", growth_fits=growth_fits)
+    assert len(ax.lines) == 2  # still just the two solid domain-max lines
+    plt.close(fig)
+
+
+def test_missing_growth_fit_entry_leaves_plain_label(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", growth_fits={})
+    labels = {line.get_label() for line in ax.lines}
+    assert labels == {"n=0, m=1", "n=1, m=0"}
+    plt.close(fig)
+
+
+def test_plot_mode_amplitudes_accepts_growth_fits(series, tmp_path):
+    growth_fits = {("Psi", 0, 1): GrowthFit(gamma=1.0, intercept=0.0, n_points=10)}
+    out = plot_mode_amplitudes(
+        [100, 200, 300], series, "Psi", tmp_path / "Psi_modes.png", growth_fits=growth_fits,
     )
     assert out.is_file()

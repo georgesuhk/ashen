@@ -255,6 +255,29 @@ strongest of the crossings is kept. `n = 0` modes have no rational surface
 existed (no `qprofile_s*.dat` cache) simply draw without the overlay -- no
 error, no re-gather required for the base plot.
 
+**Growth rate.** `four_growth_rate = true` (case field, plot-time only) fits
+each drawn mode's exponential growth rate -- `gamma` [1/s], the slope of
+`ln|amplitude|` vs real time -- and shows it two ways: appended to that
+mode's legend label (`n=1, m=2 (γ=1.23e+05 /s)`, on both the step and
+time figures, since `gamma` is a single physical number independent of
+which x-axis it's shown against) and written to
+`four_dir/growth_rates.txt`, one row per `(variable, m, n)`. Needs the
+zeroD cache for real time -- skipped with a printed note, not an error, if
+it's incomplete, same as the time-axis variant.
+
+`four_growth_steps = [start_step, end_step]` restricts the fit to that
+inclusive step range instead of every requested step -- useful for picking
+the visually-linear region of a growth curve, since points near the noise
+floor (pre-growth) or past saturation bias a whole-range least-squares fit.
+A mode with fewer than 2 valid (finite, positive-amplitude) points in the
+window is silently omitted from the fit rather than given a meaningless
+line:
+
+```toml
+four_growth_rate  = true
+four_growth_steps = [1000, 3000]   # inclusive; omit to fit every step
+```
+
 Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see
 `KNOWN_ISSUES.md` #6 and #7 for what changed and what's still an open question.

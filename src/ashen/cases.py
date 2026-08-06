@@ -23,7 +23,7 @@ _CASE_KEYS = (
     "folder", "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
-    "lc_psi_n_in", "four_vars", "four_modes",
+    "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
 )
 
 
@@ -69,6 +69,15 @@ class Case:
     four_vars: list[str] = field(default_factory=list)
     #: [m, n] pairs (poloidal, toroidal) -- e.g. [3, 2] is m=3, n=2.
     four_modes: list[list[int]] = field(default_factory=list)
+    #: Fit + mark each drawn mode's exponential growth rate (gamma, 1/s,
+    #: from d ln|amplitude| / dt) -- plot-time only, needs the zeroD cache
+    #: for real time. Default off.
+    four_growth_rate: bool = False
+    #: [start_step, end_step] inclusive step range for the growth-rate fit
+    #: window -- None (default) fits every requested step. Lets you pick the
+    #: visually-linear region of the log-amplitude curve, since points near
+    #: the noise floor or past saturation bias a whole-range fit.
+    four_growth_steps: list[int] | None = None
 
 
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:
@@ -197,6 +206,21 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                         f"[m, n] pairs, got {mode!r}"
                     )
             merged["four_modes"] = [[int(m), int(n)] for m, n in merged["four_modes"]]
+
+        if "four_growth_steps" in merged:
+            spec = merged["four_growth_steps"]
+            if not (isinstance(spec, list) and len(spec) == 2):
+                raise CasesError(
+                    f"{path}: case {name!r} four_growth_steps must be "
+                    f"[start_step, end_step], got {spec!r}"
+                )
+            start, end = int(spec[0]), int(spec[1])
+            if start > end:
+                raise CasesError(
+                    f"{path}: case {name!r} four_growth_steps start ({start}) "
+                    f"must not be greater than end ({end})"
+                )
+            merged["four_growth_steps"] = [start, end]
 
         unknown = sorted(set(merged) - set(_CASE_KEYS))
         if unknown:

@@ -289,3 +289,84 @@ def test_four_vars_filters_which_files_are_written(campaign):
     assert not (campaign / "four_dir" / "u_modes_step.png").exists()
     assert (campaign / "four_dir" / "Psi_modes_time.png").is_file()
     assert not (campaign / "four_dir" / "u_modes_time.png").exists()
+
+
+# --- four_growth_rate: fit + mark down each mode's growth rate --------------------
+
+
+def test_four_growth_rate_off_by_default_writes_no_summary(campaign):
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])
+    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert not (campaign / "four_dir" / "growth_rates.txt").exists()
+
+
+def test_four_growth_rate_writes_a_summary_with_the_fitted_gamma(campaign):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases.test]\n'
+        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        'steps = [100, 200]\n'
+        'four_growth_rate = true\n',
+        encoding="utf-8",
+    )
+    # campaign's zeroD cache: t(100)=1e-4 s, t(200)=2e-4 s -> dt=1e-4 s.
+    # exp(gamma*dt) with gamma=5000 -> exp(0.5) ~= 1.64872.
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 2, 1, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 2, 1, real_peak=1.64872)])
+
+    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+
+    growth_path = campaign / "four_dir" / "growth_rates.txt"
+    assert growth_path.is_file()
+    text = growth_path.read_text(encoding="utf-8")
+    assert "Psi" in text
+    # m=1, n=2 (from the record's m=2,n=1 args, i.e. n=2,m=1 -- wait see below)
+    gamma_field = text.splitlines()[1].split()[3]
+    assert float(gamma_field) == pytest.approx(5000.0, rel=1e-3)
+
+
+def test_four_growth_rate_skipped_without_zerod_cache(campaign, capsys):
+    (campaign / "postproc" / "zeroD_quantities_s000100.dat").unlink()
+    (campaign / "postproc" / "zeroD_quantities_s000200.dat").unlink()
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases.test]\n'
+        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        'steps = [100, 200]\n'
+        'four_growth_rate = true\n',
+        encoding="utf-8",
+    )
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])
+
+    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+
+    assert not (campaign / "four_dir" / "growth_rates.txt").exists()
+    assert "skipping growth-rate fit" in capsys.readouterr().out
+
+
+def test_four_growth_steps_is_passed_through_as_step_range(campaign, monkeypatch):
+    captured = {}
+    original = plot_cli.growth_rate_series
+
+    def spy(series, true_times, steps, **kwargs):
+        captured["step_range"] = kwargs.get("step_range")
+        return original(series, true_times, steps, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "growth_rate_series", spy)
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases.test]\n'
+        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        'steps = [100, 200]\n'
+        'four_growth_rate = true\n'
+        'four_growth_steps = [100, 150]\n',
+        encoding="utf-8",
+    )
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])
+
+    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert captured["step_range"] == (100, 150)

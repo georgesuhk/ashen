@@ -272,6 +272,47 @@ def test_four_modes_rejects_non_pair_entries(tmp_path):
         load_cases(path)
 
 
+def test_four_growth_rate_defaults_off(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.four_growth_rate is False
+    assert case.four_growth_steps is None
+
+
+def test_four_growth_rate_and_steps_are_settable(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        folder = "a"
+        steps = [1]
+        four_growth_rate = true
+        four_growth_steps = [1000, 3000]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.four_growth_rate is True
+    assert case.four_growth_steps == [1000, 3000]
+
+
+def test_four_growth_steps_rejects_non_pair(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\nfour_growth_steps = [1000]\n',
+    )
+    with pytest.raises(CasesError, match="start_step, end_step"):
+        load_cases(path)
+
+
+def test_four_growth_steps_rejects_start_after_end(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nfolder = "a"\nsteps = [1]\nfour_growth_steps = [3000, 1000]\n',
+    )
+    with pytest.raises(CasesError, match="must not be greater than"):
+        load_cases(path)
+
+
 def test_missing_folder_raises(tmp_path):
     path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     with pytest.raises(CasesError, match="folder"):

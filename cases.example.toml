@@ -56,6 +56,13 @@ n_points        = 100
 # are [m, n] pairs (poloidal, toroidal) -- [3, 2] is m=3, n=2.
 # four_vars  = ["Psi", "T"]
 # four_modes = [[2, 1], [3, 2], [1, 1]]   # [m, n] pairs
+# Fit + mark each drawn mode's exponential growth rate (gamma, 1/s) --
+# needs the zeroD cache for real time. Appended to the legend label and
+# written to four_dir/growth_rates.txt. four_growth_steps restricts the fit
+# to an inclusive step range (default: every requested step) -- useful for
+# picking the visually-linear part of a growth curve.
+# four_growth_rate  = true
+# four_growth_steps = [1000, 3000]
 
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 folder = "qa2.1_g2.3/eta1e-3_RE"

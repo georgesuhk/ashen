@@ -10,7 +10,8 @@ connection_length`.
 
 from __future__ import annotations
 
-from typing import Sequence
+from dataclasses import dataclass
+from typing import Mapping, Sequence
 
 import numpy as np
 
@@ -18,7 +19,10 @@ from ashen.diagnostics import four_cache as fc
 from ashen.diagnostics.qprofile import find_rational_surfaces, read_qprofile
 from ashen.paths import RunPaths
 
-__all__ = ["ModeKey", "max_amplitude_series", "rational_surface_series"]
+__all__ = [
+    "ModeKey", "max_amplitude_series", "rational_surface_series",
+    "GrowthFit", "fit_growth_rate", "growth_rate_series", "format_growth_rates",
+]
 
 #: (variable, toroidal mode n, poloidal mode m).
 ModeKey = tuple[str, int, int]
@@ -132,3 +136,85 @@ def rational_surface_series(
             values[i] = float(np.max(amp_at))
         series[key] = values
     return series
+
+
+@dataclass(frozen=True)
+class GrowthFit:
+    """A least-squares exponential-growth fit, ``|amplitude| ~
+    exp(intercept) * exp(gamma * t)`` -- i.e. ``ln|amplitude| = gamma * t +
+    intercept``, fit against real time in seconds.
+
+    ``gamma`` is always physical (1/s), independent of whatever units a
+    plot's x-axis happens to display (step index, or time in microseconds)
+    -- growth rate is only meaningful against real time, so it is computed
+    once here and reused unchanged everywhere it's shown.
+    """
+
+    gamma: float
+    intercept: float
+    n_points: int
+
+
+def fit_growth_rate(t: Sequence[float], y: Sequence[float]) -> GrowthFit | None:
+    """Least-squares fit of ``ln(y)`` vs ``t``. ``None`` if fewer than 2
+    finite, positive-``y`` points survive -- not enough to fit a line
+    through, and ``ln`` of a non-positive amplitude is undefined.
+    """
+    t_arr = np.asarray(t, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    mask = np.isfinite(t_arr) & np.isfinite(y_arr) & (y_arr > 0)
+    n_points = int(mask.sum())
+    if n_points < 2:
+        return None
+    gamma, intercept = np.polyfit(t_arr[mask], np.log(y_arr[mask]), 1)
+    return GrowthFit(gamma=float(gamma), intercept=float(intercept), n_points=n_points)
+
+
+def growth_rate_series(
+    series: Mapping[ModeKey, np.ndarray],
+    true_times: Sequence[float],
+    steps: Sequence[int],
+    *,
+    step_range: tuple[int, int] | None = None,
+) -> dict[ModeKey, GrowthFit]:
+    """One :class:`GrowthFit` per mode in ``series``, fit against
+    ``true_times`` (seconds, one per ``steps`` entry, same alignment as
+    :func:`max_amplitude_series`'s output).
+
+    ``step_range``, if given, restricts the fit to steps within
+    ``[start, end]`` inclusive -- picking the visually-linear region of a
+    growth curve, since points near the noise floor (pre-growth) or past
+    saturation bias a whole-range least-squares fit. ``None`` (default)
+    uses every step in ``steps``.
+
+    A mode with fewer than 2 valid points inside the window is silently
+    omitted from the result rather than given a meaningless fit.
+    """
+    steps_arr = np.asarray(steps)
+    t = np.asarray(true_times, dtype=float)
+    if step_range is not None:
+        lo, hi = step_range
+        mask = (steps_arr >= lo) & (steps_arr <= hi)
+    else:
+        mask = np.ones(len(steps_arr), dtype=bool)
+
+    out: dict[ModeKey, GrowthFit] = {}
+    for key, y in series.items():
+        fit = fit_growth_rate(t[mask], np.asarray(y)[mask])
+        if fit is not None:
+            out[key] = fit
+    return out
+
+
+def format_growth_rates(fits: Mapping[ModeKey, GrowthFit]) -> str:
+    """A human-readable table, sorted by ``(variable, m, n)`` -- ``m``
+    before ``n`` to match the ``[m, n]`` convention ``cases.toml``'s
+    ``four_modes`` field uses. What ``plot --diag four`` writes to
+    ``four_dir/growth_rates.txt``.
+    """
+    header = f"{'variable':<12}{'m':>4}{'n':>4}{'gamma [1/s]':>18}{'n_points':>10}"
+    lines = [header]
+    for var, n, m in sorted(fits, key=lambda k: (k[0], k[2], k[1])):
+        fit = fits[(var, n, m)]
+        lines.append(f"{var:<12}{m:>4}{n:>4}{fit.gamma:>18.6e}{fit.n_points:>10}")
+    return "\n".join(lines) + "\n"

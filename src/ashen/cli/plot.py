@@ -29,7 +29,12 @@ from pathlib import Path
 from ashen.cases import Case, CasesError, load_cases
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
-from ashen.diagnostics.four_modes import max_amplitude_series, rational_surface_series
+from ashen.diagnostics.four_modes import (
+    format_growth_rates,
+    growth_rate_series,
+    max_amplitude_series,
+    rational_surface_series,
+)
 from ashen.diagnostics.poincare_cache import read_step
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
@@ -232,13 +237,35 @@ def _plot_four_modes(
         print("  skipping time-axis four-mode plots: no zeroD cache for one or "
               "more steps (run analyse --diag zerod)")
 
+    # Growth rate (gamma, 1/s) is a physical quantity fit against real time,
+    # so it needs true_times regardless of which x-axis variant it ends up
+    # labelled on -- computed once here and shown on every variant's legend.
+    growth_fits = {}
+    if case.four_growth_rate:
+        if true_times is None:
+            print("  skipping growth-rate fit: no zeroD cache for one or more "
+                  "steps (run analyse --diag zerod)")
+        else:
+            growth_fits = growth_rate_series(
+                series, true_times, steps,
+                step_range=tuple(case.four_growth_steps) if case.four_growth_steps else None,
+            )
+            if growth_fits:
+                growth_path = paths.four_dir / "growth_rates.txt"
+                growth_path.parent.mkdir(parents=True, exist_ok=True)
+                growth_path.write_text(format_growth_rates(growth_fits), encoding="utf-8")
+                print(f"  {growth_path}")
+            else:
+                print("  no growth-rate fit possible (need >=2 positive-amplitude "
+                      "points per mode in the fit window)")
+
     kwargs = {} if dpi is None else {"dpi": dpi}
     for suffix, x, xlabel in variants:
         for variable in sorted({var for var, _, _ in series}):
             out = paths.four_dir / f"{variable}_modes_{suffix}.png"
             plot_mode_amplitudes(
                 x, series, variable, out, rational_series=rational or None,
-                log=log, xlabel=xlabel, **kwargs,
+                growth_fits=growth_fits or None, log=log, xlabel=xlabel, **kwargs,
             )
             print(f"  {out}")
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from ashen.diagnostics.four_modes import ModeKey
+from ashen.diagnostics.four_modes import GrowthFit, ModeKey
 from ashen.plotting import style
 from ashen.plotting.colors import DISCRETE_PALETTE
 
@@ -30,6 +30,7 @@ def draw_mode_amplitudes(
     *,
     variable: str,
     rational_series: Mapping[ModeKey, "object"] | None = None,
+    growth_fits: Mapping[ModeKey, GrowthFit] | None = None,
     log: bool = True,
     xlabel: str = "",
 ) -> None:
@@ -46,15 +47,24 @@ def draw_mode_amplitudes(
     directly comparable to the solid whole-domain-max line for the same
     mode, so a reader can see whether the mode's growth is actually
     localised at the surface it resonates on.
+
+    ``growth_fits``, if given (see :func:`ashen.diagnostics.four_modes.
+    growth_rate_series`), appends each mode's fitted growth rate (1/s) to
+    its legend label -- ``gamma`` is a single physical number, not a
+    function of the x-axis, so it's shown the same way regardless of
+    whether ``x`` is step index or time.
     """
     modes = sorted((n, m) for (var, n, m) in series if var == variable)
 
     for i, (n, m) in enumerate(modes):
         y = series[(variable, n, m)]
         color = DISCRETE_PALETTE[i % len(DISCRETE_PALETTE)]
-        ax.plot(x, y, color=color, marker="o", markersize=4, label=f"n={n}, m={m}")
-
         key = (variable, n, m)
+        label = f"n={n}, m={m}"
+        if growth_fits is not None and key in growth_fits:
+            label += f" (\N{GREEK SMALL LETTER GAMMA}={growth_fits[key].gamma:.3g} /s)"
+        ax.plot(x, y, color=color, marker="o", markersize=4, label=label)
+
         if rational_series is not None and key in rational_series and n != 0:
             ax.plot(
                 x, rational_series[key], color=color, linestyle="--", marker="o",
@@ -78,6 +88,7 @@ def plot_mode_amplitudes(
     out_path: Path | str,
     *,
     rational_series: Mapping[ModeKey, "object"] | None = None,
+    growth_fits: Mapping[ModeKey, GrowthFit] | None = None,
     log: bool = True,
     xlabel: str = "",
     figsize: tuple[float, float] = (7, 5),
@@ -93,7 +104,7 @@ def plot_mode_amplitudes(
         fig, ax = plt.subplots(figsize=figsize)
         draw_mode_amplitudes(
             ax, x, series, variable=variable, rational_series=rational_series,
-            log=log, xlabel=xlabel,
+            growth_fits=growth_fits, log=log, xlabel=xlabel,
         )
         fig.tight_layout()
         fig.savefig(out_path, dpi=dpi)
