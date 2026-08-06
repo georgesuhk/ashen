@@ -88,6 +88,15 @@ n_points        = 100
 # rational_surface dashed over it -- the original always-both look.
 # four_quantities = ["rational_surface"]
 # four_quantities = ["max", "rational_surface"]
+# "delta_b_over_b" is a pseudo-variable for four_vars -- not a raw jorek2_four
+# output, it's derived from "Psi"'s amplitude using the tearing-mode shorthand
+# b_r^(m,n) ~ (m/R_axis^2)*|Psi_mn|, normalised by the axis toroidal field
+# B_axis = F0/R_axis (both read from the run's `log`). An approximation --
+# R_axis stands in for the true local minor radius, since the four cache only
+# carries |Psi_mn| on a psi_n grid, not real-space geometry. Only computed
+# when explicitly requested (an empty/unset four_vars never picks it up);
+# add "Psi" alongside it in four_vars to also see the raw flux amplitude.
+# four_vars = ["delta_b_over_b"]
 
 # Colour the field lines nearest chosen rational surfaces in `plot --diag
 # poincare`, everything else dimmed grey -- needs the qprofile cache

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from ashen.logfile import LogfileError, extract_from_file, r_axis
+from ashen.logfile import LogfileError, b_axis, extract_from_file, r_axis
 
 
 def write(tmp_path, text):
@@ -76,3 +76,20 @@ def test_r_axis_raises_rather_than_returning_nan(tmp_path):
     path = write(tmp_path, "no axis info here\n")
     with pytest.raises(LogfileError):
         r_axis(path)
+
+
+def test_b_axis_divides_f0_by_r_axis(tmp_path):
+    path = write(tmp_path, "F0 = 3.0\nR_axis = 1.5\n")
+    assert b_axis(path) == pytest.approx(2.0)
+
+
+def test_b_axis_raises_if_f0_missing(tmp_path):
+    path = write(tmp_path, "R_axis = 1.5\n")
+    with pytest.raises(LogfileError, match="F0"):
+        b_axis(path)
+
+
+def test_b_axis_raises_if_r_axis_missing(tmp_path):
+    path = write(tmp_path, "F0 = 3.0\n")
+    with pytest.raises(LogfileError, match="R_axis"):
+        b_axis(path)

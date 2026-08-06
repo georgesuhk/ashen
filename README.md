@@ -405,6 +405,38 @@ four_growth_rate  = true
 four_growth_steps = [1000, 3000]   # inclusive; omit to fit every step
 ```
 
+**`delta_b_over_b`.** A pseudo-variable for `four_vars` -- not a raw
+`jorek2_four` output (there is no `B` primitive in JOREK's restart file, only
+`Psi`, the poloidal flux), so it's derived from `Psi`'s amplitude using the
+standard tearing-mode shorthand:
+
+```
+delta_b_over_b(m,n) = (m / R_axis^2) * |Psi_mn| / B_axis
+```
+
+`R_axis` and `B_axis = F0/R_axis` (`phys_module.f90`'s fixed-toroidal-field
+constant, `B_phi = F0/R`) are both read from the run's `log`
+(`ashen.logfile.r_axis`/`b_axis`). This is an approximation: the exact
+relation uses the true local minor radius and `|grad Psi|`, not the
+(constant) major radius at the magnetic axis, but the four cache only carries
+`|Psi_mn|` on a `psi_n` grid, not real-space geometry, so `R_axis` stands in
+for it everywhere. `m = 0` modes are dropped (no helical radial-field content
+in this shorthand) rather than drawn as a flat zero line.
+
+Only computed when explicitly requested -- an empty/unset `four_vars` never
+picks it up, since it isn't "everything found in the cache". Works with
+either `four_quantities` selection (whole-domain max or rational-surface
+value), since it's a post-conversion of whichever `Psi` series was computed:
+
+```toml
+four_vars = ["delta_b_over_b"]              # only the derived quantity
+four_vars = ["Psi", "delta_b_over_b"]       # raw flux amplitude alongside it
+```
+
+A run whose log is missing `F0` or `R_axis` prints `skipping
+delta_b_over_b: ...` and falls back to whatever else was requested, rather
+than erroring the whole `--diag four` plot.
+
 Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see
 `KNOWN_ISSUES.md` #6 and #7 for what changed and what's still an open question.

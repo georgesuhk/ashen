@@ -21,11 +21,17 @@ from ashen.paths import RunPaths
 
 __all__ = [
     "ModeKey", "max_amplitude_series", "rational_surface_series",
+    "DELTA_B_OVER_B", "delta_b_over_b_series",
     "GrowthFit", "fit_growth_rate", "growth_rate_series", "format_growth_rates",
 ]
 
 #: (variable, toroidal mode n, poloidal mode m).
 ModeKey = tuple[str, int, int]
+
+#: The pseudo-variable name delta_b_over_b_series's output is keyed under --
+#: not a real jorek2_four cache variable, so callers gate on this name to
+#: request the derived quantity rather than a raw one.
+DELTA_B_OVER_B = "delta_b_over_b"
 
 
 def max_amplitude_series(
@@ -136,6 +142,35 @@ def rational_surface_series(
             values[i] = float(np.max(amp_at))
         series[key] = values
     return series
+
+
+def delta_b_over_b_series(
+    psi_series: Mapping[ModeKey, np.ndarray], *, r_axis: float, b_axis: float
+) -> dict[ModeKey, np.ndarray]:
+    """Convert a ``Psi``-variable amplitude series (from
+    :func:`max_amplitude_series` or :func:`rational_surface_series`, filtered
+    to ``variable == "Psi"``) into an approximate perturbed-field fraction,
+    keyed under :data:`DELTA_B_OVER_B` in place of ``"Psi"``.
+
+    Uses the standard tearing-mode shorthand ``b_r^(m,n) ~ (m / R^2) *
+    |Psi_mn|``, normalised by the axis toroidal field: ``delta_b_over_b =
+    (m / r_axis**2) * |Psi_mn| / b_axis``. This is an approximation -- the
+    exact relation uses the local minor radius and the true |grad Psi|, not
+    the (constant) major radius at the magnetic axis -- but the four cache
+    only carries ``|Psi_mn|`` on a ``psi_n`` grid, not real-space geometry,
+    so ``r_axis`` stands in for it everywhere.
+
+    ``m=0`` modes carry no helical radial-field content in this shorthand
+    (the ``m`` factor vanishes) and are dropped rather than shown as a flat
+    zero line, mirroring how ``n=0`` is dropped from rational-surface data.
+    """
+    out: dict[ModeKey, np.ndarray] = {}
+    for (variable, n, m) in psi_series:
+        if variable != "Psi" or m == 0:
+            continue
+        scale = abs(m) / (r_axis**2 * b_axis)
+        out[(DELTA_B_OVER_B, n, m)] = psi_series[(variable, n, m)] * scale
+    return out
 
 
 @dataclass(frozen=True)

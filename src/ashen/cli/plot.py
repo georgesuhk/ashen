@@ -30,6 +30,8 @@ from ashen.cases import Case, CasesError, load_cases
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
 from ashen.diagnostics.four_modes import (
+    DELTA_B_OVER_B,
+    delta_b_over_b_series,
     format_growth_rates,
     growth_rate_series,
     max_amplitude_series,
@@ -38,7 +40,7 @@ from ashen.diagnostics.four_modes import (
 from ashen.diagnostics.poincare_cache import read_step
 from ashen.diagnostics.profiles import expand_compound_vars, read_profile_series
 from ashen.diagnostics.qprofile import rational_surface_matches, read_qprofile
-from ashen.logfile import LogfileError, r_axis
+from ashen.logfile import LogfileError, b_axis, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes
@@ -262,6 +264,19 @@ def _plot_four_modes(
     want_max = "max" in case.four_quantities
     want_rational = "rational_surface" in case.four_quantities
 
+    # delta_b_over_b is derived from the "Psi" cache variable, not a raw
+    # jorek2_four output -- only computed when explicitly requested (never
+    # picked up by an unrestricted four_vars = [] "plot everything"). "Psi"
+    # is added to the cache fetch if the caller didn't already ask for it,
+    # then stripped back out below so it doesn't appear as its own panel.
+    requested_vars = list(case.four_vars) if case.four_vars else None
+    want_delta_b = requested_vars is not None and DELTA_B_OVER_B in requested_vars
+    fetch_vars = requested_vars
+    if want_delta_b:
+        fetch_vars = [v for v in requested_vars if v != DELTA_B_OVER_B]
+        if "Psi" not in fetch_vars:
+            fetch_vars.append("Psi")
+
     # case.four_modes entries are [m, n] pairs (user-facing); the diagnostics
     # layer's ModeKey/modes filter is (n, m), matching FourRecord's own
     # (variable, n, m) field order -- swap here, at the one point they meet.
@@ -270,7 +285,7 @@ def _plot_four_modes(
     # is itself the primary series whenever "max" is selected.
     series = max_amplitude_series(
         paths, steps,
-        variables=case.four_vars or None,
+        variables=fetch_vars,
         modes=[(n, m) for m, n in case.four_modes] if case.four_modes else None,
     )
     if not series:
@@ -289,8 +304,31 @@ def _plot_four_modes(
         rational_modes = {(n, m) for _, n, m in series if n != 0}
         if rational_modes:
             rational = rational_surface_series(
-                paths, steps, sorted(rational_modes), variables=case.four_vars or None
+                paths, steps, sorted(rational_modes), variables=fetch_vars
             )
+
+    if want_delta_b:
+        try:
+            r0 = r_axis(paths.log)
+            b0 = b_axis(paths.log)
+        except LogfileError as exc:
+            print(f"  skipping {DELTA_B_OVER_B}: {exc}")
+            want_delta_b = False
+        else:
+            psi_keys = {k for k in series if k[0] == "Psi"}
+            series.update(delta_b_over_b_series(
+                {k: series[k] for k in psi_keys}, r_axis=r0, b_axis=b0
+            ))
+            if rational:
+                psi_rational_keys = {k for k in rational if k[0] == "Psi"}
+                rational.update(delta_b_over_b_series(
+                    {k: rational[k] for k in psi_rational_keys}, r_axis=r0, b_axis=b0
+                ))
+        # Drop the raw Psi keys unless Psi itself was explicitly requested --
+        # they were only fetched as the input to the conversion above.
+        if requested_vars is not None and "Psi" not in requested_vars:
+            series = {k: v for k, v in series.items() if k[0] != "Psi"}
+            rational = {k: v for k, v in rational.items() if k[0] != "Psi"}
 
     # Primary (solid) series is max whenever selected -- both-selected
     # reproduces the original solid-max/dashed-rational-overlay look;
@@ -347,7 +385,10 @@ def _plot_four_modes(
     for suffix, x, xlabel in variants:
         for variable in sorted({var for var, _, _ in primary_series}):
             out = paths.four_dir / f"{variable}_modes_{suffix}.png"
-            ylabel = f"|{variable}|{ylabel_suffix}" if ylabel_suffix else None
+            if variable == DELTA_B_OVER_B:
+                ylabel = f"\N{GREEK SMALL LETTER DELTA}B/B{ylabel_suffix or ''}"
+            else:
+                ylabel = f"|{variable}|{ylabel_suffix}" if ylabel_suffix else None
             plot_mode_amplitudes(
                 x, primary_series, variable, out, rational_series=overlay_series or None,
                 growth_fits=growth_fits or None, log=log, xlabel=xlabel,

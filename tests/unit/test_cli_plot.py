@@ -561,6 +561,86 @@ def test_four_quantities_rational_surface_only_with_no_resonant_modes_reports_an
     assert "no rational-surface data to plot" in capsys.readouterr().out
 
 
+# --- delta_b_over_b: derived from Psi, requires F0 in the log ---------------------
+
+
+def test_delta_b_over_b_writes_a_figure_and_uses_it_over_raw_psi(campaign, monkeypatch):
+    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b_over_b"]\n',
+        encoding="utf-8",
+    )
+    captured_calls = []
+    original = plot_cli.plot_mode_amplitudes
+
+    def spy(x, series, variable, out_path, **kwargs):
+        captured_calls.append(series)
+        return original(x, series, variable, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_mode_amplitudes", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert (campaign / "four_dir" / "delta_b_over_b_modes_step.png").is_file()
+    assert not (campaign / "four_dir" / "Psi_modes_step.png").exists()
+
+    # b0 = F0 / R_axis = 4.0 / 2.0 = 2.0; scale = m / (r_axis**2 * b0) = 2 / (4 * 2) = 0.25
+    assert captured_calls
+    np.testing.assert_allclose(captured_calls[0][("delta_b_over_b", 1, 2)], [1.0, 2.0])
+
+
+def test_delta_b_over_b_not_requested_leaves_series_unaffected(campaign, monkeypatch):
+    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
+    assert not (campaign / "four_dir" / "delta_b_over_b_modes_step.png").exists()
+
+
+def test_delta_b_over_b_missing_f0_skips_with_message(campaign, capsys):
+    # log has R_axis (from the campaign fixture) but no F0.
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b_over_b"]\n',
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert "skipping delta_b_over_b" in capsys.readouterr().out
+    assert not (campaign / "four_dir" / "delta_b_over_b_modes_step.png").exists()
+
+
+def test_delta_b_over_b_alongside_explicit_psi_keeps_both(campaign, monkeypatch):
+    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["Psi", "delta_b_over_b"]\n',
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
+    assert (campaign / "four_dir" / "delta_b_over_b_modes_step.png").is_file()
+
+
 # --- per-diag steps override: default -> case -> case+diag tree -------------------
 
 
