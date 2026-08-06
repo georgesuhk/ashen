@@ -64,13 +64,21 @@ n_points        = 100
 # four_growth_rate  = true
 # four_growth_steps = [1000, 3000]
 
+# A case's folder defaults to its own name, the common case since a case
+# usually just points at the run folder it's named after -- no separate
+# folder = "..." line needed.
 [cases."qa2.1_g2.3/eta1e-3_RE"]
-folder = "qa2.1_g2.3/eta1e-3_RE"
-steps  = { start = 200, stop = 5800, step = 200 }
-note   = "internal kink investigation"
+steps = { start = 200, stop = 5800, step = 200 }
+note  = "internal kink investigation"
 
 # steps also accepts an explicit list where a range doesn't fit the data:
 # [cases."qa2.8_g1.8/eta1e-5_RE_ntor11"]
-# folder = "qa2.8_g1.8/eta1e-5_RE_ntor11"
-# steps  = [11800, 12000, 12100, 12200, 12300, 12400, 12420, 12430]
-# note   = "ntor=11 island growth"
+# steps = [11800, 12000, 12100, 12200, 12300, 12400, 12420, 12430]
+# note  = "ntor=11 island growth"
+
+# Give an explicit folder only when a case is named for something other than
+# the run folder it points at (e.g. re-analysing the same run under a
+# different label/configuration):
+# [cases.eta1e-3_rescan]
+# folder = "qa2.1_g2.3/eta1e-3_RE"
+# steps  = { start = 200, stop = 5800, step = 200 }

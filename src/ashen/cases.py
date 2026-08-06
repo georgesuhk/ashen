@@ -34,6 +34,7 @@ class CasesError(RuntimeError):
 @dataclass(frozen=True)
 class Case:
     name: str
+    #: Defaults to ``name`` if not given explicitly -- see ``load_cases``.
     folder: str
     steps: list[int]
     note: str = ""
@@ -176,8 +177,12 @@ def load_cases(path: Path | str) -> dict[str, Case]:
     for name, raw in raw_cases.items():
         merged = {**defaults, **raw}
 
-        if "folder" not in merged:
-            raise CasesError(f"{path}: case {name!r} has no 'folder'")
+        # folder defaults to the case's own name -- [cases."qa2.1_g2.3/eta1e-3_RE"]
+        # needs no separate folder = "qa2.1_g2.3/eta1e-3_RE" line, since the two
+        # are the overwhelmingly common case. Still overridable when a case is
+        # named for something other than its run folder (e.g. a `[defaults]`-only
+        # rerun under a different label).
+        merged.setdefault("folder", name)
         if "steps" not in merged:
             raise CasesError(f"{path}: case {name!r} has no 'steps'")
         steps = _steps_from_spec(merged.pop("steps"), case_name=name, source=path)

@@ -313,10 +313,22 @@ def test_four_growth_steps_rejects_start_after_end(tmp_path):
         load_cases(path)
 
 
-def test_missing_folder_raises(tmp_path):
-    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
-    with pytest.raises(CasesError, match="folder"):
-        load_cases(path)
+def test_folder_defaults_to_the_case_name(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\nsteps = [1]\n',
+    )
+    case = load_cases(path)["qa2.1_g2.3/eta1e-3_RE"]
+    assert case.folder == "qa2.1_g2.3/eta1e-3_RE"
+
+
+def test_explicit_folder_overrides_the_case_name(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.rerun]\nfolder = "qa2.1_g2.3/eta1e-3_RE"\nsteps = [1]\n',
+    )
+    case = load_cases(path)["rerun"]
+    assert case.folder == "qa2.1_g2.3/eta1e-3_RE"
 
 
 def test_missing_steps_raises(tmp_path):

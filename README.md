@@ -82,8 +82,11 @@ current directory → `~/.config/ashen/site.toml`.
 ## Gathering analysis data for a case
 
 Copy `cases.example.toml` to a campaign folder as `cases.toml` and define a
-named entry per investigation -- see the file for the format. Then, from
-anywhere:
+named entry per investigation -- see the file for the format. A case's
+`folder` defaults to its own name (`[cases."qa2.1_g2.3/eta1e-3_RE"]` needs no
+separate `folder = "qa2.1_g2.3/eta1e-3_RE"` line), the common case; give an
+explicit `folder` only when a case is named for something other than the run
+folder it points at. Then, from anywhere:
 
 ```bash
 python ~/ashen/bin/analyse --list                          # show defined cases
