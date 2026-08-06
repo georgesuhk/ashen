@@ -156,6 +156,38 @@ def test_poincare_highlight_colors_the_matched_line(campaign, monkeypatch):
     assert captured["200_poincare.png"] == {0.5: "red"}
 
 
+def test_poincare_highlight_is_not_rescaled_by_real_psi_edge(campaign, monkeypatch):
+    """Regression: `LineKey.psi_n` and the qprofile's `Psi_n` column are both
+    already JOREK-normalised psi_n -- `fluxsurface` takes [0,1] and inverts
+    `get_psi_n` (exec_commands.f90:3063-3068) -- so `real_psi_edge` must NOT
+    be applied a second time at plot time. cli/analyse.py already applies it
+    once when turning case.psi_n_in into traced positions.
+
+    real_psi_edge is deliberately != 1 so the correct and buggy behaviours
+    differ: traced surfaces are 0.2 and 0.5, and q crosses 2.0 exactly at
+    0.5. Correct -> highlights 0.5. The old double-normalised code divided
+    the grid to {0.4, 1.0}, snapped the 0.5 crossing to 0.4, and highlighted
+    0.2 instead.
+    """
+    write_float(campaign / "real_psi_edge.dat", 0.5)
+    _write_qprofile_cache(campaign, 100, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
+    _write_qprofile_cache(campaign, 200, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
+    _add_highlight_case(campaign.parent.parent, modes=[[2, 1]], colors=["red"])
+
+    captured = {}
+    real_draw = plot_cli.plot_poincare_step
+
+    def spy(records, out, **kwargs):
+        captured[out.name] = kwargs.get("highlight")
+        return real_draw(records, out, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_poincare_step", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
+    assert captured["100_poincare.png"] == {0.5: "red"}
+    assert captured["200_poincare.png"] == {0.5: "red"}
+
+
 def test_poincare_highlight_missing_qprofile_cache_is_skipped_not_crashed(
     campaign, capsys
 ):

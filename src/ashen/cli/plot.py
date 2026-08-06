@@ -117,12 +117,29 @@ def _render_poincare_step(
 
 
 def _rational_highlight_for_step(
-    case: Case, paths: RunPaths, step: int, records, real_psi_edge: float
+    case: Case, paths: RunPaths, step: int, records
 ) -> dict[float, str] | None:
-    """``{psi_n: color}`` (physical units, matching ``LineKey.psi_n``) for the
-    field lines nearest each of ``case``'s configured rational surfaces at
-    this step -- ``None`` if highlighting is off or the qprofile cache for
-    this step isn't there yet.
+    """``{psi_n: color}`` for the traced field lines nearest each of ``case``'s
+    configured rational surfaces at this step -- ``None`` if highlighting is
+    off, or this step has no qprofile cache yet.
+
+    **Both sides are already in JOREK's own normalised psi_n**, and are
+    compared directly with no ``real_psi_edge`` rescaling:
+
+    * ``LineKey.psi_n`` is the value handed to ``jorek2_postproc``'s
+      ``fluxsurface`` command, which rejects anything outside ``[0, 1]`` and
+      converts it internally as ``psi_axis + psi_n*(psi_bnd - psi_axis)``
+      (``exec_commands.f90:3063-3068``).
+    * the q-profile's first column is ``get_psi_n(...)``
+      (``exec_commands.f90::qprofile``) -- the exact inverse of that.
+
+    ``real_psi_edge`` converts a *plasma-fraction* psi_n into this JOREK-grid
+    psi_n (``boundary.py::extend_psi`` defines it as ``psi_plasma_edge /
+    psi_extended_edge``), and ``cli/analyse.py`` already applies it once when
+    turning ``case.psi_n_in`` into the traced positions. Dividing again here
+    applied it twice and shifted every match by exactly that factor -- the
+    same double-normalisation trap ``KNOWN_ISSUES.md`` #7 records against the
+    connection-length threshold. It is deliberately absent now.
     """
     if not case.poincare_highlight:
         return None
@@ -132,25 +149,22 @@ def _rational_highlight_for_step(
               "(run analyse --diag poincare with poincare_highlight, or --diag four)")
         return None
 
-    physical_groups = sorted({key.psi_n for key in records})
-    if not physical_groups:
+    traced_psi_n = sorted({key.psi_n for key in records})
+    if not traced_psi_n:
         return None
-    normalised_to_physical = {p / real_psi_edge: p for p in physical_groups}
 
     psi_n_q, q = read_qprofile(q_path)
     modes = [
         (n, m, color)
         for (m, n), color in zip(case.poincare_highlight_modes, case.poincare_highlight_colors)
     ]
-    matches = rational_surface_matches(psi_n_q, q, modes, list(normalised_to_physical))
-    return {normalised_to_physical[p]: color for p, color in matches.items()}
+    return rational_surface_matches(psi_n_q, q, modes, traced_psi_n)
 
 
 def _plot_poincare(
     case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1
 ) -> None:
     kwargs = {} if dpi is None else {"dpi": dpi}
-    real_psi_edge = read_float(paths.real_psi_edge) if case.poincare_highlight else None
 
     to_render: list[tuple[int, dict, dict[float, str] | None]] = []
     for step in steps:
@@ -158,11 +172,7 @@ def _plot_poincare(
         if not records:
             print(f"  step {step}: no Poincare cache, skipped")
             continue
-        highlight = (
-            _rational_highlight_for_step(case, paths, step, records, real_psi_edge)
-            if real_psi_edge is not None
-            else None
-        )
+        highlight = _rational_highlight_for_step(case, paths, step, records)
         to_render.append((step, records, highlight))
 
     if not to_render:

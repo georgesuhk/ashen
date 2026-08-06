@@ -197,12 +197,35 @@ by the runner) is not numerically equal to JOREK's own internal `psi_bnd`,
 this second division shifts the `psi_n < 1` inside/outside threshold and
 therefore every connection length.
 
-**Status:** not resolved. `ashen`'s port preserves the exact same second
-division (`ashen/diagnostics/connection_length.py`'s
-`line_connection_length` divides by `real_psi_edge`) rather than silently
-dropping it, because either choice changes numbers and this needs George's
-judgement on what `real_psi_edge` actually represents relative to JOREK's
-`psi_bnd`. Flagging here rather than guessing, in the same spirit as #1/#2.
+**What `real_psi_edge` actually is (settled).** `boundary.py::extend_psi`
+defines it as `psi[-1] / new_psi[-1]` -- the true plasma edge as a fraction
+of the *extended* (vacuum-padded) grid's edge, so it is in `(0, 1]` and is
+`1.0` exactly when `extend_bnd` is off. It converts a **plasma-fraction**
+`psi_n` into **JOREK-grid** `psi_n`. It is *not* related to JOREK's
+`psi_bnd`: JOREK's own `get_psi_n` already normalises to `psi_bnd`, so
+anything JOREK reports or accepts is in JOREK-grid `psi_n` with no further
+conversion needed. Confirmed from `exec_commands.f90:3063-3068`, where
+`fluxsurface` rejects an argument outside `[0, 1]` and expands it as
+`psi_axis + psi_n*(psi_bnd - psi_axis)` -- the exact inverse of the
+`get_psi_n` that `qprofile` writes.
+
+This means the rule is: apply `real_psi_edge` **exactly once**, when turning
+a user-facing `case.psi_n_in` into a JOREK-grid position (which
+`cli/analyse.py` does before tracing). Anything read back out of JOREK or a
+cache keyed on those positions is already JOREK-grid and must not be divided
+again. The Poincare rational-surface highlight had exactly that second
+division and was fixed accordingly (`cli/plot.py::
+_rational_highlight_for_step`), with a regression test pinning
+`real_psi_edge != 1`.
+
+**Status:** the *semantics* above are settled; the connection-length
+behaviour is still **not resolved**, and `ashen` still preserves the legacy
+second division in `line_connection_length`. By the rule above that division
+is very likely wrong -- `record.psi_n` derives from `jorek2_poincare`'s own
+`poinc_rho-theta.dat`, already JOREK-normalised. But dropping it moves the
+`psi_n < 1` confined/lost threshold and therefore *every* connection length
+ever plotted, so it stays George's call rather than a silent change. Nothing
+blocks it technically now that the units question is answered.
 
 ---
 
