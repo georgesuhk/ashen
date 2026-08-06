@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, TypeVar
 
-__all__ = ["LogfileError", "extract_from_file", "r_axis", "b_axis"]
+__all__ = ["LogfileError", "extract_from_file", "r_axis"]
 
 T = TypeVar("T")
 
@@ -103,15 +103,3 @@ def r_axis(log_path: Path | str) -> float:
     every hardcoded ``R0`` site rather than being reimplemented at each one.
     """
     return extract_from_file(log_path, "R_axis", occurrence=1)
-
-
-def b_axis(log_path: Path | str) -> float:
-    """The vacuum/axis toroidal field JOREK logged for this equilibrium.
-
-    JOREK fixes the toroidal field via a single constant ``F0`` such that
-    ``B_phi = F0 / R`` (``phys_module.f90:32``), logged as ``F0`` alongside
-    ``R_axis``. ``B_axis = F0 / R_axis`` is the toroidal field at the
-    magnetic axis, used to normalise perturbed-field quantities like
-    delta-B/B.
-    """
-    return extract_from_file(log_path, "F0", occurrence=1) / r_axis(log_path)

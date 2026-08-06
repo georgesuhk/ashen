@@ -42,9 +42,9 @@ from ashen.diagnostics.four_modes import (
     rational_surface_series,
 )
 from ashen.diagnostics.poincare_cache import read_step
-from ashen.diagnostics.profiles import expand_compound_vars, read_profile_series
+from ashen.diagnostics.profiles import edge_toroidal_field, expand_compound_vars, read_profile_series
 from ashen.diagnostics.qprofile import rational_surface_matches, read_qprofile
-from ashen.logfile import LogfileError, b_axis, r_axis
+from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes
@@ -337,12 +337,13 @@ def _plot_four_modes(
             print(f"  skipping {', '.join(sorted(remaining))}: {exc}")
             remaining = set()
 
-        b0 = None
+        b_ref = None
         if DELTA_B_OVER_B in remaining:
-            try:
-                b0 = b_axis(paths.log)
-            except LogfileError as exc:
-                print(f"  skipping {DELTA_B_OVER_B}: {exc}")
+            b_ref = edge_toroidal_field(paths)
+            if b_ref is None:
+                print(f"  skipping {DELTA_B_OVER_B}: no Btor profile cached at the plasma "
+                      "edge for step 0 (run analyse --diag profiles with \"Btor\" in "
+                      "profiles vars and \"midplane outer\" in tor_mode for step 0)")
                 remaining.discard(DELTA_B_OVER_B)
 
         if remaining:
@@ -351,7 +352,7 @@ def _plot_four_modes(
             if DELTA_B in remaining:
                 series.update(delta_b_series(psi_only, r_axis=r0))
             if DELTA_B_OVER_B in remaining:
-                series.update(delta_b_over_b_series(psi_only, r_axis=r0, b_axis=b0))
+                series.update(delta_b_over_b_series(psi_only, r_axis=r0, b_ref=b_ref))
             if rational:
                 psi_rational_keys = {k for k in rational if k[0] == "Psi"}
                 psi_rational_only = {k: rational[k] for k in psi_rational_keys}
@@ -359,7 +360,7 @@ def _plot_four_modes(
                     rational.update(delta_b_series(psi_rational_only, r_axis=r0))
                 if DELTA_B_OVER_B in remaining:
                     rational.update(
-                        delta_b_over_b_series(psi_rational_only, r_axis=r0, b_axis=b0)
+                        delta_b_over_b_series(psi_rational_only, r_axis=r0, b_ref=b_ref)
                     )
 
         # Drop the raw Psi keys unless Psi itself was explicitly requested --

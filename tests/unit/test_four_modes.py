@@ -201,32 +201,32 @@ def test_reversed_shear_takes_the_strongest_crossing(paths):
 # --- delta_b_over_b_series ---------------------------------------------------------
 
 
-def test_delta_b_over_b_scales_psi_amplitude_by_m_over_r_squared_b_axis():
+def test_delta_b_over_b_scales_psi_amplitude_by_m_over_r_squared_b_ref():
     psi_series = {("Psi", 1, 2): np.array([4.0, 8.0])}
-    out = delta_b_over_b_series(psi_series, r_axis=2.0, b_axis=1.0)
+    out = delta_b_over_b_series(psi_series, r_axis=2.0, b_ref=1.0)
     # m=2, r_axis=2 -> scale = 2 / (2**2 * 1.0) = 0.5
     assert out[("delta_b_over_b", 1, 2)] == pytest.approx([2.0, 4.0])
 
 
 def test_delta_b_over_b_key_is_renamed_from_psi():
-    out = delta_b_over_b_series({("Psi", 3, 1): np.array([1.0])}, r_axis=1.0, b_axis=1.0)
+    out = delta_b_over_b_series({("Psi", 3, 1): np.array([1.0])}, r_axis=1.0, b_ref=1.0)
     assert set(out) == {(DELTA_B_OVER_B, 3, 1)}
 
 
 def test_delta_b_over_b_uses_abs_of_m():
     """A negative poloidal mode number still scales the amplitude up, not
     down or negative -- b_r depends on |m|, not its sign."""
-    out = delta_b_over_b_series({("Psi", 1, -2): np.array([4.0])}, r_axis=2.0, b_axis=1.0)
+    out = delta_b_over_b_series({("Psi", 1, -2): np.array([4.0])}, r_axis=2.0, b_ref=1.0)
     assert out[("delta_b_over_b", 1, -2)] == pytest.approx([2.0])
 
 
 def test_delta_b_over_b_drops_m_zero_modes():
-    out = delta_b_over_b_series({("Psi", 1, 0): np.array([4.0])}, r_axis=2.0, b_axis=1.0)
+    out = delta_b_over_b_series({("Psi", 1, 0): np.array([4.0])}, r_axis=2.0, b_ref=1.0)
     assert out == {}
 
 
 def test_delta_b_over_b_ignores_non_psi_keys():
-    out = delta_b_over_b_series({("T", 1, 2): np.array([4.0])}, r_axis=2.0, b_axis=1.0)
+    out = delta_b_over_b_series({("T", 1, 2): np.array([4.0])}, r_axis=2.0, b_ref=1.0)
     assert out == {}
 
 
@@ -236,7 +236,7 @@ def test_delta_b_over_b_ignores_non_psi_keys():
 def test_delta_b_scales_psi_amplitude_by_m_over_r_squared_only():
     psi_series = {("Psi", 1, 2): np.array([4.0, 8.0])}
     out = delta_b_series(psi_series, r_axis=2.0)
-    # m=2, r_axis=2 -> scale = 2 / 2**2 = 0.5, no b_axis division.
+    # m=2, r_axis=2 -> scale = 2 / 2**2 = 0.5, no b_ref division.
     assert out[("delta_b", 1, 2)] == pytest.approx([2.0, 4.0])
 
 

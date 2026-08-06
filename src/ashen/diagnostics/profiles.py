@@ -27,7 +27,7 @@ from ashen.postproc import profile_script, read_postproc_profile
 
 __all__ = [
     "extract_profile", "expand_compound_vars", "gather_profiles",
-    "read_profile_series", "TOR_MODES",
+    "read_profile_series", "edge_toroidal_field", "TOR_MODES",
 ]
 
 #: Postproc command -> the output filename prefix it writes under ``postproc/``.
@@ -273,3 +273,33 @@ def read_profile_series(
         with np.load(cache) as data:
             series[step] = (np.asarray(data["x"]), np.asarray(data["y"]))
     return series
+
+
+def edge_toroidal_field(
+    paths: RunPaths, *, step: int = 0, psi_n: float = 1.0
+) -> float | None:
+    """``Btor`` interpolated to ``psi_n`` (the plasma edge by default) from
+    the cached midplane profile at ``step`` (the initial equilibrium by
+    default) -- a fixed reference field for normalising a perturbation
+    amplitude, independent of the axis-based :func:`ashen.logfile.b_axis`.
+
+    Uses ``"midplane outer"``, not bare ``"midplane"``: with
+    ``coords_var = "Psi_N"``, bare midplane crosses the magnetic axis and
+    ``Psi_N`` runs ``1 -> 0 -> 1`` along it, double-valued and useless as an
+    interpolation axis (see the module docstring's ``_TOR_MODE_PREFIX`` note).
+
+    ``None`` if that profile hasn't been gathered
+    (``analyse --diag profiles`` needs ``"Btor"`` in the case's profile
+    ``vars``, with ``tor_mode`` including ``"midplane outer"``, for ``step``)
+    -- the caller decides how to report that, same convention as a missing
+    logfile field.
+    """
+    cache = paths.profile_cache("Psi_N", "Btor", step, "midplane outer")
+    if not cache.is_file():
+        return None
+    with np.load(cache) as data:
+        x, y = np.asarray(data["x"]), np.asarray(data["y"])
+    if x.size == 0:
+        return None
+    order = np.argsort(x)
+    return float(np.interp(psi_n, x[order], y[order]))

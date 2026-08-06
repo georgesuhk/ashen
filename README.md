@@ -411,17 +411,31 @@ four_growth_steps = [1000, 3000]   # inclusive; omit to fit every step
 standard tearing-mode shorthand:
 
 ```
-delta_b_over_b(m,n) = (m / R_axis^2) * |Psi_mn| / B_axis
+delta_b_over_b(m,n) = (m / R_axis^2) * |Psi_mn| / B_ref
 ```
 
-`R_axis` and `B_axis = F0/R_axis` (`phys_module.f90`'s fixed-toroidal-field
-constant, `B_phi = F0/R`) are both read from the run's `log`
-(`ashen.logfile.r_axis`/`b_axis`). This is an approximation: the exact
-relation uses the true local minor radius and `|grad Psi|`, not the
-(constant) major radius at the magnetic axis, but the four cache only carries
-`|Psi_mn|` on a `psi_n` grid, not real-space geometry, so `R_axis` stands in
-for it everywhere. `m = 0` modes are dropped (no helical radial-field content
-in this shorthand) rather than drawn as a flat zero line.
+`R_axis` is read from the run's `log` (`ashen.logfile.r_axis`). `B_ref` is
+`Btor` interpolated to the plasma edge (`psi_n = 1`) from the cached
+step-0 (initial-equilibrium) midplane profile
+(`ashen.diagnostics.profiles.edge_toroidal_field`) -- a fixed reference
+field, not the perturbed run's own evolving field. This is an approximation:
+the exact relation uses the true local minor radius and `|grad Psi|`, not
+the (constant) major radius at the magnetic axis, but the four cache only
+carries `|Psi_mn|` on a `psi_n` grid, not real-space geometry, so `R_axis`
+stands in for it everywhere. `m = 0` modes are dropped (no helical
+radial-field content in this shorthand) rather than drawn as a flat zero line.
+
+`B_ref` needs `Btor` gathered for step 0 with `"midplane outer"` in
+`tor_mode` (not bare `"midplane"`, which is double-valued in `Psi_N`):
+
+```toml
+[cases.NAME.profiles]
+steps     = [0]
+tor_mode  = "midplane outer"
+```
+```bash
+analyse --case NAME --diag profiles
+```
 
 Only computed when explicitly requested -- an empty/unset `four_vars` never
 picks it up, since it isn't "everything found in the cache". Works with
@@ -434,17 +448,18 @@ four_vars = ["Psi", "delta_b_over_b"]       # raw flux amplitude alongside it
 ```
 
 **`delta_b`** is the same quantity un-normalised -- `(m / R_axis^2) *
-|Psi_mn|`, in Tesla, with no division by `B_axis`. It only needs `R_axis`
-from the log, not `F0`, so it still works on a run whose log doesn't carry
-`F0`; `delta_b_over_b` does not. The two can be requested together
-(`four_vars = ["delta_b", "delta_b_over_b"]`) and are computed independently,
-so a missing `F0` skips only `delta_b_over_b`.
+|Psi_mn|`, in Tesla, with no division by `B_ref`. It only needs `R_axis`
+from the log, not the `Btor` profile, so it still works on a run that hasn't
+gathered step-0 profiles; `delta_b_over_b` does not. The two can be
+requested together (`four_vars = ["delta_b", "delta_b_over_b"]`) and are
+computed independently, so a missing `Btor` profile skips only
+`delta_b_over_b`.
 
 A run whose log is missing `R_axis` prints one `skipping delta_b,
 delta_b_over_b: ...` message and drops both (neither can be computed without
-it); missing only `F0` prints `skipping delta_b_over_b: ...` and `delta_b`
-is still drawn. Either way the rest of the requested `--diag four` plot is
-unaffected, not an error.
+it); missing only the step-0 `Btor` profile prints `skipping
+delta_b_over_b: ...` and `delta_b` is still drawn. Either way the rest of
+the requested `--diag four` plot is unaffected, not an error.
 
 Either figure also gets a small boxed caption in the lower-right corner
 giving the peak value actually drawn -- `max δB = 1.2 T` or `max δB/B =

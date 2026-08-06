@@ -110,6 +110,15 @@ def test_step_filter_restricts_poincare_output(campaign):
 # --- poincare rational-surface highlight -------------------------------------------
 
 
+def _write_btor_profile(run_dir, *, psi_n, btor, step=0, pad_width=6):
+    """The step-0 midplane-outer Btor profile delta_b_over_b normalises
+    against -- see ashen.diagnostics.profiles.edge_toroidal_field."""
+    paths = RunPaths(run_dir, pad_width=pad_width)
+    cache = paths.profile_cache("Psi_N", "Btor", step, "midplane outer")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(cache, x=np.asarray(psi_n, dtype=float), y=np.asarray(btor, dtype=float))
+
+
 def _write_qprofile_cache(run_dir, step, *, psi_n, q, pad_width=6):
     paths = RunPaths(run_dir, pad_width=pad_width)
     lines = ["# Psi_n q", f"# time step #{step:0{pad_width}d}"]
@@ -561,11 +570,12 @@ def test_four_quantities_rational_surface_only_with_no_resonant_modes_reports_an
     assert "no rational-surface data to plot" in capsys.readouterr().out
 
 
-# --- delta_b_over_b: derived from Psi, requires F0 in the log ---------------------
+# --- delta_b_over_b: derived from Psi, requires a step-0 Btor profile -------------
 
 
 def test_delta_b_over_b_writes_a_figure_and_uses_it_over_raw_psi(campaign, monkeypatch):
-    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
 
@@ -589,13 +599,14 @@ def test_delta_b_over_b_writes_a_figure_and_uses_it_over_raw_psi(campaign, monke
     assert (campaign / "four_dir" / "delta_b_over_b_modes_step.png").is_file()
     assert not (campaign / "four_dir" / "Psi_modes_step.png").exists()
 
-    # b0 = F0 / R_axis = 4.0 / 2.0 = 2.0; scale = m / (r_axis**2 * b0) = 2 / (4 * 2) = 0.25
+    # b_ref = Btor at psi_n=1 (step 0) = 2.0; scale = m/(r_axis**2*b_ref) = 2/(4*2) = 0.25
     assert captured_calls
     np.testing.assert_allclose(captured_calls[0][("delta_b_over_b", 1, 2)], [1.0, 2.0])
 
 
 def test_delta_b_over_b_not_requested_leaves_series_unaffected(campaign, monkeypatch):
-    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
     captured = _spy_on_plot_mode_amplitudes(monkeypatch)
@@ -605,8 +616,8 @@ def test_delta_b_over_b_not_requested_leaves_series_unaffected(campaign, monkeyp
     assert not (campaign / "four_dir" / "delta_b_over_b_modes_step.png").exists()
 
 
-def test_delta_b_over_b_missing_f0_skips_with_message(campaign, capsys):
-    # log has R_axis (from the campaign fixture) but no F0.
+def test_delta_b_over_b_missing_btor_profile_skips_with_message(campaign, capsys):
+    # log has R_axis (from the campaign fixture) but no Btor profile cached.
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
 
@@ -624,7 +635,8 @@ def test_delta_b_over_b_missing_f0_skips_with_message(campaign, capsys):
 
 
 def test_delta_b_over_b_alongside_explicit_psi_keeps_both(campaign, monkeypatch):
-    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
 
@@ -641,7 +653,7 @@ def test_delta_b_over_b_alongside_explicit_psi_keeps_both(campaign, monkeypatch)
     assert (campaign / "four_dir" / "delta_b_over_b_modes_step.png").is_file()
 
 
-# --- delta_b: derived from Psi, only needs R_axis (no F0) --------------------------
+# --- delta_b: derived from Psi, only needs R_axis (no Btor profile) ---------------
 
 
 def test_delta_b_writes_a_figure_and_uses_it_over_raw_psi(campaign, monkeypatch):
@@ -669,13 +681,14 @@ def test_delta_b_writes_a_figure_and_uses_it_over_raw_psi(campaign, monkeypatch)
     assert (campaign / "four_dir" / "delta_b_modes_step.png").is_file()
     assert not (campaign / "four_dir" / "Psi_modes_step.png").exists()
 
-    # scale = m / r_axis**2 = 2 / 4 = 0.5 -- no F0/B_axis needed.
+    # scale = m / r_axis**2 = 2 / 4 = 0.5 -- no Btor profile needed.
     assert captured_calls
     np.testing.assert_allclose(captured_calls[0][("delta_b", 1, 2)], [2.0, 4.0])
 
 
 def test_delta_b_and_delta_b_over_b_both_requested_write_both_figures(campaign):
-    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
 
@@ -713,8 +726,10 @@ def test_delta_b_missing_r_axis_skips_both_derived_vars_with_one_message(campaig
     assert not (campaign / "four_dir" / "delta_b_over_b_modes_step.png").exists()
 
 
-def test_delta_b_survives_missing_f0_while_delta_b_over_b_is_skipped(campaign, capsys):
-    # log has R_axis (from the campaign fixture) but no F0.
+def test_delta_b_survives_missing_btor_profile_while_delta_b_over_b_is_skipped(
+    campaign, capsys
+):
+    # log has R_axis (from the campaign fixture) but no Btor profile cached.
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
 
@@ -757,7 +772,8 @@ def test_delta_b_caption_reports_the_peak_across_steps_and_modes(campaign, monke
 
 
 def test_delta_b_over_b_caption_uses_the_normalised_label(campaign, monkeypatch):
-    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
 
@@ -772,7 +788,7 @@ def test_delta_b_over_b_caption_uses_the_normalised_label(campaign, monkeypatch)
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert captured
-    # b0 = F0/R_axis = 2; scale = m/(r_axis**2*b0) = 2/(4*2) = 0.25; peak = 8*0.25 = 2.
+    # b_ref = Btor at psi_n=1 = 2; scale = m/(r_axis**2*b_ref) = 2/(4*2) = 0.25; peak = 8*0.25 = 2.
     for kwargs in captured:
         assert kwargs.get("caption") == "max \N{GREEK SMALL LETTER DELTA}B/B = 2"
 

@@ -15,6 +15,7 @@ import pytest
 from ashen.diagnostics import profiles as profiles_mod
 from ashen.diagnostics.profiles import (
     TOR_MODES,
+    edge_toroidal_field,
     expand_compound_vars,
     gather_profiles,
     read_profile_series,
@@ -96,6 +97,45 @@ def test_read_profile_series_distinguishes_tor_modes(paths):
 
 def test_read_profile_series_no_caches_returns_empty(paths):
     assert read_profile_series(paths, [100, 200], "Psi_N", "currdens", "midplane") == {}
+
+
+# --- edge_toroidal_field -------------------------------------------------------------
+
+
+def test_edge_toroidal_field_interpolates_to_psi_n(paths):
+    _write_cache(
+        paths, "Psi_N", "Btor", 0, "midplane outer", [0.0, 0.5, 1.0], [4.0, 3.0, 2.0]
+    )
+    assert edge_toroidal_field(paths) == pytest.approx(2.0)
+
+
+def test_edge_toroidal_field_reads_step_zero_by_default(paths):
+    _write_cache(paths, "Psi_N", "Btor", 100, "midplane outer", [0.0, 1.0], [4.0, 3.0])
+    # No profile at step 0, so this must not fall back to step 100.
+    assert edge_toroidal_field(paths) is None
+
+
+def test_edge_toroidal_field_custom_step_and_psi_n(paths):
+    _write_cache(paths, "Psi_N", "Btor", 100, "midplane outer", [0.0, 1.0], [4.0, 2.0])
+    assert edge_toroidal_field(paths, step=100, psi_n=0.0) == pytest.approx(4.0)
+
+
+def test_edge_toroidal_field_missing_cache_is_none(paths):
+    assert edge_toroidal_field(paths) is None
+
+
+def test_edge_toroidal_field_ignores_bare_midplane_cache(paths):
+    # Bare "midplane" is double-valued in Psi_N and must not be picked up as
+    # a stand-in for "midplane outer".
+    _write_cache(paths, "Psi_N", "Btor", 0, "midplane", [0.0, 1.0], [4.0, 2.0])
+    assert edge_toroidal_field(paths) is None
+
+
+def test_edge_toroidal_field_unsorted_x_still_interpolates_correctly(paths):
+    _write_cache(
+        paths, "Psi_N", "Btor", 0, "midplane outer", [1.0, 0.0, 0.5], [2.0, 4.0, 3.0]
+    )
+    assert edge_toroidal_field(paths) == pytest.approx(2.0)
 
 
 # --- gather_profiles: cache-gating, multi-mode, and per-mode resilience -------------

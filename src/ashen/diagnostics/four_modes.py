@@ -149,11 +149,11 @@ def _b_r_from_psi(
     psi_series: Mapping[ModeKey, np.ndarray],
     *,
     r_axis: float,
-    b_axis: float | None,
+    b_ref: float | None,
     target_name: str,
 ) -> dict[ModeKey, np.ndarray]:
     """Shared conversion behind :func:`delta_b_series` and
-    :func:`delta_b_over_b_series` -- see either for the physics. ``b_axis``
+    :func:`delta_b_over_b_series` -- see either for the physics. ``b_ref``
     controls whether the result is normalised (Tesla-per-Tesla, dimensionless)
     or left as a raw field magnitude (Tesla).
     """
@@ -162,8 +162,8 @@ def _b_r_from_psi(
         if variable != "Psi" or m == 0:
             continue
         scale = abs(m) / r_axis**2
-        if b_axis is not None:
-            scale /= b_axis
+        if b_ref is not None:
+            scale /= b_ref
         out[(target_name, n, m)] = psi_series[(variable, n, m)] * scale
     return out
 
@@ -178,34 +178,39 @@ def delta_b_series(
 
     Uses the standard tearing-mode shorthand ``b_r^(m,n) ~ (m / R^2) *
     |Psi_mn|`` -- see :func:`delta_b_over_b_series` for the same quantity
-    normalised by the axis toroidal field, and for the approximation this
+    normalised by a reference field, and for the approximation this
     shorthand makes (``r_axis`` standing in for the true local minor radius).
 
     ``m=0`` modes carry no helical radial-field content in this shorthand
     (the ``m`` factor vanishes) and are dropped rather than shown as a flat
     zero line, mirroring how ``n=0`` is dropped from rational-surface data.
     """
-    return _b_r_from_psi(psi_series, r_axis=r_axis, b_axis=None, target_name=DELTA_B)
+    return _b_r_from_psi(psi_series, r_axis=r_axis, b_ref=None, target_name=DELTA_B)
 
 
 def delta_b_over_b_series(
-    psi_series: Mapping[ModeKey, np.ndarray], *, r_axis: float, b_axis: float
+    psi_series: Mapping[ModeKey, np.ndarray], *, r_axis: float, b_ref: float
 ) -> dict[ModeKey, np.ndarray]:
     """Convert a ``Psi``-variable amplitude series into an approximate
     perturbed-field fraction, keyed under :data:`DELTA_B_OVER_B` in place of
     ``"Psi"``.
 
     Uses the standard tearing-mode shorthand ``b_r^(m,n) ~ (m / R^2) *
-    |Psi_mn|``, normalised by the axis toroidal field: ``delta_b_over_b =
-    (m / r_axis**2) * |Psi_mn| / b_axis``. This is an approximation -- the
+    |Psi_mn|``, normalised by a reference field: ``delta_b_over_b =
+    (m / r_axis**2) * |Psi_mn| / b_ref``. This is an approximation -- the
     exact relation uses the local minor radius and the true |grad Psi|, not
     the (constant) major radius at the magnetic axis -- but the four cache
     only carries ``|Psi_mn|`` on a ``psi_n`` grid, not real-space geometry,
     so ``r_axis`` stands in for it everywhere.
 
+    ``b_ref`` is caller-supplied and not otherwise interpreted here -- see
+    :func:`ashen.diagnostics.profiles.edge_toroidal_field` for the reference
+    field :mod:`ashen.cli.plot` actually feeds in (``Btor`` at the plasma
+    edge, from the initial-equilibrium step).
+
     ``m=0`` modes are dropped -- see :func:`delta_b_series`.
     """
-    return _b_r_from_psi(psi_series, r_axis=r_axis, b_axis=b_axis, target_name=DELTA_B_OVER_B)
+    return _b_r_from_psi(psi_series, r_axis=r_axis, b_ref=b_ref, target_name=DELTA_B_OVER_B)
 
 
 @dataclass(frozen=True)
