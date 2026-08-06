@@ -195,10 +195,13 @@ def _read_true_times(paths: RunPaths, steps: list[int]) -> list[float] | None:
 def _plot_four_modes(
     case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None
 ) -> None:
+    # case.four_modes entries are [m, n] pairs (user-facing); the diagnostics
+    # layer's ModeKey/modes filter is (n, m), matching FourRecord's own
+    # (variable, n, m) field order -- swap here, at the one point they meet.
     series = max_amplitude_series(
         paths, steps,
         variables=case.four_vars or None,
-        modes=[tuple(m) for m in case.four_modes] if case.four_modes else None,
+        modes=[(n, m) for m, n in case.four_modes] if case.four_modes else None,
     )
     if not series:
         print("  no jorek2_four cache found for any requested step/variable/mode "

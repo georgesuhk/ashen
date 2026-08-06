@@ -223,12 +223,13 @@ zeroD cache). The time variant is skipped -- with a printed note, not an
 error -- if the zeroD cache doesn't cover every requested step.
 
 `four_vars` and `four_modes` (case fields, plot-time only) restrict which
-variables/`(n, m)` pairs get drawn; empty (default) draws everything found in
-the cache:
+variables/modes get drawn; empty (default) draws everything found in the
+cache. `four_modes` entries are `[m, n]` pairs (poloidal, toroidal) -- `[3,
+2]` is `m=3, n=2`, matching how a mode is normally written (`m/n`):
 
 ```toml
 four_vars  = ["Psi", "T"]
-four_modes = [[0, 1], [1, 1], [2, 1]]   # [n, m] pairs
+four_modes = [[2, 1], [3, 2], [1, 1]]   # [m, n] pairs
 ```
 
 A step or `(variable, n, m)` combination missing from the cache shows as a

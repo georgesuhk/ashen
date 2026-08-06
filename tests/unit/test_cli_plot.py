@@ -244,6 +244,33 @@ def test_four_diag_skips_time_variant_without_zerod_cache(campaign, capsys):
     assert "skipping time-axis four-mode plots" in capsys.readouterr().out
 
 
+def test_four_modes_are_m_n_pairs_not_n_m(campaign, monkeypatch):
+    """case.four_modes entries are [m, n] (poloidal, toroidal) -- [3, 2]
+    means m=3, n=2. The diagnostics layer's modes= filter is (n, m), so the
+    CLI must swap the pair, not pass it through as-is."""
+    captured = {}
+    original = plot_cli.max_amplitude_series
+
+    def spy(paths, steps, **kwargs):
+        captured["modes"] = kwargs.get("modes")
+        return original(paths, steps, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "max_amplitude_series", spy)
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases.test]\n'
+        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        'steps = [100, 200]\n'
+        'four_modes = [[3, 2]]\n',  # m=3, n=2
+        encoding="utf-8",
+    )
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 2, 3, real_peak=1.0)])
+
+    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert captured["modes"] == [(2, 3)]  # (n, m)
+
+
 def test_four_vars_filters_which_files_are_written(campaign):
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(

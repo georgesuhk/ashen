@@ -268,7 +268,7 @@ def test_four_modes_rejects_non_pair_entries(tmp_path):
         tmp_path,
         '[cases.a]\nfolder = "a"\nsteps = [1]\nfour_modes = [[0, 1, 2]]\n',
     )
-    with pytest.raises(CasesError, match="\\[n, m\\] pairs"):
+    with pytest.raises(CasesError, match="\\[m, n\\] pairs"):
         load_cases(path)
 
 

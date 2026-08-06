@@ -63,10 +63,11 @@ class Case:
     #: and can only select/reorder *already-traced* surfaces (see
     #: _psi_from_spec's docstring) -- it cannot invent new ones.
     lc_psi_n_in: list[float] | None = None
-    #: Which variables/(n, m) modes `plot --diag four` draws -- plot-time
-    #: only, does not affect what analyse gathers via jorek2_four. Empty
-    #: (default) means every one found in the cache.
+    #: Which variables/modes `plot --diag four` draws -- plot-time only, does
+    #: not affect what analyse gathers via jorek2_four. Empty (default) means
+    #: every one found in the cache.
     four_vars: list[str] = field(default_factory=list)
+    #: [m, n] pairs (poloidal, toroidal) -- e.g. [3, 2] is m=3, n=2.
     four_modes: list[list[int]] = field(default_factory=list)
 
 
@@ -193,9 +194,9 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                 if not (isinstance(mode, list) and len(mode) == 2):
                     raise CasesError(
                         f"{path}: case {name!r} four_modes entries must be "
-                        f"[n, m] pairs, got {mode!r}"
+                        f"[m, n] pairs, got {mode!r}"
                     )
-            merged["four_modes"] = [[int(n), int(m)] for n, m in merged["four_modes"]]
+            merged["four_modes"] = [[int(m), int(n)] for m, n in merged["four_modes"]]
 
         unknown = sorted(set(merged) - set(_CASE_KEYS))
         if unknown:

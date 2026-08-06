@@ -50,11 +50,12 @@ n_points        = 100
 #   lc_psi_n_in = { min = 0.2, max = 0.8 }                 # bounds filter
 # --psi-range MIN MAX on the command line applies on top of this per run.
 # lc_psi_n_in = { min = 0.2, max = 0.8 }
-# Which variables/(n, m) modes `plot --diag four` draws as time series --
-# plot-time only, doesn't affect what analyse gathers. Empty (default, as
-# below) draws every variable/mode found in the four_dir/*.h5 caches.
+# Which variables/modes `plot --diag four` draws as time series -- plot-time
+# only, doesn't affect what analyse gathers. Empty (default, as below) draws
+# every variable/mode found in the four_dir/*.h5 caches. four_modes entries
+# are [m, n] pairs (poloidal, toroidal) -- [3, 2] is m=3, n=2.
 # four_vars  = ["Psi", "T"]
-# four_modes = [[0, 1], [1, 1], [2, 1]]   # [n, m] pairs
+# four_modes = [[2, 1], [3, 2], [1, 1]]   # [m, n] pairs
 
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 folder = "qa2.1_g2.3/eta1e-3_RE"
