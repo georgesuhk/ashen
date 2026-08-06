@@ -99,6 +99,18 @@ def test_zero_d_script_preserves_step_argument_verbatim():
     assert "for step 005000 do" in text.splitlines()
 
 
+def test_zero_d_script_defaults_to_si_units():
+    text = zero_d_script("in_main", "000100")
+    assert "si-units" in text.splitlines()
+    assert "jorek-units" not in text.splitlines()
+
+
+def test_zero_d_script_jorek_units_opt_out():
+    text = zero_d_script("in_main", "000100", si_units=False)
+    assert "jorek-units" in text.splitlines()
+    assert "si-units" not in text.splitlines()
+
+
 def test_read_zeroD(tmp_path):
     path = tmp_path / "zeroD_quantities_s000100.dat"
     path.write_text("Time Energy\n1.5e-3 2.0e6\n", encoding="utf-8")

@@ -471,6 +471,30 @@ Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see
 `KNOWN_ISSUES.md` #6 and #7 for what changed and what's still an open question.
 
+## Simulation time at a restart step
+
+`bin/timestep` is a one-off lookup, not a `cases.toml`-driven gather: run it
+from inside a prepared run folder to see one or two restart steps' simulation
+time, in both SI seconds and JOREK's own code units:
+
+```bash
+cd Columbia/NL_kinks/qa2.1_g2.3/eta1e-3_RE
+python ~/ashen/bin/timestep 3000
+# step 3000: t = 1.234500e-04 s (SI), t = 5.678900e+02 (JOREK units)
+
+python ~/ashen/bin/timestep 3000 3200
+# step 3000: t = 1.234500e-04 s (SI), t = 5.678900e+02 (JOREK units)
+# step 3200: t = 1.334500e-04 s (SI), t = 6.123400e+02 (JOREK units)
+# Δt (step 3000 -> 3200): 1.000000e-05 s (SI), 4.445000e+01 (JOREK units)
+#   = 5.000000e-08 s/step (SI), 2.222500e-01 /step (JOREK units), over 200 steps
+```
+
+Always re-runs `jorek2_postproc`'s `zeroD_quantities` (once per unit system,
+via `si-units`/`jorek-units`) rather than trusting an existing zeroD cache,
+since that cache (from `analyse --diag zerod`) is SI-only and this tool's
+whole point is the JOREK-unit side. `--namelist` picks which namelist to read
+(default `in_main`).
+
 ## Layout
 
 ```
@@ -489,7 +513,7 @@ src/ashen/
   postproc.py   jorek2_postproc control scripts + output parsers
   jorek2.py     shared stage/run/collect runner for jorek2_* tools
   diagnostics/  poincare.py + poincare_cache.py, profiles.py,
-                connection_length.py -- pure math, no matplotlib
+                connection_length.py, timestep.py -- pure math, no matplotlib
   logfile.py    scalar extraction from a JOREK log (R_axis, etc.)
   plotting/     poincare.py, connection_length.py, colors.py, style
   cases.py      cases.toml loader for bin/analyse and bin/plot

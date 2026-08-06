@@ -114,8 +114,10 @@ class RunPaths:
     def postproc_dir(self) -> Path:
         return self.run_dir / "postproc"
 
-    def zero_d(self, step: int | float) -> Path:
-        return self.postproc_dir / f"zeroD_quantities_s{self.step_str(step)}.dat"
+    def zero_d(self, step: int | float, *, si_units: bool = True) -> Path:
+        if si_units:
+            return self.postproc_dir / f"zeroD_quantities_s{self.step_str(step)}.dat"
+        return self.postproc_dir / f"zeroD_quantities_jorek_s{self.step_str(step)}.dat"
 
     def flux_surface(self, psi_n: float, step: int | float) -> Path:
         return (

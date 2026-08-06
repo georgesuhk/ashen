@@ -126,16 +126,22 @@ def qprofile_script(namelist: str, step: int | str, *, units: int = 1) -> str:
     return "\n".join(lines)
 
 
-def zero_d_script(namelist: str, step: int | str) -> str:
+def zero_d_script(namelist: str, step: int | str, *, si_units: bool = True) -> str:
     """Ports ``basics.py:100`` ``write_postproc_get_zeroD_input``.
 
     ``step`` is passed through as-is -- the legacy caller
     (``data_jorek.py:719`` ``get_zeroDs_at_t``) passes the zero-padded string
     form, not the raw int, so this preserves that rather than reformatting it.
+
+    ``si_units=False`` emits ``jorek-units`` instead of ``si-units``
+    (``exec_commands.f90``'s explicit opposite of the default toggle) --
+    every ``0D_quantities`` column, including ``Time``, comes back in
+    JOREK's own code units instead of SI. See
+    :mod:`ashen.diagnostics.timestep` for the caller that wants both.
     """
     lines = [
         f"namelist {namelist}",
-        "si-units",
+        "si-units" if si_units else "jorek-units",
         f"for step {step} do",
         "  zeroD_quantities",
         "done",

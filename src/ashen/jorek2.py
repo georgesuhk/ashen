@@ -238,24 +238,55 @@ def run_tool(
     return ToolResult(outputs=collected, stdout=stdout)
 
 
-def run_zero_d(run: Jorek2Run, step: int, paths: RunPaths) -> Path:
+def run_zero_d(
+    run: Jorek2Run, step: int, paths: RunPaths, *, si_units: bool = True
+) -> Path:
     """zeroD_quantities for one step. Ports ``data_jorek.py:719``
     ``get_zeroDs_at_t``.
 
-    Unlike :func:`run_tool`, this runs ``jorek2_postproc`` **in place** in
-    ``run_dir`` rather than a scratch copy, matching the original -- there is
-    nothing to stage, since JOREK resolves ``for step <t> do`` against the
-    restart files already present in the run folder, and the output
-    (``postproc/zeroD_quantities_s<step>.dat``) is meant to persist there as
-    a cache, not be collected and discarded.
+    ``si_units=True`` (default, unchanged from before ``si_units`` existed)
+    runs ``jorek2_postproc`` **in place** in ``run_dir`` rather than a
+    scratch copy -- there is nothing to stage, since JOREK resolves
+    ``for step <t> do`` against the restart files already present in the run
+    folder, and the output (``postproc/zeroD_quantities_s<step>.dat``) is
+    meant to persist there as a cache, not be collected and discarded.
 
     The control script is written to a unique temp file rather than a fixed
     name in ``run_dir`` -- ``analyse``'s zerod gathering now fans out across
     processes sharing the same ``run_dir``, and a fixed name would let one
     step's process overwrite another's script before it's read, exactly the
     race :func:`ashen.diagnostics.poincare._write_flux_surface` was fixed for.
+
+    ``si_units=False`` runs via :func:`run_tool`'s scratch copy instead: JOREK
+    writes to the same one fixed filename regardless of units mode
+    (``exec_commands.f90``'s ``zeroD_quantities`` hardcodes it, the units
+    toggle isn't reflected in the name), so running it in place would
+    silently clobber -- and then move away -- whatever SI cache
+    :func:`run_zero_d`'s default call already left at that path. A scratch
+    copy never touches ``run_dir/postproc/`` at all; only the final result is
+    copied out, to :meth:`ashen.paths.RunPaths.zero_d`'s ``si_units=False``
+    path, which the SI variant never uses.
     """
     from ashen.postproc import zero_d_script
+
+    if not si_units:
+        step_str = paths.step_str(step)
+        scratch = paths.postproc_dir / f"_scratch_zeroD_jorek_s{step_str}"
+        result = run_tool(
+            run, "jorek2_postproc", step=step, dest_dir=scratch,
+            outputs=[f"postproc/zeroD_quantities_s{step_str}.dat"],
+            stdin_text=zero_d_script(run.namelist.name, step_str, si_units=False),
+            restart_name=run.restart_path(step).name,
+            copy_exe=True,
+        )
+        produced = result[f"postproc/zeroD_quantities_s{step_str}.dat"]
+        out = paths.zero_d(step, si_units=False)
+        paths.postproc_dir.mkdir(parents=True, exist_ok=True)
+        if produced != out:
+            shutil.move(str(produced), str(out))
+        if scratch.is_dir() and not any(scratch.iterdir()):
+            scratch.rmdir()
+        return out
 
     exe = run.exe_dir / "jorek2_postproc"
     if not exe.is_file():
@@ -271,7 +302,7 @@ def run_zero_d(run: Jorek2Run, step: int, paths: RunPaths) -> Path:
     script_path = Path(script_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(zero_d_script(run.namelist.name, paths.step_str(step)))
+            f.write(zero_d_script(run.namelist.name, paths.step_str(step), si_units=True))
         with open(script_path, encoding="utf-8") as stdin_file:
             result = subprocess.run(
                 [str(exe)],
@@ -288,7 +319,7 @@ def run_zero_d(run: Jorek2Run, step: int, paths: RunPaths) -> Path:
             f"{step} in {run.run_dir}: {result.stderr.decode(errors='replace')}"
         )
 
-    out = paths.zero_d(step)
+    out = paths.zero_d(step, si_units=True)
     if not out.is_file():
         raise Jorek2Error(f"zeroD_quantities not produced at {out}")
     return out

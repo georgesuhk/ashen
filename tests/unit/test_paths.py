@@ -136,6 +136,16 @@ def test_postproc_artefact_names(tmp_path):
     assert paths.poincare_cache_legacy(10, "psi_n").name == "poinc_t000010_psi_n.npz"
 
 
+def test_zero_d_jorek_units_gets_a_distinct_name(tmp_path):
+    """The two unit systems must not collide on disk -- JOREK itself always
+    writes zeroD_quantities_s<step>.dat regardless of units mode, so ashen's
+    own path convention is what tells them apart after the fact."""
+    paths = RunPaths(tmp_path, pad_width=6)
+
+    assert paths.zero_d(10, si_units=False).name == "zeroD_quantities_jorek_s000010.dat"
+    assert paths.zero_d(10, si_units=True) != paths.zero_d(10, si_units=False)
+
+
 def test_profile_cache_midplane_keeps_the_legacy_name(tmp_path):
     """midplane must keep exactly the legacy .npz name/path -- the one cache
     KNOWN_ISSUES.md #5 promises is unaffected by later changes, since legacy
