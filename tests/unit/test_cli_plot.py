@@ -17,6 +17,7 @@ import pytest
 from ashen.cli import plot as plot_cli
 from ashen.diagnostics import four_cache as four_cache_mod
 from ashen.diagnostics import poincare_cache as pc
+from ashen.diagnostics import profiles as profiles_mod
 from ashen.paths import RunPaths, write_float
 
 pytest.importorskip("h5py")
@@ -617,7 +618,8 @@ def test_delta_b_over_b_not_requested_leaves_series_unaffected(campaign, monkeyp
 
 
 def test_delta_b_over_b_missing_btor_profile_skips_with_message(campaign, capsys):
-    # log has R_axis (from the campaign fixture) but no Btor profile cached.
+    # log has R_axis (from the campaign fixture) but no Btor profile cached,
+    # and no step-0 restart file either -- auto-gathering can't succeed.
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
 
@@ -632,6 +634,64 @@ def test_delta_b_over_b_missing_btor_profile_skips_with_message(campaign, capsys
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert "skipping delta_b_over_b" in capsys.readouterr().out
     assert not (campaign / "four_dir" / "delta_b_over_b_modes_step.png").exists()
+
+
+def test_delta_b_over_b_auto_gathers_missing_btor_profile(campaign, monkeypatch):
+    """The main ask this covers: plot shouldn't require a separate `analyse
+    --diag profiles` pass just for delta_b_over_b's reference field -- it
+    gathers that one (step, Btor, midplane outer) profile itself on demand."""
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    (campaign / "jorek000000.h5").write_bytes(b"")  # step-0 restart, for the auto-gather
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b_over_b"]\n',
+        encoding="utf-8",
+    )
+
+    def fake_extract(run, step, var, coords_var, **kwargs):
+        assert step == 0
+        assert var == "Btor"
+        assert kwargs["tor_mode"] == "midplane outer"
+        return np.array([0.0, 1.0]), np.array([3.0, 2.0])
+
+    monkeypatch.setattr(profiles_mod, "extract_profile", fake_extract)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert (campaign / "four_dir" / "delta_b_over_b_modes_step.png").is_file()
+
+    paths = RunPaths(campaign, pad_width=6)
+    assert paths.profile_cache("Psi_N", "Btor", 0, "midplane outer").is_file()
+
+
+def test_delta_b_over_b_auto_gather_missing_step_zero_restart_skips_gracefully(
+    campaign, capsys
+):
+    """A genuinely missing step-0 restart must be reported and skipped, not
+    crash the whole plot command the way an uncaught exception would."""
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    # No jorek000000.h5 -- the auto-gather has nothing to run against.
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b", "delta_b_over_b"]\n',
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert "skipping delta_b_over_b" in capsys.readouterr().out
+    assert not (campaign / "four_dir" / "delta_b_over_b_modes_step.png").exists()
+    # delta_b (which doesn't need Btor) must still be drawn -- the failure
+    # is scoped to delta_b_over_b, not the whole plot invocation.
+    assert (campaign / "four_dir" / "delta_b_modes_step.png").is_file()
 
 
 def test_delta_b_over_b_alongside_explicit_psi_keeps_both(campaign, monkeypatch):

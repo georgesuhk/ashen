@@ -92,20 +92,18 @@ n_points        = 100
 # output, it's derived from "Psi"'s amplitude using the tearing-mode shorthand
 # b_r^(m,n) ~ (m/R_axis^2)*|Psi_mn|, normalised by a reference field B_ref:
 # Btor interpolated to psi_n=1 (the plasma edge) from the cached step-0
-# (initial-equilibrium) midplane profile -- needs Btor gathered for step 0
-# with tor_mode = "midplane outer" (see [cases.NAME.profiles] below).
-# R_axis is read from the run's `log`; R_axis stands in for the true local
-# minor radius, since the four cache only carries |Psi_mn| on a psi_n grid,
-# not real-space geometry. Only computed when explicitly requested (an
-# empty/unset four_vars never picks it up); add "Psi" alongside it in
-# four_vars to also see the raw flux amplitude.
+# (initial-equilibrium) midplane-outer profile. `plot` gathers that one
+# profile itself on demand if it isn't already cached -- no separate
+# `analyse --diag profiles` pass needed just for this. R_axis is read from
+# the run's `log`; R_axis stands in for the true local minor radius, since
+# the four cache only carries |Psi_mn| on a psi_n grid, not real-space
+# geometry. Only computed when explicitly requested (an empty/unset
+# four_vars never picks it up); add "Psi" alongside it in four_vars to also
+# see the raw flux amplitude.
 # "delta_b" is the same quantity un-normalised, in Tesla (no Btor profile
-# needed -- only R_axis) -- useful if step-0 profiles haven't been gathered.
+# needed -- only R_axis) -- useful if the step-0 restart isn't available.
 # four_vars = ["delta_b_over_b"]
 # four_vars = ["delta_b"]
-# [cases.NAME.profiles]
-# steps    = [0]
-# tor_mode = "midplane outer"
 
 # Colour the field lines nearest chosen rational surfaces in `plot --diag
 # poincare`, everything else dimmed grey -- needs the qprofile cache

@@ -16,6 +16,7 @@ from ashen.diagnostics import profiles as profiles_mod
 from ashen.diagnostics.profiles import (
     TOR_MODES,
     edge_toroidal_field,
+    ensure_edge_toroidal_field,
     expand_compound_vars,
     gather_profiles,
     read_profile_series,
@@ -136,6 +137,84 @@ def test_edge_toroidal_field_unsorted_x_still_interpolates_correctly(paths):
         paths, "Psi_N", "Btor", 0, "midplane outer", [1.0, 0.0, 0.5], [2.0, 4.0, 3.0]
     )
     assert edge_toroidal_field(paths) == pytest.approx(2.0)
+
+
+# --- ensure_edge_toroidal_field -------------------------------------------------------
+
+
+def test_ensure_edge_toroidal_field_returns_cached_value_without_gathering(
+    jrun, paths, monkeypatch
+):
+    _write_cache(paths, "Psi_N", "Btor", 0, "midplane outer", [0.0, 1.0], [4.0, 2.0])
+
+    def fail_extract(*a, **k):
+        raise AssertionError("should not gather -- already cached")
+
+    monkeypatch.setattr(profiles_mod, "extract_profile", fail_extract)
+
+    assert ensure_edge_toroidal_field(jrun, paths) == pytest.approx(2.0)
+
+
+def test_ensure_edge_toroidal_field_gathers_when_missing(jrun, paths, monkeypatch):
+    def fake_extract(run, step, var, coords_var, **kwargs):
+        assert var == "Btor"
+        assert kwargs["tor_mode"] == "midplane outer"
+        assert step == 0
+        return np.array([0.0, 1.0]), np.array([4.0, 3.0])
+
+    monkeypatch.setattr(profiles_mod, "extract_profile", fake_extract)
+
+    assert ensure_edge_toroidal_field(jrun, paths) == pytest.approx(3.0)
+    assert paths.profile_cache("Psi_N", "Btor", 0, "midplane outer").is_file()
+
+
+def test_ensure_edge_toroidal_field_missing_restart_is_none(jrun, paths, monkeypatch):
+    def fake_extract(run, step, var, coords_var, **kwargs):
+        raise MissingRestartError("no restart at step 0")
+
+    monkeypatch.setattr(profiles_mod, "extract_profile", fake_extract)
+
+    assert ensure_edge_toroidal_field(jrun, paths) is None
+
+
+def test_ensure_edge_toroidal_field_custom_step_and_psi_n(jrun, paths, monkeypatch):
+    def fake_extract(run, step, var, coords_var, **kwargs):
+        assert step == 100
+        return np.array([0.0, 1.0]), np.array([4.0, 2.0])
+
+    monkeypatch.setattr(profiles_mod, "extract_profile", fake_extract)
+
+    assert ensure_edge_toroidal_field(jrun, paths, step=100, psi_n=0.0) == pytest.approx(4.0)
+
+
+# --- extract_profile: missing-column reporting -------------------------------------
+
+
+def test_extract_profile_raises_jorek2error_for_a_column_jorek2_postproc_never_wrote(
+    jrun, tmp_path, monkeypatch
+):
+    """A requested variable jorek2_postproc doesn't recognise for a given
+    tor_mode/model (e.g. 'r_minor' outside 'average') must surface as a
+    Jorek2Error gather_profiles's per-task handling already catches, not a
+    raw ValueError that crashes the whole gather."""
+    from ashen.jorek2 import ToolResult
+
+    def fake_run_tool(run, tool, *, step, dest_dir, **kwargs):
+        return ToolResult(
+            outputs={"postproc/exprs_outer-midplane_s000000.dat": tmp_path / "out.dat"}
+        )
+
+    def fake_read_postproc_profile(path):
+        return ["Psi_N", "currdens"], {0: np.array([[0.0, 1.0], [1.0, 2.0]])}
+
+    monkeypatch.setattr(profiles_mod, "run_tool", fake_run_tool)
+    monkeypatch.setattr(profiles_mod, "read_postproc_profile", fake_read_postproc_profile)
+
+    with pytest.raises(Jorek2Error, match="r_minor"):
+        profiles_mod.extract_profile(
+            jrun, 0, "r_minor", "Psi_N", n_points=100, tor_mode="midplane outer",
+            dest_dir=tmp_path,
+        )
 
 
 # --- gather_profiles: cache-gating, multi-mode, and per-mode resilience -------------

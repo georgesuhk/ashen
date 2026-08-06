@@ -42,8 +42,13 @@ from ashen.diagnostics.four_modes import (
     rational_surface_series,
 )
 from ashen.diagnostics.poincare_cache import read_step
-from ashen.diagnostics.profiles import edge_toroidal_field, expand_compound_vars, read_profile_series
+from ashen.diagnostics.profiles import (
+    ensure_edge_toroidal_field,
+    expand_compound_vars,
+    read_profile_series,
+)
 from ashen.diagnostics.qprofile import rational_surface_matches, read_qprofile
+from ashen.jorek2 import Jorek2Error, Jorek2Run
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.connection_length import plot_connection_length_map
@@ -339,12 +344,27 @@ def _plot_four_modes(
 
         b_ref = None
         if DELTA_B_OVER_B in remaining:
-            b_ref = edge_toroidal_field(paths)
-            if b_ref is None:
-                print(f"  skipping {DELTA_B_OVER_B}: no Btor profile cached at the plasma "
-                      "edge for step 0 (run analyse --diag profiles with \"Btor\" in "
-                      "profiles vars and \"midplane outer\" in tor_mode for step 0)")
+            jrun = Jorek2Run(
+                run_dir=paths.run_dir, exe_dir=paths.run_dir,
+                namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
+            )
+            try:
+                b_ref = ensure_edge_toroidal_field(jrun, paths)
+            except (FileNotFoundError, Jorek2Error) as exc:
+                # FileNotFoundError also covers MissingRestartError (a
+                # subclass) -- e.g. jorek2_postproc itself isn't symlinked
+                # into this run folder. Caught here, not left to `main`'s
+                # outer per-case handler, so this only skips
+                # delta_b_over_b rather than aborting every other diag
+                # this plot invocation was also asked to draw.
+                print(f"  skipping {DELTA_B_OVER_B}: {exc}")
                 remaining.discard(DELTA_B_OVER_B)
+            else:
+                if b_ref is None:
+                    print(f"  skipping {DELTA_B_OVER_B}: could not gather the Btor "
+                          "profile at the plasma edge for step 0 (jorek2_postproc "
+                          "produced no output -- see the warning above)")
+                    remaining.discard(DELTA_B_OVER_B)
 
         if remaining:
             psi_keys = {k for k in series if k[0] == "Psi"}

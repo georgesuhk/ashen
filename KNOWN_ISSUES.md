@@ -325,3 +325,43 @@ caller, and `average` never checks `ierr` after `eval_expr`
 (`exec_commands.f90:1790`) -- so some failure modes end in an unallocated-array
 write rather than even reaching the `stop` above. Both are vendored-source
 bugs.
+
+---
+
+## 10. `Jgrad`/`q` gathering (`r_minor`) not confirmed to work on every model/tor_mode
+
+**Status:** open, 2026-08 (George's report).
+
+`Case.vars`'s `"Jgrad"`/`"q"` compound entries expand
+(`ashen.diagnostics.profiles.expand_compound_vars`, ported unchanged from
+`castor3d/util/diagnostics/gather_profiles.py:94-106`) into `currdens`/
+`r_minor`/`Btheta`/`Btor` (`Jgrad`) or `r_minor`/`Btheta`/`Btor` (`q`) --
+requested from `jorek2_postproc` the same way any other variable is. In
+practice, gathering `r_minor` against a `"midplane outer"` cut on a
+`model600`-family run failed: `jorek2_postproc`'s output for that
+`(step, tor_mode)` simply had no `r_minor` column. Whether that's because
+`r_minor` needs `tor_mode = "average"` instead (a flux-surface label, which
+only a real flux-surface trace can define -- unlike `Btor`/`Btheta`/
+`currdens`, ordinary pointwise expressions any midplane cut can evaluate),
+or isn't a valid `jorek2_postproc` expression for this model at all, wasn't
+established -- the vendored source this session could read didn't turn up
+either an `r_minor` definition or the `mod_expression.f90` file #9 cites for
+the general expression registry, so neither could be confirmed against the
+actual executable in play.
+
+**What ashen does about it:** `extract_profile` used to let a missing
+column surface as a raw `ValueError` (`headers.index(var)`), which
+`gather_profiles`'s per-task handling doesn't catch (only
+`MissingRestartError`/`Jorek2Error`), so one bad `(step, var, tor_mode)`
+combination crashed the entire `analyse --diag profiles` run -- including
+every other variable/step/mode in the same batch. It now raises
+`Jorek2Error` instead, naming the missing column(s) and the tor_mode/step,
+which the existing per-task warn-and-continue handling (see #9) already
+catches -- a broken `r_minor` request now costs only that one task, same as
+an `average` tracing failure does.
+
+**Not fixed:** whether `Jgrad`/`q` gathering is usable at all, and if so
+under which `tor_mode`, needs confirming against a real run before
+recommending it -- `postproc_get_q`, the actual q/`dJ/dr` consumer of these
+components, was never ported to `ashen` in the first place (#8), so this
+path had no prior end-to-end exercise.

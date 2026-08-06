@@ -425,17 +425,18 @@ carries `|Psi_mn|` on a `psi_n` grid, not real-space geometry, so `R_axis`
 stands in for it everywhere. `m = 0` modes are dropped (no helical
 radial-field content in this shorthand) rather than drawn as a flat zero line.
 
-`B_ref` needs `Btor` gathered for step 0 with `"midplane outer"` in
-`tor_mode` (not bare `"midplane"`, which is double-valued in `Psi_N`):
-
-```toml
-[cases.NAME.profiles]
-steps     = [0]
-tor_mode  = "midplane outer"
-```
-```bash
-analyse --case NAME --diag profiles
-```
+`B_ref` needs `Btor` at step 0 (`"midplane outer"`, not bare `"midplane"`,
+which is double-valued in `Psi_N`) -- `plot` gathers this one profile itself
+on demand if it isn't already cached
+(`ashen.diagnostics.profiles.ensure_edge_toroidal_field`), the one deliberate
+exception to `bin/plot` otherwise never running a `jorek2_*` tool (see the
+module docstring): a single-valued lookup like this is cheap and one-off,
+unlike a full profiles gather, so doing it inline doesn't blur the
+`analyse`/`plot` slow-batch/fast-iterative split the rest of this file
+describes. A run whose step-0 restart is missing, or whose `jorek2_postproc`
+fails, prints `skipping delta_b_over_b: ...` and moves on -- same as any
+other missing input this section describes -- rather than aborting the whole
+`--diag four` plot.
 
 Only computed when explicitly requested -- an empty/unset `four_vars` never
 picks it up, since it isn't "everything found in the cache". Works with

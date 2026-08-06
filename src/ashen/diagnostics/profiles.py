@@ -27,7 +27,8 @@ from ashen.postproc import profile_script, read_postproc_profile
 
 __all__ = [
     "extract_profile", "expand_compound_vars", "gather_profiles",
-    "read_profile_series", "edge_toroidal_field", "TOR_MODES",
+    "read_profile_series", "edge_toroidal_field", "ensure_edge_toroidal_field",
+    "TOR_MODES",
 ]
 
 #: Postproc command -> the output filename prefix it writes under ``postproc/``.
@@ -119,6 +120,13 @@ def extract_profile(
     )
     headers, blocks = read_postproc_profile(collected[f"postproc/{out_name}"])
     data = blocks[step]
+    missing = [name for name in (coords_var, var) if name not in headers]
+    if missing:
+        raise Jorek2Error(
+            f"jorek2_postproc's {tor_mode!r} output for step {step} has no "
+            f"{missing!r} column(s) (got {headers}) -- {var!r} may not be a "
+            "valid expression for this tor_mode/model"
+        )
     return data[:, headers.index(coords_var)], data[:, headers.index(var)]
 
 
@@ -303,3 +311,35 @@ def edge_toroidal_field(
         return None
     order = np.argsort(x)
     return float(np.interp(psi_n, x[order], y[order]))
+
+
+def ensure_edge_toroidal_field(
+    run: Jorek2Run,
+    paths: RunPaths,
+    *,
+    step: int = 0,
+    psi_n: float = 1.0,
+    n_points: int = 100,
+) -> float | None:
+    """:func:`edge_toroidal_field`, gathering the underlying ``Btor``
+    ``"midplane outer"`` profile first if it isn't cached yet.
+
+    Runs a single ``jorek2_postproc`` call (via :func:`gather_profiles`, one
+    ``(step, "Btor", "midplane outer")`` task) rather than requiring a
+    separate ``analyse --diag profiles`` pass -- unlike the rest of
+    ``bin/plot`` (see the module docstring), this one lookup is cheap and
+    single-valued, so gathering it on demand at plot time doesn't blur
+    `analyse`/`plot`'s slow-batch/fast-iterative split the way gathering a
+    whole profile diagnostic on demand would.
+
+    ``None`` if the restart at ``step`` doesn't exist or the tool fails --
+    :func:`gather_profiles` already warns and skips per-task rather than
+    raising, so nothing further to catch here.
+    """
+    value = edge_toroidal_field(paths, step=step, psi_n=psi_n)
+    if value is not None:
+        return value
+    gather_profiles(
+        run, paths, [step], ["Btor"], tor_modes=["midplane outer"], n_points=n_points,
+    )
+    return edge_toroidal_field(paths, step=step, psi_n=psi_n)
