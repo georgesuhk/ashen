@@ -36,7 +36,6 @@ Changed:
 
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from typing import Sequence
 
@@ -116,8 +115,13 @@ def plot_theta_histogram_grid(
         bottom_of_column[idx % n_cols] = idx
 
     with style():
+        # layout="constrained" instead of a plain fig.tight_layout() call
+        # below: tight_layout does not reserve room for a figure-level
+        # supxlabel, so at this figure's aspect ratio the label collided with
+        # the bottom row's own "$\pi$" tick label. constrained_layout treats
+        # supxlabel as a layout participant and keeps it clear.
         fig, axes = plt.subplots(
-            n_rows, n_cols, figsize=figsize,
+            n_rows, n_cols, figsize=figsize, layout="constrained",
             gridspec_kw={"wspace": 0.1, "hspace": 0.45}, squeeze=False,
         )
         axes = axes.flatten()
@@ -157,13 +161,6 @@ def plot_theta_histogram_grid(
                 ax.set_ylim(0, limit)
 
         fig.supxlabel(r"$\theta$ [rad]")
-        # tight_layout warns when the grid has a hidden trailing axis (an
-        # unfilled last row) -- cosmetic only, the layout it produces is
-        # fine; every other module in this package never hides an axis, so
-        # this warning is unique to this one.
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="This figure includes Axes")
-            fig.tight_layout()
         fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
     return out_path
