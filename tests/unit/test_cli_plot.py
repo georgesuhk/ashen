@@ -1250,6 +1250,162 @@ def test_compare_step_override_applies_to_every_member(comparison_campaign, monk
     assert captured == [[200], [200]]
 
 
+# --- wetted_fraction: comparison-only "scalar vs. scan parameter" plot ------------
+
+
+def _add_x_values(comparison_campaign, *, x_values):
+    cases_toml = comparison_campaign / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\n'
+        'theta_target_psi = 1.0\n'
+        'theta_bins = 20\n'
+        '[cases."qa2.1_g2.3/eta1e-4_RE"]\n'
+        'steps = [100]\n'
+        'theta_target_psi = 1.0\n'
+        'theta_bins = 20\n'
+        '[comparisons.eta_scan]\n'
+        'note = "resistivity scan"\n'
+        'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
+        'labels = ["1e-3", "1e-4"]\n'
+        f'x_values = {x_values}\n'
+        'x_label = "$\\\\eta$"\n',
+        encoding="utf-8",
+    )
+
+
+def _add_x_values_with_case_threshold(comparison_campaign, *, x_values, threshold):
+    cases_toml = comparison_campaign / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\n'
+        'theta_target_psi = 1.0\n'
+        'theta_bins = 20\n'
+        f'theta_wetted_threshold = {threshold}\n'
+        '[cases."qa2.1_g2.3/eta1e-4_RE"]\n'
+        'steps = [100]\n'
+        'theta_target_psi = 1.0\n'
+        'theta_bins = 20\n'
+        f'theta_wetted_threshold = {threshold}\n'
+        '[comparisons.eta_scan]\n'
+        'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
+        'labels = ["1e-3", "1e-4"]\n'
+        f'x_values = {x_values}\n',
+        encoding="utf-8",
+    )
+
+
+def test_compare_wetted_fraction_writes_one_file_for_the_comparison(comparison_campaign):
+    _add_x_values(comparison_campaign, x_values=[1e-3, 1e-4])
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    assert (comparison_campaign / "figures" / "eta_scan_wetted_fraction.png").is_file()
+
+
+def test_compare_wetted_fraction_reports_per_case_fraction(comparison_campaign, capsys):
+    _add_x_values(comparison_campaign, x_values=[1e-3, 1e-4])
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    out = capsys.readouterr().out
+    assert "qa2.1_g2.3/eta1e-3_RE: wetted fraction" in out
+    assert "qa2.1_g2.3/eta1e-4_RE: wetted fraction" in out
+
+
+def test_compare_wetted_fraction_without_x_values_is_reported_and_skipped(
+    comparison_campaign, capsys
+):
+    # comparison_campaign's default cases.toml has no x_values configured.
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    out = capsys.readouterr().out
+    assert "no x_values configured" in out
+    assert not (comparison_campaign / "figures").exists()
+
+
+def test_compare_wetted_fraction_threshold_override(comparison_campaign, monkeypatch):
+    _add_x_values(comparison_campaign, x_values=[1e-3, 1e-4])
+    captured = []
+    original = plot_cli.wetted_fraction
+
+    def spy(counts, **kwargs):
+        captured.append(kwargs.get("threshold"))
+        return original(counts, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "wetted_fraction", spy)
+
+    assert plot_cli.main(
+        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--wetted-threshold", "0.02"]
+    ) == 0
+    assert captured == [0.02, 0.02]
+
+
+def test_compare_wetted_fraction_default_threshold_is_one_over_bins(
+    comparison_campaign, monkeypatch
+):
+    _add_x_values(comparison_campaign, x_values=[1e-3, 1e-4])
+    captured = []
+    original = plot_cli.wetted_fraction
+
+    def spy(counts, **kwargs):
+        captured.append(kwargs.get("threshold"))
+        return original(counts, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "wetted_fraction", spy)
+
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    assert captured == [pytest.approx(1 / 20), pytest.approx(1 / 20)]  # theta_bins=20
+
+
+def test_compare_wetted_fraction_uses_case_theta_wetted_threshold(
+    comparison_campaign, monkeypatch
+):
+    """A case's own theta_wetted_threshold is used when --wetted-threshold
+    is not given -- the config-in-cases.toml path being asked about."""
+    _add_x_values_with_case_threshold(
+        comparison_campaign, x_values=[1e-3, 1e-4], threshold=0.03,
+    )
+    captured = []
+    original = plot_cli.wetted_fraction
+
+    def spy(counts, **kwargs):
+        captured.append(kwargs.get("threshold"))
+        return original(counts, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "wetted_fraction", spy)
+
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    assert captured == [pytest.approx(0.03), pytest.approx(0.03)]
+
+
+def test_compare_wetted_fraction_cli_flag_overrides_case_config(
+    comparison_campaign, monkeypatch
+):
+    """--wetted-threshold on the command line outranks each case's own
+    theta_wetted_threshold, same precedence as --theta-target-psi."""
+    _add_x_values_with_case_threshold(
+        comparison_campaign, x_values=[1e-3, 1e-4], threshold=0.03,
+    )
+    captured = []
+    original = plot_cli.wetted_fraction
+
+    def spy(counts, **kwargs):
+        captured.append(kwargs.get("threshold"))
+        return original(counts, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "wetted_fraction", spy)
+
+    assert plot_cli.main(
+        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--wetted-threshold", "0.05"]
+    ) == 0
+    assert captured == [pytest.approx(0.05), pytest.approx(0.05)]
+
+
+def test_wetted_fraction_diag_is_comparison_only_per_case(theta_campaign, capsys):
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "wetted_fraction"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "comparison-only" in out
+    assert not (theta_campaign / "figures").exists()
+
+
 def test_profiles_diag_falls_back_to_step_index_without_zerod(campaign, capsys):
     (campaign / "postproc" / "zeroD_quantities_s000100.dat").unlink()
     (campaign / "postproc" / "zeroD_quantities_s000200.dat").unlink()

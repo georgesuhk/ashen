@@ -49,7 +49,11 @@ from ashen.diagnostics.profiles import (
     read_profile_series,
 )
 from ashen.diagnostics.qprofile import rational_surface_matches, read_qprofile
-from ashen.diagnostics.theta_histogram import pooled_crossing_angles
+from ashen.diagnostics.theta_histogram import (
+    pooled_crossing_angles,
+    theta_histogram,
+    wetted_fraction,
+)
 from ashen.jorek2 import Jorek2Error, Jorek2Run
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
@@ -58,13 +62,21 @@ from ashen.plotting.four_modes import plot_mode_amplitudes
 from ashen.plotting.poincare import plot_poincare_step
 from ashen.plotting.profiles import plot_profile_comparison
 from ashen.plotting.theta_histogram import plot_theta_histogram_grid
+from ashen.plotting.wetted_fraction import plot_wetted_fraction_vs_x
 from ashen.postproc import read_zeroD
 
-DIAG_CHOICES = ("poincare", "connection_length", "four", "profiles", "theta_hist")
+DIAG_CHOICES = (
+    "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
+)
 
 #: Diags with a registered --compare renderer -- asking for one without (e.g.
 #: --compare X --diag profiles) is reported, not silently a no-op.
-COMPARABLE_DIAGS = ("theta_hist",)
+COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction")
+
+#: Diags that only make sense across several cases (there is no single-case
+#: "vs. scan parameter" plot) -- valid under --compare, reported and skipped
+#: under the plain per-case loop rather than attempting something meaningless.
+COMPARISON_ONLY_DIAGS = ("wetted_fraction",)
 
 #: four_vars entries that are derived from "Psi" at plot time rather than
 #: read directly from the jorek2_four cache -- see _plot_four_modes.
@@ -134,6 +146,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--n-cols", type=int, default=None,
         help="theta_hist: panels per row (default: 4 for per-case mode, or "
         "the comparison's own n_cols for --compare)",
+    )
+    parser.add_argument(
+        "--wetted-threshold", type=float, default=None,
+        help="wetted_fraction: bin-count threshold a theta_hist bin must "
+        "exceed to count as 'wetted', overriding every case's "
+        "theta_wetted_threshold (default per case: theta_wetted_threshold, "
+        "or 1/theta_bins if that's unset -- the value a uniform distribution "
+        "would put in every bin)",
     )
     parser.add_argument(
         "--compare", action="append", dest="comparisons",
@@ -639,6 +659,81 @@ def _compare_theta_hist(
     print(f"  {out}")
 
 
+def _compare_wetted_fraction(
+    comparison: Comparison,
+    cases: dict[str, Case],
+    *,
+    target_psi: float | None,
+    bins: int | None,
+    psi_range: tuple[float, float] | None,
+    threshold: float | None,
+    dpi: int | None,
+    steps: list[int] | None,
+) -> None:
+    """One point per member case: the fraction of that case's (pooled)
+    theta_hist bins exceeding `threshold`, plotted against `comparison.
+    x_values` -- e.g. wetted fraction vs. eta. Needs `x_values` configured;
+    unlike theta_hist there is no meaningful figure without a numeric x-axis,
+    so this is reported and skipped rather than falling back to case names.
+    """
+    if comparison.x_values is None:
+        print(
+            f"  comparison {comparison.name!r} has no x_values configured; "
+            "wetted_fraction needs one numeric value per case, skipped"
+        )
+        return
+
+    x_by_case = dict(zip(comparison.cases, comparison.x_values))
+    xs: list[float] = []
+    ys: list[float] = []
+    for _, case_name in comparison.labelled_cases():
+        case = cases[case_name]
+        run_dir = Path.cwd() / case.name
+        if not run_dir.is_dir():
+            print(f"  {case_name}: no such folder {run_dir}, skipped")
+            continue
+        paths = RunPaths.detect(run_dir)
+        real_psi_edge = read_float(paths.real_psi_edge)
+
+        target = target_psi if target_psi is not None else case.theta_target_psi
+        n_bins = bins if bins is not None else case.theta_bins
+        if psi_range is not None:
+            theta_range = psi_range
+        elif case.theta_psi_n_range is not None:
+            theta_range = tuple(case.theta_psi_n_range)
+        else:
+            theta_range = None
+
+        case_steps = steps or case.steps_for("theta_hist")
+        records_by_step = {step: read_step(paths, step) for step in case_steps}
+        result = pooled_crossing_angles(
+            records_by_step, case_steps,
+            target_psi=target, real_psi_edge=real_psi_edge, psi_n_range=theta_range,
+        )
+        counts, _ = theta_histogram(result.angles, bins=n_bins)
+        if threshold is not None:
+            case_threshold = threshold
+        elif case.theta_wetted_threshold is not None:
+            case_threshold = case.theta_wetted_threshold
+        else:
+            case_threshold = 1.0 / n_bins
+        fraction = wetted_fraction(counts, threshold=case_threshold)
+        print(f"  {case_name}: wetted fraction = {fraction:.3g}")
+        xs.append(x_by_case[case_name])
+        ys.append(fraction)
+
+    if not xs:
+        return
+
+    out_dir = Path.cwd() / "figures"
+    kwargs = {} if dpi is None else {"dpi": dpi}
+    out = plot_wetted_fraction_vs_x(
+        xs, ys, out_dir / f"{comparison.name}_wetted_fraction.png",
+        xlabel=comparison.x_label, **kwargs,
+    )
+    print(f"  {out}")
+
+
 def _resolve_n_workers(args) -> int:
     """``--n-workers`` if given, else ``site.toml``'s ``[diagnostics]
     n_workers`` if that's explicitly set, else 1 (serial).
@@ -707,6 +802,9 @@ def _run_case(
             target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
             n_cols=n_cols, dpi=dpi,
         )
+    comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
+    if comparison_only:
+        print(f"  diag(s) {comparison_only} are comparison-only (use --compare), skipped")
 
 
 def _run_comparisons(
@@ -721,6 +819,7 @@ def _run_comparisons(
     theta_bins: int | None,
     theta_psi_range: tuple[float, float] | None,
     n_cols: int | None,
+    wetted_threshold: float | None,
 ) -> int:
     unknown = [name for name in names if name not in comparisons]
     if unknown:
@@ -742,6 +841,12 @@ def _run_comparisons(
                 comparison, cases,
                 target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
                 n_cols=n_cols, dpi=dpi, steps=steps,
+            )
+        if "wetted_fraction" in comparable:
+            _compare_wetted_fraction(
+                comparison, cases,
+                target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
+                threshold=wetted_threshold, dpi=dpi, steps=steps,
             )
     return 0
 
@@ -795,6 +900,7 @@ def main(argv: list[str] | None = None) -> int:
             diags=diags, steps=args.steps, dpi=dpi,
             theta_target_psi=theta_target_psi, theta_bins=theta_bins,
             theta_psi_range=theta_psi_range, n_cols=n_cols,
+            wetted_threshold=args.wetted_threshold,
         )
 
     selected = args.selected or list(cases)

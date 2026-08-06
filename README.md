@@ -233,6 +233,8 @@ touching the gathering path.
   the default log.
 - `--theta-target-psi`, `--theta-bins`, `--theta-psi-range MIN MAX` override
   `theta_hist`'s case config; `--n-cols` sets its grid width (see below).
+- `--wetted-threshold FLOAT` overrides `wetted_fraction`'s bin-count
+  threshold (comparison-only, see below).
 - `--compare NAME` (repeatable) draws a `[comparisons.*]` figure instead of
   per-case figures; `--list-comparisons` shows what's defined (see below).
 - `--dpi N` overrides the figure resolution.
@@ -377,9 +379,67 @@ Each member's own steps still supply that panel's pooled time window --
 draws from, the same per-diag override mechanism as everywhere else in
 `cases.toml`. Figures land in `./figures/`, named
 `<comparison-name>_<diag>.png`, not in any one member's own run folder.
-`theta_hist` is the only diag with a comparison renderer this pass; asking
-for one without (e.g. `--compare eta_scan --diag profiles`) is reported and
-skipped, not silently ignored.
+Asking for a diag without a comparison renderer (e.g. `--compare eta_scan
+--diag profiles`) is reported and skipped, not silently ignored.
+
+#### Wetted fraction vs. a scan parameter
+
+`--diag wetted_fraction` is **comparison-only** -- there is no single-run
+version of "plot Y against eta", so it needs `--compare` and errors out
+(reported, not crashed) under the plain per-case `--case` mode. For each
+member case it pools the same theta-crossing histogram `theta_hist` would
+(same `theta_target_psi`/`theta_bins`/`theta_psi_n_range`), then reduces it
+to one scalar: the fraction of bins whose count exceeds a threshold, so
+"wetted" means "above what uniform spreading over theta would give". That
+one number per case is plotted against `x_values`, an explicit numeric value
+per member -- **not** inferred from the run folder's own name (e.g. parsing
+`"eta1e-3"` out of `"eta1e-3_RE"`): `CLAUDE.md` flags CASTOR3D's
+directory-name parsing as exactly the kind of hazard this project exists to
+not repeat, so a folder rename must never silently change what gets plotted.
+
+The threshold is `case.theta_wetted_threshold` if set, else `1/theta_bins` --
+the value a perfectly uniform distribution would put in every bin. Set it
+per case in `cases.toml` (each member can use a different value, or share one
+via `[defaults]`):
+
+```toml
+[defaults]
+theta_wetted_threshold = 0.002
+
+[cases."qa2.1_g2.3/eta1e-3_RE"]
+theta_target_psi = 1.05
+theta_bins       = 500
+
+[cases."qa2.1_g2.3/eta1e-4_RE"]
+theta_target_psi = 1.05
+theta_bins       = 500
+
+[comparisons.eta_scan]
+cases    = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE", "qa2.1_g2.3/eta1e-5_RE"]
+x_values = [1e-3, 1e-4, 1e-5]
+x_label  = "$\\eta$ [$\\Omega \\cdot$ m]"
+```
+
+```bash
+python ~/ashen/bin/plot --compare eta_scan --diag wetted_fraction
+```
+
+`--wetted-threshold FLOAT` on the command line overrides every case's
+`theta_wetted_threshold` for one invocation, the same precedence
+`--theta-target-psi` has over `theta_target_psi`:
+
+```bash
+python ~/ashen/bin/plot --compare eta_scan --diag wetted_fraction --wetted-threshold 0.01
+```
+
+Written to `figures/<comparison-name>_wetted_fraction.png`; the CLI also
+prints each case's fraction. `x_values` is required for this diag --
+`theta_hist` on the same comparison works fine without it, since its panels
+are keyed by case label, not a numeric axis. Ported from the core of the
+notebook's `eta_plot` (`Columbia/NL_kinks/prod_plots_draft0.ipynb`, cell 0),
+generalised over what the plotted scalar is -- `ashen.plotting.
+wetted_fraction` takes any `(x, y)` pair, not only wetted fraction, for
+whatever the next "scalar vs. scan parameter" plot turns out to need.
 
 ### Radial profiles
 

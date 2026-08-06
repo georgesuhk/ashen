@@ -131,6 +131,15 @@ n_points        = 100
 # theta_bins        = 500
 # theta_psi_n_range = [0.2, 0.9]
 
+# `plot --diag wetted_fraction` (comparison-only, see [comparisons.*] below):
+# the theta_hist bin-count threshold a bin must exceed to count as "wetted".
+# Same scale as theta_hist's own output (a fraction-of-lines-per-bin, since
+# bin weights sum to 1) -- omit it to default to 1/theta_bins at plot time,
+# the value a perfectly uniform distribution would put in every bin.
+# `--wetted-threshold` on the plot command line overrides this per case, the
+# same way `--theta-target-psi` overrides theta_target_psi.
+# theta_wetted_threshold = 0.002
+
 # A case's name IS its run folder -- [cases."qa2.1_g2.3/eta1e-3_RE"] points at
 # that exact path under the campaign directory. There is no separate `folder`
 # key; re-analysing the same run under a different label means copying its
@@ -187,3 +196,13 @@ note  = "internal kink investigation"
 # ]
 # labels = ["$\\eta = 10^{-3}$", "$\\eta = 10^{-4}$", "$\\eta = 10^{-5}$"]
 # n_cols = 5
+#
+# x_values/x_label turn the same comparison into a "scalar vs. scan
+# parameter" plot instead -- `bin/plot --compare eta_scan --diag
+# wetted_fraction` needs these (x_values is required for that diag, unlike
+# theta_hist which ignores them). x_values is parallel to `cases`, an
+# explicit numeric value per member -- deliberately NOT inferred by parsing
+# "eta1e-3" out of the run folder's own name, since a folder rename would
+# then silently change what gets plotted.
+# x_values = [1e-3, 1e-4, 1e-5]
+# x_label  = "$\\eta$ [$\\Omega \\cdot$ m]"

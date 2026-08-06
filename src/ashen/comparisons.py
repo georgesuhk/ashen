@@ -12,6 +12,10 @@ Each member's own per-diag step override still does the per-run time-window
 selection (e.g. ``[cases.NAME.theta_hist] steps = [...]``) -- a comparison
 only supplies which cases to pool and how to label them, reusing
 :meth:`ashen.cases.Case.steps_for` rather than inventing a parallel mechanism.
+
+A comparison can also carry an explicit ``x_values`` (parallel to ``cases``)
+for plotting a derived scalar against a scan parameter across its members --
+e.g. wetted fraction vs. eta (:mod:`ashen.plotting.wetted_fraction`).
 """
 
 from __future__ import annotations
@@ -34,6 +38,17 @@ class Comparison:
     labels: list[str] = field(default_factory=list)
     note: str = ""
     n_cols: int = 4
+    #: Parallel to `cases`: an explicit numeric value per member (e.g. each
+    #: case's resistivity), for a "derived scalar vs. scan parameter" plot
+    #: (ashen.plotting.wetted_fraction). Deliberately not inferred from run
+    #: folder names (e.g. parsing "eta1e-3" out of "eta1e-3_RE") -- CLAUDE.md
+    #: flags CASTOR3D's directory-name parsing as a hazard this project
+    #: exists to not repeat; a folder rename must not silently change a
+    #: plotted x-value. None (default) if the comparison isn't used for this
+    #: kind of plot.
+    x_values: list[float] | None = None
+    #: Axis label for `x_values`, e.g. "$\\eta$ [$\\Omega \\cdot$ m]".
+    x_label: str = ""
 
     def labelled_cases(self) -> list[tuple[str, str]]:
         """``[(label, case_name), ...]`` in panel order -- what a renderer
@@ -66,7 +81,9 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
 
     comparisons: dict[str, Comparison] = {}
     for name, raw in raw_comparisons.items():
-        unknown = sorted(set(raw) - {"cases", "labels", "note", "n_cols"})
+        unknown = sorted(
+            set(raw) - {"cases", "labels", "note", "n_cols", "x_values", "x_label"}
+        )
         if unknown:
             raise CasesError(
                 f"{path}: comparison {name!r} has unknown key(s): {unknown}"
@@ -92,12 +109,23 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
                 f"{len(members)} cases; labels must be omitted or match cases 1:1"
             )
 
+        x_values = None
+        if "x_values" in raw:
+            x_values = [float(v) for v in raw["x_values"]]
+            if len(x_values) != len(members):
+                raise CasesError(
+                    f"{path}: comparison {name!r} has {len(x_values)} x_values "
+                    f"for {len(members)} cases; x_values must match cases 1:1"
+                )
+
         comparisons[name] = Comparison(
             name=name,
             cases=members,
             labels=labels,
             note=str(raw.get("note", "")),
             n_cols=int(raw.get("n_cols", 4)),
+            x_values=x_values,
+            x_label=str(raw.get("x_label", "")),
         )
 
     return comparisons

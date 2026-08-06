@@ -24,6 +24,7 @@ this deliberately does *not* replicate. There is nothing to fix here.
 
 from __future__ import annotations
 
+import math
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -35,6 +36,7 @@ __all__ = [
     "crossing_angles",
     "pooled_crossing_angles",
     "theta_histogram",
+    "wetted_fraction",
 ]
 
 
@@ -160,3 +162,24 @@ def theta_histogram(angles: np.ndarray, *, bins: int) -> tuple[np.ndarray, np.nd
     weights = np.full(angles.shape, 1.0 / angles.size)
     counts, edges = np.histogram(angles, bins=bins, range=(-np.pi, np.pi), weights=weights)
     return counts, edges
+
+
+def wetted_fraction(counts: np.ndarray, *, threshold: float) -> float:
+    """The fraction of histogram bins whose count exceeds ``threshold`` --
+    ports the notebook's ``wetted_A/total_bins``
+    (``Columbia/NL_kinks/prod_plots_draft0.ipynb``, cell 8): a rough measure
+    of how broadly, rather than how narrowly, an exit population is spread
+    over the poloidal angle -- one scalar per case, meant to be plotted
+    against a scan parameter (e.g. eta) across several cases via
+    :mod:`ashen.comparisons`.
+
+    ``threshold`` is on the same scale as :func:`theta_histogram`'s output
+    (a fraction-of-lines-per-bin, since bin weights sum to 1) -- the caller
+    typically passes ``1 / bins``, the value a perfectly uniform distribution
+    would put in every bin, so "wetted" means "above what uniform spreading
+    would give this bin". ``NaN`` for an empty ``counts`` (no bins to judge),
+    distinguishable from a genuine ``0.0`` (every bin at or below threshold).
+    """
+    if counts.size == 0:
+        return math.nan
+    return float(np.count_nonzero(counts > threshold)) / counts.size

@@ -16,6 +16,7 @@ from ashen.diagnostics.theta_histogram import (
     crossing_angles,
     pooled_crossing_angles,
     theta_histogram,
+    wetted_fraction,
 )
 
 
@@ -193,3 +194,41 @@ def test_empty_angles_returns_zero_counts_not_an_error():
     assert counts.shape == (5,)
     assert np.all(counts == 0)
     assert edges.shape == (6,)
+
+
+# --- wetted fraction ------------------------------------------------------------
+
+
+def test_wetted_fraction_counts_bins_above_threshold():
+    counts = np.array([0.0, 0.1, 0.3, 0.0, 0.2])
+    # threshold=0.05 -> bins at 0.1, 0.3, 0.2 exceed it (3 of 5).
+    assert wetted_fraction(counts, threshold=0.05) == pytest.approx(3 / 5)
+
+
+def test_wetted_fraction_is_strictly_greater_than_not_greater_equal():
+    counts = np.array([0.0, 0.1, 0.1])
+    assert wetted_fraction(counts, threshold=0.1) == pytest.approx(0.0)
+    assert wetted_fraction(counts, threshold=0.099) == pytest.approx(2 / 3)
+
+
+def test_wetted_fraction_all_below_threshold_is_zero():
+    counts = np.array([0.001, 0.002, 0.001])
+    assert wetted_fraction(counts, threshold=1.0) == pytest.approx(0.0)
+
+
+def test_wetted_fraction_all_above_threshold_is_one():
+    counts = np.array([0.5, 0.6, 0.7])
+    assert wetted_fraction(counts, threshold=0.1) == pytest.approx(1.0)
+
+
+def test_wetted_fraction_empty_counts_is_nan():
+    assert math.isnan(wetted_fraction(np.empty(0), threshold=0.1))
+
+
+def test_wetted_fraction_uniform_default_threshold_matches_1_over_bins():
+    """The CLI's default threshold (1/bins) means 'above what a uniform
+    distribution would put in every bin' -- a perfectly uniform histogram
+    should therefore be exactly 0% wetted (nothing strictly exceeds it)."""
+    bins = 20
+    uniform = np.full(bins, 1.0 / bins)
+    assert wetted_fraction(uniform, threshold=1.0 / bins) == pytest.approx(0.0)

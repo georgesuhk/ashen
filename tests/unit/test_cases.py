@@ -733,6 +733,7 @@ def test_theta_knobs_default(tmp_path):
     assert case.theta_target_psi == pytest.approx(1.05)
     assert case.theta_bins == 500
     assert case.theta_psi_n_range is None
+    assert case.theta_wetted_threshold is None
 
 
 def test_theta_knobs_are_settable(tmp_path):
@@ -744,12 +745,23 @@ def test_theta_knobs_are_settable(tmp_path):
         theta_target_psi = 1.1
         theta_bins = 1000
         theta_psi_n_range = [0.2, 0.8]
+        theta_wetted_threshold = 0.002
         """,
     )
     case = load_cases(path)["a"]
     assert case.theta_target_psi == pytest.approx(1.1)
     assert case.theta_bins == 1000
     assert case.theta_psi_n_range == [0.2, 0.8]
+    assert case.theta_wetted_threshold == pytest.approx(0.002)
+
+
+def test_theta_wetted_threshold_rejects_non_positive(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\ntheta_wetted_threshold = 0\n',
+    )
+    with pytest.raises(CasesError, match="must be positive"):
+        load_cases(path)
 
 
 def test_theta_psi_n_range_rejects_non_pair(tmp_path):

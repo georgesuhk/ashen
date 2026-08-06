@@ -139,3 +139,42 @@ def test_missing_file_raises(tmp_path):
     cases = {}
     with pytest.raises(CasesError, match="not found"):
         load_comparisons(tmp_path / "does_not_exist.toml", cases)
+
+
+# --- x_values / x_label: scan-parameter plots (wetted fraction vs. eta) ----------
+
+
+def test_x_values_default_to_none(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a", "b"]\n',
+    )
+    cases = load_cases(path)
+    comparison = load_comparisons(path, cases)["scan"]
+    assert comparison.x_values is None
+    assert comparison.x_label == ""
+
+
+def test_x_values_and_x_label_are_parsed(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + 'cases    = ["a", "b", "c"]\n'
+        + 'x_values = [1e-3, 1e-4, 1e-5]\n'
+        + 'x_label  = "$\\\\eta$"\n',
+    )
+    cases = load_cases(path)
+    comparison = load_comparisons(path, cases)["scan"]
+    assert comparison.x_values == pytest.approx([1e-3, 1e-4, 1e-5])
+    assert comparison.x_label == r"$\eta$"
+
+
+def test_x_values_length_mismatch_raises(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a", "b"]\nx_values = [1.0]\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="x_values"):
+        load_comparisons(path, cases)

@@ -27,6 +27,7 @@ _CASE_KEYS = (
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
+    "theta_wetted_threshold",
 )
 
 #: Diag names recognised as [cases.NAME.<diag>] step-override tables -- the
@@ -136,6 +137,15 @@ class Case:
     #: positional index into scan order, which silently changes meaning
     #: whenever psi_n_in is widened or reordered).
     theta_psi_n_range: list[float] | None = None
+    #: `plot --diag wetted_fraction`: the theta_hist bin-count threshold a
+    #: bin must exceed to count as "wetted" -- on the same scale as
+    #: theta_histogram's output (a fraction-of-lines-per-bin, since bin
+    #: weights sum to 1). None (default) falls back to 1/theta_bins at plot
+    #: time -- the value a perfectly uniform distribution would put in every
+    #: bin, so "wetted" means "above what uniform spreading would give".
+    #: `--wetted-threshold` on the plot command line outranks this the same
+    #: way `--theta-target-psi` outranks theta_target_psi.
+    theta_wetted_threshold: float | None = None
 
     def steps_for(self, diag: str) -> list[int]:
         """`steps`, unless `diag` has its own override in `diag_steps` --
@@ -408,6 +418,15 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                     f"min < max, got [{lo}, {hi}]"
                 )
             merged["theta_psi_n_range"] = [lo, hi]
+
+        if "theta_wetted_threshold" in merged:
+            threshold = float(merged["theta_wetted_threshold"])
+            if threshold <= 0:
+                raise CasesError(
+                    f"{path}: case {name!r} theta_wetted_threshold must be "
+                    f"positive, got {threshold}"
+                )
+            merged["theta_wetted_threshold"] = threshold
 
         if "four_growth_steps" in merged:
             spec = merged["four_growth_steps"]

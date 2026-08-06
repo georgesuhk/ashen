@@ -254,6 +254,19 @@ which nothing in `ashen` had a mechanism for before this pass. `theta_hist` is
 the only diag with a comparison renderer so far; the mechanism itself is
 general.
 
+**Same-day follow-on:** `wetted_fraction` (`--diag wetted_fraction`,
+comparison-only) ports the core of the notebook's `eta_plot` plus its
+`wetted_A/total_bins` computation (same notebook, cell 0 and cell 8): the
+fraction of a case's `theta_hist` bins whose count exceeds a threshold
+(`ashen.diagnostics.theta_histogram.wetted_fraction`), plotted against an
+explicit `x_values` on a `[comparisons.*]` entry
+(`ashen.plotting.wetted_fraction`). George flagged this "scalar vs. scan
+parameter" shape as one he'll reuse often -- `x_values` is deliberately not
+inferred from run-folder names (same directory-name-parsing hazard `CLAUDE.md`
+already warns about for CASTOR3D), and `ashen.plotting.wetted_fraction` is
+written generic over the y-quantity, not specific to wetted fraction, so the
+next such request can reuse it.
+
 **Deliberately not ported this pass** (recorded here as future work, per
 George, 2026-08-05):
 - `plot_field_line_diffusion` (`data_jorek.py:180`) — the scatter-by-time
