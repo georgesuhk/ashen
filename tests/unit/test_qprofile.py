@@ -61,6 +61,28 @@ def test_read_qprofile(tmp_path):
     assert q.tolist() == [1.0, 1.5, 2.0]
 
 
+def test_read_qprofile_handles_the_real_headerless_output(tmp_path):
+    """The real ``jorek2_postproc`` output has no column names on the header
+    line at all -- ``exec_commands.f90::qprofile`` sets ``n_expr = 0`` right
+    before naming the two columns, so ``write_ascii_header``'s loop never
+    runs and the line is just ``# `` with nothing after it. Column order
+    (Psi_n, then q) is still reliable; this is what actually ships from the
+    HPC, not the with-names variant above."""
+    path = tmp_path / "qprofile_s000100.dat"
+    path.write_text(
+        "# \n"
+        "# time step #000100\n"
+        "0.1 1.0\n"
+        "0.5 1.5\n"
+        "0.9 2.0\n"
+        "\n",
+        encoding="utf-8",
+    )
+    psi_n, q = read_qprofile(path)
+    assert psi_n.tolist() == [0.1, 0.5, 0.9]
+    assert q.tolist() == [1.0, 1.5, 2.0]
+
+
 # --- run_qprofile_step: in-place jorek2_postproc invocation, mirrors
 # ashen.jorek2.run_zero_d's own test shape (test_jorek2.py). ------------------------
 

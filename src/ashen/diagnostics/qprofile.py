@@ -85,10 +85,22 @@ def read_qprofile(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
     takes whichever one block :func:`ashen.postproc.read_postproc_profile`
     found rather than requiring the caller to know the step number the file
     was written with.
+
+    Columns are selected **positionally**, not by the ``headers`` name list
+    ``read_postproc_profile`` returns. ``exec_commands.f90::qprofile`` sets
+    ``tmp_expr_list%n_expr = 0`` immediately before assigning
+    ``expr(1)%name = 'Psi_n'`` / ``expr(2)%name = 'q'``
+    (``exec_commands.f90:2368-2370``) without ever incrementing it back up,
+    so ``write_ascii_header``'s ``do i = 1, expr_list%n_expr`` loop runs zero
+    times and the header line it writes carries no column names at all --
+    only ``# `` followed by nothing. A real bug in vendored JOREK
+    (``Columbia/jorek_RE``, never to be edited here), but the column *order*
+    (``Psi_n`` then ``q``, from ``res1d(k2,:) = (/ get_psi_n(...), q(k) /)``
+    a few lines below) is unaffected, so position is what's reliable.
     """
-    headers, blocks = read_postproc_profile(path)
+    _headers, blocks = read_postproc_profile(path)
     data = next(iter(blocks.values()))
-    return data[:, headers.index("Psi_n")], data[:, headers.index("q")]
+    return data[:, 0], data[:, 1]
 
 
 def find_rational_surfaces(
