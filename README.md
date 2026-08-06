@@ -222,8 +222,9 @@ Kept as a separate command from `analyse` on purpose: gathering is slow and
 batch, plotting is fast and iterative, and re-plotting should never risk
 touching the gathering path.
 
-- `--step N` (repeatable) restricts Poincare plots to specific steps (default:
-  every step in the case).
+- `--step N` (repeatable) restricts every diag drawn this run to specific
+  steps, overriding any configured per-diag steps (default: each diag's own
+  steps -- see below).
 - `--linear` / `--smooth` control the connection-length colour maps.
 - `--psi-range MIN MAX` further bounds-filters whichever psi_n_in list is
   already in effect for connection-length -- plot-time only, no re-gather
@@ -231,6 +232,36 @@ touching the gathering path.
 - `--four-linear` draws four's mode amplitudes on a linear scale instead of
   the default log.
 - `--dpi N` overrides the figure resolution.
+
+### Different step ranges for different diags
+
+Steps resolve through a three-tier `default -> case -> case+diag` tree, most
+specific wins. `[defaults]`/a case's own `steps` (both already existed) are
+the first two tiers; a nested `[cases.NAME.<diag>]` table with its own
+`steps` -- `<diag>` being one of `zerod`, `poincare`, `profiles`, `four`,
+`connection_length` -- is the third, e.g. a long range for `four`'s growth
+curve alongside a handful of `poincare` snapshots for the same run:
+
+```toml
+[cases."qa2.1_g2.3/eta1e-3_RE"]
+steps = { start = 200, stop = 5800, step = 200 }
+
+[cases."qa2.1_g2.3/eta1e-3_RE".four]
+steps = { start = 200, stop = 12000, step = 200 }   # four gets a longer range
+
+[cases."qa2.1_g2.3/eta1e-3_RE".poincare]
+steps = [200, 3000, 5800]                            # poincare only these
+```
+
+Both `analyse` and `plot` respect it -- `analyse --diag four` gathers exactly
+the `four`-overridden steps, not the case's plain ones. `--step` on the
+`plot` command line still outranks all three config tiers when given.
+`connection_length`'s own override only *selects which already-gathered
+poincare steps to plot* (same "no interpolation" rule `lc_psi_n_in` has
+below) -- it never gathers new data on its own, so its steps must be a
+subset of whatever `poincare` (or its own override) actually traced.
+`[defaults.<diag>]` works too, seeding every case, but is replaced wholesale
+-- not merged key-by-key -- by a case's own `[cases.NAME.<diag>]` table.
 
 ### Plotting a different psi_n selection than you gathered
 
@@ -318,24 +349,38 @@ A step or `(variable, n, m)` combination missing from the cache shows as a
 gap (`nan`) in that line rather than an error. `--four-linear` switches the
 default log amplitude scale to linear.
 
-**Rational-surface overlay.** `analyse --diag four` also gathers each step's
-q-profile (`jorek2_postproc`'s `qprofile` command, cached to
-`postproc/qprofile_s<step>.dat`) alongside the Fourier decomposition -- no
-separate `--diag` needed. For every `(n, m)` mode with `n != 0`, `plot --diag
-four` uses that cache to locate the mode's resonant surface (`q = m/n`,
-solved by linearly interpolating the q-profile's crossings, same as JOREK's
-own `find_q_surface` postproc command) and overlays a dashed line pinning the
-mode's `|amplitude|` to that surface, in the same colour as its solid
-whole-domain-max line. This is the useful comparison: whether a mode's
-growth is actually concentrated at the radius it resonates on, or the
-domain-max is being driven by something else (numerical noise near the axis,
-a different structure entirely).
+**Rational-surface overlay / `four_quantities`.** `analyse --diag four` also
+gathers each step's q-profile (`jorek2_postproc`'s `qprofile` command, cached
+to `postproc/qprofile_s<step>.dat`) alongside the Fourier decomposition -- no
+separate `--diag` needed. For every `(n, m)` mode with `n != 0`, that cache
+locates the mode's resonant surface (`q = m/n`, solved by linearly
+interpolating the q-profile's crossings, same as JOREK's own `find_q_surface`
+postproc command) and pins the mode's `|amplitude|` to that surface.
 
-A reversed-shear q-profile can cross a given `q` more than once; the
-strongest of the crossings is kept. `n = 0` modes have no rational surface
-(`m/0`) and are drawn without an overlay. Cases gathered before this feature
-existed (no `qprofile_s*.dat` cache) simply draw without the overlay -- no
-error, no re-gather required for the base plot.
+`four_quantities` (case field, plot-time only, default `["max"]`) chooses
+what actually gets drawn:
+
+```toml
+four_quantities = ["max"]                        # default: domain-wide max only
+four_quantities = ["rational_surface"]            # only the q=m/n-pinned value
+four_quantities = ["max", "rational_surface"]     # both: max solid, rational dashed
+```
+
+With both selected, the rational-surface value overlays as a dashed line in
+the same colour as its mode's solid max line -- the useful comparison,
+whether a mode's growth is actually concentrated at the radius it resonates
+on, or the domain-max is being driven by something else (numerical noise
+near the axis, a different structure entirely). With `rational_surface`
+alone, that value becomes the primary (solid) line instead, and the y-axis
+label changes from `max |var|` to `|var| @ rational surface` accordingly.
+
+A reversed-shear q-profile can cross a given `q` more than once; every
+crossing is kept and drawn (not just the strongest). `n = 0` modes have no
+rational surface (`m/0`) and are never part of the rational-surface series.
+A case gathered before this feature existed (no `qprofile_s*.dat` cache), or
+one with no `n != 0` modes at all, prints a note and skips the
+rational-surface figure rather than erroring -- `four_quantities = ["max"]`
+(the default) is unaffected either way.
 
 **Growth rate.** `four_growth_rate = true` (case field, plot-time only) fits
 each drawn mode's exponential growth rate -- `gamma` [1/s], the slope of

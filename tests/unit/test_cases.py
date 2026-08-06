@@ -368,6 +368,137 @@ def test_poincare_highlight_true_without_modes_raises(tmp_path):
         load_cases(path)
 
 
+# --- four_quantities -------------------------------------------------------------
+
+
+def test_four_quantities_defaults_to_max(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    assert load_cases(path)["a"].four_quantities == ["max"]
+
+
+def test_four_quantities_settable_to_rational_surface_only(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\nfour_quantities = ["rational_surface"]\n',
+    )
+    assert load_cases(path)["a"].four_quantities == ["rational_surface"]
+
+
+def test_four_quantities_settable_to_both(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\nfour_quantities = ["max", "rational_surface"]\n',
+    )
+    assert load_cases(path)["a"].four_quantities == ["max", "rational_surface"]
+
+
+def test_four_quantities_rejects_unknown_value(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\nfour_quantities = ["bogus"]\n',
+    )
+    with pytest.raises(CasesError, match="unknown four_quantities"):
+        load_cases(path)
+
+
+def test_four_quantities_rejects_empty_list(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\nfour_quantities = []\n',
+    )
+    with pytest.raises(CasesError, match="must not be empty"):
+        load_cases(path)
+
+
+# --- steps_for / diag_steps: default -> case -> case+diag override tree ----------
+
+
+def test_steps_for_falls_back_to_case_steps_when_no_override(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [100, 200]\n')
+    case = load_cases(path)["a"]
+    assert case.steps_for("four") == [100, 200]
+    assert case.steps_for("poincare") == [100, 200]
+
+
+def test_steps_for_returns_diag_override_as_a_list(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [100, 200]
+        [cases.a.four]
+        steps = [100, 200, 300, 400]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.steps_for("four") == [100, 200, 300, 400]
+    assert case.steps_for("poincare") == [100, 200]
+
+
+def test_diag_steps_override_accepts_a_range_spec(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [100]
+        [cases.a.poincare]
+        steps = { start = 200, stop = 800, step = 200 }
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.steps_for("poincare") == [200, 400, 600]
+
+
+def test_diag_steps_override_table_rejects_unknown_key(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [100]
+        [cases.a.four]
+        steps = [100]
+        four_modes = [[2, 1]]
+        """,
+    )
+    with pytest.raises(CasesError, match="unknown key"):
+        load_cases(path)
+
+
+def test_unrecognised_nested_table_name_hits_the_general_unknown_key_error(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [100]
+        [cases.a.not_a_diag]
+        steps = [100]
+        """,
+    )
+    with pytest.raises(CasesError, match="unknown key"):
+        load_cases(path)
+
+
+def test_defaults_diag_override_seeds_every_case_and_case_override_replaces_it(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [defaults.four]
+        steps = [1000, 2000]
+
+        [cases.a]
+        steps = [100]
+
+        [cases.b]
+        steps = [100]
+        [cases.b.four]
+        steps = [5000, 6000]
+        """,
+    )
+    cases = load_cases(path)
+    assert cases["a"].steps_for("four") == [1000, 2000]
+    assert cases["b"].steps_for("four") == [5000, 6000]
+
+
 def test_case_name_is_its_own_run_folder(tmp_path):
     path = _write(
         tmp_path,

@@ -26,7 +26,12 @@ _CASE_KEYS = (
     "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
+    "four_quantities",
 )
+
+#: Diag names recognised as [cases.NAME.<diag>] step-override tables -- the
+#: union of both CLIs' DIAG_CHOICES (ashen.cli.analyse, ashen.cli.plot).
+_DIAG_NAMES = ("zerod", "poincare", "profiles", "four", "connection_length")
 
 
 class CasesError(RuntimeError):
@@ -37,6 +42,11 @@ class CasesError(RuntimeError):
 class Case:
     name: str
     steps: list[int]
+    #: Per-diag overrides of `steps`, e.g. {"four": [1000, 1200, ...]} --
+    #: populated from nested [cases.NAME.<diag>] tables in cases.toml. Read
+    #: through `steps_for`, not directly: the innermost tier of the
+    #: default -> case -> case+diag tree, `steps` itself being the middle.
+    diag_steps: dict[str, list[int]] = field(default_factory=dict)
     note: str = ""
     #: Poincare requests, satisfied incrementally against the cache -- widening
     #: psi_n_in or raising n_turns costs only the increment, not a rescan.
@@ -108,6 +118,16 @@ class Case:
     #: Parallel to poincare_highlight_modes: poincare_highlight_colors[i] is
     #: the colour drawn for poincare_highlight_modes[i].
     poincare_highlight_colors: list[str] = field(default_factory=list)
+    #: Which amplitude quantity(ies) `plot --diag four` draws. "max" is the
+    #: whole-domain max |amplitude| (today's only option); "rational_surface"
+    #: is the value pinned to each mode's q=m/n resonant surface. Both
+    #: together draws max solid with rational_surface dashed over it.
+    four_quantities: list[str] = field(default_factory=lambda: ["max"])
+
+    def steps_for(self, diag: str) -> list[int]:
+        """`steps`, unless `diag` has its own override in `diag_steps` --
+        the case+diag tier of the default -> case -> case+diag tree."""
+        return self.diag_steps.get(diag, self.steps)
 
 
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:
@@ -206,6 +226,33 @@ def load_cases(path: Path | str) -> dict[str, Case]:
     for name, raw in raw_cases.items():
         merged = {**defaults, **raw}
 
+        # [cases.NAME.<diag>] tables, if present, override `steps` for that
+        # one diag -- popped before the "steps" check below so their nested
+        # dicts never reach the flat unknown-key check further down, and
+        # before Case(**merged) since Case takes them as `diag_steps`, not
+        # as fields named "four"/"poincare"/etc.
+        diag_steps: dict[str, list[int]] = {}
+        for diag in _DIAG_NAMES:
+            sub = merged.pop(diag, None)
+            if sub is None:
+                continue
+            if not isinstance(sub, dict):
+                raise CasesError(
+                    f"{path}: case {name!r} has a {diag!r} key that isn't a "
+                    f"[cases.{name}.{diag}] table, got {sub!r}"
+                )
+            unknown_sub = sorted(set(sub) - {"steps"})
+            if unknown_sub:
+                raise CasesError(
+                    f"{path}: case {name!r} [{diag}] override table has "
+                    f"unknown key(s) {unknown_sub}; only 'steps' is "
+                    "currently supported"
+                )
+            if "steps" in sub:
+                diag_steps[diag] = _steps_from_spec(
+                    sub["steps"], case_name=name, source=path
+                )
+
         if "steps" not in merged:
             raise CasesError(f"{path}: case {name!r} has no 'steps'")
         steps = _steps_from_spec(merged.pop("steps"), case_name=name, source=path)
@@ -300,6 +347,21 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                 "poincare_highlight_modes/poincare_highlight_colors configured"
             )
 
+        if "four_quantities" in merged:
+            spec = merged["four_quantities"]
+            quantities = [spec] if isinstance(spec, str) else list(spec)
+            unknown_q = [q for q in quantities if q not in ("max", "rational_surface")]
+            if unknown_q:
+                raise CasesError(
+                    f"{path}: case {name!r} has unknown four_quantities {unknown_q}; "
+                    "expected 'max' and/or 'rational_surface'"
+                )
+            if not quantities:
+                raise CasesError(
+                    f"{path}: case {name!r} four_quantities must not be empty"
+                )
+            merged["four_quantities"] = quantities
+
         if "four_growth_steps" in merged:
             spec = merged["four_growth_steps"]
             if not (isinstance(spec, list) and len(spec) == 2):
@@ -319,6 +381,9 @@ def load_cases(path: Path | str) -> dict[str, Case]:
         if unknown:
             raise CasesError(f"{path}: case {name!r} has unknown key(s): {unknown}")
 
-        cases[name] = Case(name=name, steps=steps, **{k: v for k, v in merged.items()})
+        cases[name] = Case(
+            name=name, steps=steps, diag_steps=diag_steps,
+            **{k: v for k, v in merged.items()},
+        )
 
     return cases

@@ -185,16 +185,26 @@ def _run_case(
     # figure reads each step's true time from the zeroD cache
     # (cli/plot.py:_plot_connection_length), so a poincare-only gather that
     # skipped it would leave LCTT with nothing to read. Cache-gated per step,
-    # so this costs nothing once zerod has already run.
-    if "zerod" in diags or "poincare" in diags:
-        _gather_zero_d(jrun, paths, case.steps, force=force, n_workers=n_workers)
+    # so this costs nothing once zerod has already run. Each diag's own
+    # steps_for() override is respected -- zerod covers the union, so a
+    # separately-configured `zerod` step list and a `poincare` one both get
+    # what they need in one pass.
+    zerod_steps: set[int] = set()
+    if "zerod" in diags:
+        zerod_steps.update(case.steps_for("zerod"))
+    if "poincare" in diags:
+        zerod_steps.update(case.steps_for("poincare"))
+    if zerod_steps:
+        _gather_zero_d(jrun, paths, sorted(zerod_steps), force=force, n_workers=n_workers)
 
     if "poincare" in diags:
+        poincare_steps = case.steps_for("poincare")
+
         # The rational-surface highlight needs the qprofile cache to locate
         # q=m/n, same reasoning as poincare implying zerod above: gathered
         # here so a poincare-only case doesn't also need `--diag four`.
         if case.poincare_highlight:
-            _gather_qprofile(jrun, paths, case.steps, force=force, n_workers=n_workers)
+            _gather_qprofile(jrun, paths, poincare_steps, force=force, n_workers=n_workers)
 
         real_psi_edge = read_float(paths.real_psi_edge)
         psi_n_in = [p * real_psi_edge for p in case.psi_n_in]
@@ -206,7 +216,7 @@ def _run_case(
         # against the cache per field line, so an already-satisfied step costs
         # a read and traces nothing. --force still discards and retraces.
         poincare_diag.run_poincare_scan(
-            jrun, paths, case.steps, psi_n_in,
+            jrun, paths, poincare_steps, psi_n_in,
             ang_sample_freq=case.ang_sample_freq,
             n_turns=case.n_turns,
             phi_start=case.phi_start,
@@ -222,7 +232,7 @@ def _run_case(
             print(f"  profiles {done}/{total}: step {step} {var} [{mode}]")
 
         succeeded = profiles_diag.gather_profiles(
-            jrun, paths, case.steps, case.vars,
+            jrun, paths, case.steps_for("profiles"), case.vars,
             coords_var=case.coords_var, tor_modes=case.tor_mode,
             n_points=case.n_points, n_workers=n_workers, force=force,
             surfaces=case.profile_surfaces,
@@ -249,17 +259,19 @@ def _run_case(
                     )
 
     if "four" in diags:
+        four_steps = case.steps_for("four")
+
         # The q-profile locates each mode's q=m/n rational surface for
         # plot's rational_surface_series (ashen.diagnostics.four_modes) --
         # gathered alongside four so a plot-only run never needs a second
         # `analyse` pass just to add it.
-        _gather_qprofile(jrun, paths, case.steps, force=force, n_workers=n_workers)
+        _gather_qprofile(jrun, paths, four_steps, force=force, n_workers=n_workers)
 
         def _four_progress(done: int, total: int, report) -> None:
             print(f"  four {done}/{total}: {report}")
 
         four_diag.run_four_scan(
-            jrun, paths, case.steps,
+            jrun, paths, four_steps,
             nstpts=case.nstpts, ntht=case.ntht, nmaxsteps=case.nmaxsteps,
             deltaphi=case.deltaphi, nsmallsteps=case.nsmallsteps,
             rad_range=tuple(case.rad_range),

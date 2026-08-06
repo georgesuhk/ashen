@@ -81,6 +81,13 @@ n_points        = 100
 # picking the visually-linear part of a growth curve.
 # four_growth_rate  = true
 # four_growth_steps = [1000, 3000]
+# Which amplitude quantity(ies) `plot --diag four` draws. "max" (default) is
+# the whole-domain max |amplitude|; "rational_surface" is the value pinned
+# to each mode's q=m/n resonant surface (needs the qprofile cache, gathered
+# alongside `--diag four`). Both together draws max solid with
+# rational_surface dashed over it -- the original always-both look.
+# four_quantities = ["rational_surface"]
+# four_quantities = ["max", "rational_surface"]
 
 # Colour the field lines nearest chosen rational surfaces in `plot --diag
 # poincare`, everything else dimmed grey -- needs the qprofile cache
@@ -107,3 +114,14 @@ note  = "internal kink investigation"
 # [cases."qa2.8_g1.8/eta1e-5_RE_ntor11"]
 # steps = [11800, 12000, 12100, 12200, 12300, 12400, 12420, 12430]
 # note  = "ntor=11 island growth"
+
+# A case's steps can be overridden per diag: [cases.NAME.<diag>] (diag is
+# one of zerod/poincare/profiles/four/connection_length) with its own
+# `steps`, same list/range formats as above -- e.g. a long step range for
+# four's growth curve alongside a handful of poincare snapshots for the
+# same run. default -> case -> case+diag, most specific wins; `--step` on
+# the plot command line outranks all three. [defaults.<diag>] works the
+# same way, seeding every case, replaced wholesale (not merged key-by-key)
+# by a case's own [cases.NAME.<diag>] table.
+# [cases."qa2.1_g2.3/eta1e-3_RE".four]
+# steps = { start = 200, stop = 12000, step = 200 }

@@ -33,6 +33,8 @@ def draw_mode_amplitudes(
     growth_fits: Mapping[ModeKey, GrowthFit] | None = None,
     log: bool = True,
     xlabel: str = "",
+    ylabel: str | None = None,
+    label_suffix: str = "",
 ) -> None:
     """Draw every ``(n, m)`` mode of ``variable`` present in ``series`` onto
     ``ax``, each a differently-coloured line.
@@ -44,15 +46,23 @@ def draw_mode_amplitudes(
     ``rational_series``, if given (see :func:`ashen.diagnostics.four_modes.
     rational_surface_series`), overlays each mode's amplitude pinned to its
     ``q = m/n`` resonant surface as a dashed line in the same colour --
-    directly comparable to the solid whole-domain-max line for the same
-    mode, so a reader can see whether the mode's growth is actually
-    localised at the surface it resonates on.
+    directly comparable to the solid ``series`` line for the same mode, so a
+    reader can see whether the mode's growth is actually localised at the
+    surface it resonates on.
 
     ``growth_fits``, if given (see :func:`ashen.diagnostics.four_modes.
     growth_rate_series`), appends each mode's fitted growth rate (1/s) to
     its legend label -- ``gamma`` is a single physical number, not a
     function of the x-axis, so it's shown the same way regardless of
     whether ``x`` is step index or time.
+
+    ``ylabel``, if given, overrides the default ``f"max |{variable}|"`` --
+    for a caller drawing the rational-surface amplitude as the *primary*
+    (not overlaid) series, where "max" is the wrong description.
+    ``label_suffix`` is appended to every mode's legend label (before the
+    growth-rate suffix) -- same use: a primary series that's the
+    rational-surface value, not the domain-wide max, wants its own label
+    without needing an overlay.
     """
     modes = sorted((n, m) for (var, n, m) in series if var == variable)
 
@@ -60,7 +70,7 @@ def draw_mode_amplitudes(
         y = series[(variable, n, m)]
         color = DISCRETE_PALETTE[i % len(DISCRETE_PALETTE)]
         key = (variable, n, m)
-        label = f"n={n}, m={m}"
+        label = f"n={n}, m={m}{label_suffix}"
         if growth_fits is not None and key in growth_fits:
             label += f" (\N{GREEK SMALL LETTER GAMMA}={growth_fits[key].gamma:.3g} /s)"
         ax.plot(x, y, color=color, marker="o", markersize=4, label=label)
@@ -73,7 +83,7 @@ def draw_mode_amplitudes(
 
     if log:
         ax.set_yscale("log")
-    ax.set_ylabel(f"max |{variable}|")
+    ax.set_ylabel(ylabel or f"max |{variable}|")
     if xlabel:
         ax.set_xlabel(xlabel)
     if modes:
@@ -91,6 +101,8 @@ def plot_mode_amplitudes(
     growth_fits: Mapping[ModeKey, GrowthFit] | None = None,
     log: bool = True,
     xlabel: str = "",
+    ylabel: str | None = None,
+    label_suffix: str = "",
     figsize: tuple[float, float] = (7, 5),
     dpi: int = 150,
 ) -> Path:
@@ -104,7 +116,8 @@ def plot_mode_amplitudes(
         fig, ax = plt.subplots(figsize=figsize)
         draw_mode_amplitudes(
             ax, x, series, variable=variable, rational_series=rational_series,
-            growth_fits=growth_fits, log=log, xlabel=xlabel,
+            growth_fits=growth_fits, log=log, xlabel=xlabel, ylabel=ylabel,
+            label_suffix=label_suffix,
         )
         fig.tight_layout()
         fig.savefig(out_path, dpi=dpi)

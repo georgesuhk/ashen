@@ -189,3 +189,44 @@ def test_plot_mode_amplitudes_accepts_growth_fits(series, tmp_path):
         [100, 200, 300], series, "Psi", tmp_path / "Psi_modes.png", growth_fits=growth_fits,
     )
     assert out.is_file()
+
+
+# --- ylabel / label_suffix overrides -----------------------------------------------
+
+
+def test_default_ylabel_and_labels_are_unchanged(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi")
+    assert ax.get_ylabel() == "max |Psi|"
+    labels = {line.get_label() for line in ax.lines}
+    assert labels == {"n=0, m=1", "n=1, m=0"}
+    plt.close(fig)
+
+
+def test_ylabel_override_replaces_the_default(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", ylabel="|Psi| @ rational surface")
+    assert ax.get_ylabel() == "|Psi| @ rational surface"
+    plt.close(fig)
+
+
+def test_label_suffix_is_appended_to_every_mode_label(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(
+        ax, [100, 200, 300], series, variable="Psi", label_suffix=" @ rational surface"
+    )
+    labels = {line.get_label() for line in ax.lines}
+    assert labels == {"n=0, m=1 @ rational surface", "n=1, m=0 @ rational surface"}
+    plt.close(fig)
+
+
+def test_label_suffix_comes_before_the_growth_rate_suffix(series):
+    growth_fits = {("Psi", 0, 1): GrowthFit(gamma=1.0, intercept=0.0, n_points=10)}
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(
+        ax, [100, 200, 300], series, variable="Psi",
+        label_suffix=" @ rational surface", growth_fits=growth_fits,
+    )
+    labels = {line.get_label() for line in ax.lines}
+    assert "n=0, m=1 @ rational surface (\N{GREEK SMALL LETTER GAMMA}=1 /s)" in labels
+    plt.close(fig)

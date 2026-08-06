@@ -69,7 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--step", type=int, action="append", dest="steps",
-        help="restart step to plot (repeatable; poincare only, default: every case step)",
+        help="restart step to plot (repeatable; applies to every diag drawn "
+        "this run, overriding any [cases.NAME.<diag>] steps override; "
+        "default: each diag's own steps, or the case's steps)",
     )
     parser.add_argument("--dpi", type=int, default=None, help="override figure DPI")
     parser.add_argument(
@@ -247,9 +249,15 @@ def _read_true_times(paths: RunPaths, steps: list[int]) -> list[float] | None:
 def _plot_four_modes(
     case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None
 ) -> None:
+    want_max = "max" in case.four_quantities
+    want_rational = "rational_surface" in case.four_quantities
+
     # case.four_modes entries are [m, n] pairs (user-facing); the diagnostics
     # layer's ModeKey/modes filter is (n, m), matching FourRecord's own
     # (variable, n, m) field order -- swap here, at the one point they meet.
+    # Computed unconditionally: it's the only place mode/variable keys are
+    # discovered from the cache (cheap -- just reading what's on disk), and
+    # is itself the primary series whenever "max" is selected.
     series = max_amplitude_series(
         paths, steps,
         variables=case.four_vars or None,
@@ -263,14 +271,32 @@ def _plot_four_modes(
     # Pin each n!=0 mode's amplitude to its q=m/n rational surface, using
     # whatever q-profile cache `analyse --diag four` already gathered
     # alongside it. Silently empty (not an error) if that cache is missing --
-    # e.g. plotting a case gathered before this feature existed -- so the
-    # plot still draws the plain domain-max series.
-    rational_modes = {(n, m) for _, n, m in series if n != 0}
-    rational = (
-        rational_surface_series(paths, steps, sorted(rational_modes), variables=case.four_vars or None)
-        if rational_modes
-        else {}
-    )
+    # e.g. plotting a case gathered before this feature existed -- so a
+    # "max"-only plot is unaffected, and a rational-only one just reports
+    # nothing to draw (below).
+    rational = {}
+    if want_rational:
+        rational_modes = {(n, m) for _, n, m in series if n != 0}
+        if rational_modes:
+            rational = rational_surface_series(
+                paths, steps, sorted(rational_modes), variables=case.four_vars or None
+            )
+
+    # Primary (solid) series is max whenever selected -- both-selected
+    # reproduces the original solid-max/dashed-rational-overlay look;
+    # rational-only makes rational itself the (solid) primary, with no
+    # overlay, labelled to say what it actually is.
+    primary_series = series if want_max else rational
+    overlay_series = rational if (want_max and want_rational) else None
+    if want_max:
+        ylabel_suffix, label_suffix = None, ""
+    else:
+        ylabel_suffix, label_suffix = " @ rational surface", " @ rational surface"
+
+    if not primary_series:
+        print("  no rational-surface data to plot (need the qprofile cache "
+              "and at least one n != 0 mode; run analyse --diag four)")
+        return
 
     # Both x-axis variants are always written (unlike connection_length's
     # LC/LCTT, which are separate figures too, but this mirrors that split
@@ -286,7 +312,8 @@ def _plot_four_modes(
 
     # Growth rate (gamma, 1/s) is a physical quantity fit against real time,
     # so it needs true_times regardless of which x-axis variant it ends up
-    # labelled on -- computed once here and shown on every variant's legend.
+    # labelled on -- fit against whichever series is primary, since gamma
+    # should describe the quantity actually on the plot.
     growth_fits = {}
     if case.four_growth_rate:
         if true_times is None:
@@ -294,7 +321,7 @@ def _plot_four_modes(
                   "steps (run analyse --diag zerod)")
         else:
             growth_fits = growth_rate_series(
-                series, true_times, steps,
+                primary_series, true_times, steps,
                 step_range=tuple(case.four_growth_steps) if case.four_growth_steps else None,
             )
             if growth_fits:
@@ -308,11 +335,13 @@ def _plot_four_modes(
 
     kwargs = {} if dpi is None else {"dpi": dpi}
     for suffix, x, xlabel in variants:
-        for variable in sorted({var for var, _, _ in series}):
+        for variable in sorted({var for var, _, _ in primary_series}):
             out = paths.four_dir / f"{variable}_modes_{suffix}.png"
+            ylabel = f"|{variable}|{ylabel_suffix}" if ylabel_suffix else None
             plot_mode_amplitudes(
-                x, series, variable, out, rational_series=rational or None,
-                growth_fits=growth_fits or None, log=log, xlabel=xlabel, **kwargs,
+                x, primary_series, variable, out, rational_series=overlay_series or None,
+                growth_fits=growth_fits or None, log=log, xlabel=xlabel,
+                ylabel=ylabel, label_suffix=label_suffix, **kwargs,
             )
             print(f"  {out}")
 
@@ -394,21 +423,29 @@ def _run_case(
     if not run_dir.is_dir():
         raise FileNotFoundError(f"case {case.name!r}: no such folder {run_dir}")
     paths = RunPaths.detect(run_dir)
-    case_steps = steps or case.steps
 
+    # --step (CLI) outranks everything below it in the default -> case ->
+    # case+diag tree -- an explicit runtime request wins over any configured
+    # override. Absent that, each diag falls back to its own steps_for(diag)
+    # override (a [cases.NAME.<diag>] table) before the case's plain steps.
     if "poincare" in diags:
-        _plot_poincare(case, paths, case_steps, dpi=dpi, n_workers=n_workers)
+        _plot_poincare(
+            case, paths, steps or case.steps_for("poincare"), dpi=dpi, n_workers=n_workers
+        )
     if "connection_length" in diags:
         # --psi-range (if given) further bounds-filters whichever list is
         # already in effect (case.lc_psi_n_in, or case.psi_n_in if unset).
+        # connection_length's own steps only select which already-gathered
+        # poincare steps to plot (same "no interpolation" rule lc_psi_n_in
+        # already has) -- it never gathers new data on its own.
         _plot_connection_length(
-            case, paths, case_steps, log=log, smooth=smooth, dpi=dpi,
-            psi_range=psi_range,
+            case, paths, steps or case.steps_for("connection_length"),
+            log=log, smooth=smooth, dpi=dpi, psi_range=psi_range,
         )
     if "four" in diags:
-        _plot_four_modes(case, paths, case_steps, log=four_log, dpi=dpi)
+        _plot_four_modes(case, paths, steps or case.steps_for("four"), log=four_log, dpi=dpi)
     if "profiles" in diags:
-        _plot_profiles(case, paths, case_steps, dpi=dpi)
+        _plot_profiles(case, paths, steps or case.steps_for("profiles"), dpi=dpi)
 
 
 def main(argv: list[str] | None = None) -> int:

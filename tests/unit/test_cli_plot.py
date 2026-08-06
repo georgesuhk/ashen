@@ -434,6 +434,168 @@ def test_four_growth_steps_is_passed_through_as_step_range(campaign, monkeypatch
     assert captured["step_range"] == (100, 150)
 
 
+# --- four_quantities: max vs. rational-surface amplitude --------------------------
+
+
+def _spy_on_plot_mode_amplitudes(monkeypatch):
+    captured = []
+    original = plot_cli.plot_mode_amplitudes
+
+    def spy(*args, **kwargs):
+        captured.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_mode_amplitudes", spy)
+    return captured
+
+
+def test_four_quantities_defaults_to_max_only(campaign, monkeypatch):
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    for kwargs in captured:
+        assert kwargs.get("rational_series") is None
+        assert kwargs.get("ylabel") is None
+        assert kwargs.get("label_suffix") == ""
+
+
+def test_four_quantities_rational_surface_only_has_no_overlay_and_custom_ylabel(
+    campaign, monkeypatch
+):
+    _write_qprofile_cache(campaign, 100, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
+    _write_qprofile_cache(campaign, 200, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_quantities = ["rational_surface"]\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    for kwargs in captured:
+        assert kwargs.get("rational_series") is None
+        assert kwargs.get("ylabel") == "|Psi| @ rational surface"
+        assert kwargs.get("label_suffix") == " @ rational surface"
+    assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
+
+
+def test_four_quantities_both_reproduces_max_solid_and_rational_dashed(campaign, monkeypatch):
+    _write_qprofile_cache(campaign, 100, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
+    _write_qprofile_cache(campaign, 200, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_quantities = ["max", "rational_surface"]\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    for kwargs in captured:
+        assert kwargs.get("rational_series") is not None
+        assert kwargs.get("ylabel") is None
+        assert kwargs.get("label_suffix") == ""
+
+
+def test_four_quantities_rational_surface_only_with_no_resonant_modes_reports_and_skips(
+    campaign, capsys
+):
+    # n=0: q=m/n is undefined, so there is no rational surface at all.
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_quantities = ["rational_surface"]\n',
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert not (campaign / "four_dir" / "Psi_modes_step.png").exists()
+    assert "no rational-surface data to plot" in capsys.readouterr().out
+
+
+# --- per-diag steps override: default -> case -> case+diag tree -------------------
+
+
+def test_per_diag_steps_override_restricts_poincare_only(campaign):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE".poincare]\n'
+        'steps = [100]\n',
+        encoding="utf-8",
+    )
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
+    assert (campaign / "poinc_dir" / "100_poincare.png").is_file()
+    assert not (campaign / "poinc_dir" / "200_poincare.png").exists()
+
+
+def test_cli_step_flag_overrides_per_diag_steps_override(campaign):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE".poincare]\n'
+        'steps = [100]\n',
+        encoding="utf-8",
+    )
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare", "--step", "200"]
+    ) == 0
+    assert (campaign / "poinc_dir" / "200_poincare.png").is_file()
+    assert not (campaign / "poinc_dir" / "100_poincare.png").exists()
+
+
+def test_per_diag_steps_override_for_four_only_affects_four(campaign, monkeypatch):
+    """A [cases.X.four] override must not change what a different diag
+    (poincare) plots in the same invocation."""
+    captured = {}
+    original = plot_cli.max_amplitude_series
+
+    def spy(paths, steps, **kwargs):
+        captured["steps"] = steps
+        return original(paths, steps, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "max_amplitude_series", spy)
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE".four]\n'
+        'steps = [100]\n',
+        encoding="utf-8",
+    )
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare", "--diag", "four"]
+    ) == 0
+    assert captured["steps"] == [100]
+    # poincare still used the case's own (unoverridden) steps.
+    assert (campaign / "poinc_dir" / "100_poincare.png").is_file()
+    assert (campaign / "poinc_dir" / "200_poincare.png").is_file()
+
+
 # --- radial profiles: current density (or anything else) vs psi_n -----------------
 
 

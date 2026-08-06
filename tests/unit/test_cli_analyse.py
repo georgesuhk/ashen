@@ -197,6 +197,84 @@ def test_poincare_without_highlight_does_not_gather_qprofile(
     assert calls == []
 
 
+# --- steps_for: default -> case -> case+diag override tree -----------------------
+
+
+def test_poincare_uses_its_own_steps_for_override(poincare_case_and_run_dir, monkeypatch):
+    case = Case(
+        name="myrun", steps=[100, 200], psi_n_in=[0.5],
+        diag_steps={"poincare": [100]},
+    )
+
+    captured = {}
+    monkeypatch.setattr(analyse_cli, "run_zero_d", lambda *a, **k: None)
+    monkeypatch.setattr(
+        analyse_cli.poincare_diag, "run_poincare_scan",
+        lambda jrun, paths, steps, psi_n_list, **k: captured.setdefault("steps", steps) or [],
+    )
+
+    analyse_cli._run_case(case, diags=["poincare"], force=False, n_workers=1, omp_threads=1)
+
+    assert captured["steps"] == [100]
+
+
+def test_four_uses_its_own_steps_for_override(poincare_case_and_run_dir, monkeypatch):
+    case = Case(name="myrun", steps=[100, 200], diag_steps={"four": [300]})
+
+    captured = {}
+    monkeypatch.setattr(
+        analyse_cli, "_gather_qprofile",
+        lambda jrun, paths, steps, **k: captured.setdefault("qprofile_steps", steps),
+    )
+    monkeypatch.setattr(
+        analyse_cli.four_diag, "run_four_scan",
+        lambda jrun, paths, steps, **k: captured.setdefault("four_steps", steps) or [],
+    )
+
+    analyse_cli._run_case(case, diags=["four"], force=False, n_workers=1, omp_threads=1)
+
+    assert captured["qprofile_steps"] == [300]
+    assert captured["four_steps"] == [300]
+
+
+def test_profiles_uses_its_own_steps_for_override(poincare_case_and_run_dir, monkeypatch):
+    case = Case(name="myrun", steps=[100, 200], vars=["currdens"], diag_steps={"profiles": [400]})
+
+    captured = {}
+
+    def fake_gather(jrun, paths, steps, variables, **k):
+        captured["steps"] = steps
+        return {}
+
+    monkeypatch.setattr(analyse_cli.profiles_diag, "gather_profiles", fake_gather)
+
+    analyse_cli._run_case(case, diags=["profiles"], force=False, n_workers=1, omp_threads=1)
+
+    assert captured["steps"] == [400]
+
+
+def test_zerod_gathers_the_union_of_zerod_and_poincare_step_overrides(
+    poincare_case_and_run_dir, monkeypatch
+):
+    case = Case(
+        name="myrun", steps=[100, 200], psi_n_in=[0.5],
+        diag_steps={"zerod": [100], "poincare": [200]},
+    )
+
+    zerod_calls = []
+    monkeypatch.setattr(
+        analyse_cli, "run_zero_d",
+        lambda jrun, step, paths: zerod_calls.append(step),
+    )
+    monkeypatch.setattr(analyse_cli.poincare_diag, "run_poincare_scan", lambda *a, **k: [])
+
+    analyse_cli._run_case(
+        case, diags=["zerod", "poincare"], force=False, n_workers=1, omp_threads=1
+    )
+
+    assert sorted(zerod_calls) == [100, 200]
+
+
 # --- profiles: _run_case's per-mode never-succeeded warning ----------------------
 
 
