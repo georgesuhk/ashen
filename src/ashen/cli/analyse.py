@@ -29,6 +29,7 @@ from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics import four as four_diag
 from ashen.diagnostics import poincare as poincare_diag
 from ashen.diagnostics import profiles as profiles_diag
+from ashen.diagnostics import qprofile as qprofile_diag
 from ashen.jorek2 import Jorek2Run, MissingRestartError, run_zero_d
 from ashen.paths import RunPaths, read_float
 
@@ -119,6 +120,47 @@ def _gather_zero_d(
             print(f"  zerod {i}/{total}: step {step}")
 
 
+def _gather_qprofile(
+    jrun: Jorek2Run, paths: RunPaths, steps: list[int], *, force: bool, n_workers: int
+) -> None:
+    """q-profile for every step, cache-gated and fanned out across processes
+    -- same shape as :func:`_gather_zero_d`, since
+    :func:`ashen.diagnostics.qprofile.run_qprofile_step` runs
+    ``jorek2_postproc`` in place exactly like :func:`ashen.jorek2.run_zero_d`.
+    """
+    total = len(steps)
+    tasks: list[tuple[int, int]] = []
+    for i, step in enumerate(steps, start=1):
+        if force or not paths.qprofile(step).is_file():
+            tasks.append((i, step))
+        else:
+            print(f"  qprofile {i}/{total}: step {step} [cached]")
+
+    if not tasks:
+        return
+
+    if n_workers <= 1 or len(tasks) <= 1:
+        for i, step in tasks:
+            print(f"  qprofile {i}/{total}: step {step}")
+            try:
+                qprofile_diag.run_qprofile_step(jrun, step, paths)
+            except MissingRestartError as exc:
+                warnings.warn(f"skipping qprofile step {step}: {exc}", stacklevel=2)
+        return
+
+    one = partial(qprofile_diag.run_qprofile_step, jrun, paths=paths)
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(one, step): (i, step) for i, step in tasks}
+        for future in as_completed(futures):
+            i, step = futures[future]
+            try:
+                future.result()
+            except MissingRestartError as exc:
+                warnings.warn(f"skipping qprofile step {step}: {exc}", stacklevel=2)
+                continue
+            print(f"  qprofile {i}/{total}: step {step}")
+
+
 def _run_case(
     case: Case,
     *,
@@ -181,6 +223,11 @@ def _run_case(
         )
 
     if "four" in diags:
+        # The q-profile locates each mode's q=m/n rational surface for
+        # plot's rational_surface_series (ashen.diagnostics.four_modes) --
+        # gathered alongside four so a plot-only run never needs a second
+        # `analyse` pass just to add it.
+        _gather_qprofile(jrun, paths, case.steps, force=force, n_workers=n_workers)
 
         def _four_progress(done: int, total: int, report) -> None:
             print(f"  four {done}/{total}: {report}")

@@ -136,6 +136,11 @@ from the case's `[defaults]`/`[cases.*]` entries instead -- `analyse` generates
 that file itself per step. An unconfigured case reproduces `jorek2_four`'s own
 built-in defaults exactly.
 
+`--diag four` also gathers each step's q-profile via `jorek2_postproc`'s
+`qprofile` command (cached to `postproc/qprofile_s<step>.dat`, same
+cache-gating/`--force` rules as above) -- `plot --diag four`'s rational-surface
+overlay needs it; see below.
+
 ### Cores
 
 One `jorek2_poincare` or `jorek2_four` process per restart step, each
@@ -226,6 +231,25 @@ four_modes = [[0, 1], [1, 1], [2, 1]]   # [n, m] pairs
 A step or `(variable, n, m)` combination missing from the cache shows as a
 gap (`nan`) in that line rather than an error. `--four-linear` switches the
 default log amplitude scale to linear.
+
+**Rational-surface overlay.** `analyse --diag four` also gathers each step's
+q-profile (`jorek2_postproc`'s `qprofile` command, cached to
+`postproc/qprofile_s<step>.dat`) alongside the Fourier decomposition -- no
+separate `--diag` needed. For every `(n, m)` mode with `n != 0`, `plot --diag
+four` uses that cache to locate the mode's resonant surface (`q = m/n`,
+solved by linearly interpolating the q-profile's crossings, same as JOREK's
+own `find_q_surface` postproc command) and overlays a dashed line pinning the
+mode's `|amplitude|` to that surface, in the same colour as its solid
+whole-domain-max line. This is the useful comparison: whether a mode's
+growth is actually concentrated at the radius it resonates on, or the
+domain-max is being driven by something else (numerical noise near the axis,
+a different structure entirely).
+
+A reversed-shear q-profile can cross a given `q` more than once; the
+strongest of the crossings is kept. `n = 0` modes have no rational surface
+(`m/0`) and are drawn without an overlay. Cases gathered before this feature
+existed (no `qprofile_s*.dat` cache) simply draw without the overlay -- no
+error, no re-gather required for the base plot.
 
 Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see

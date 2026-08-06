@@ -29,6 +29,7 @@ def draw_mode_amplitudes(
     series: Mapping[ModeKey, "object"],
     *,
     variable: str,
+    rational_series: Mapping[ModeKey, "object"] | None = None,
     log: bool = True,
     xlabel: str = "",
 ) -> None:
@@ -38,6 +39,13 @@ def draw_mode_amplitudes(
     Modes are sorted by ``(n, m)`` before colour assignment, so the same mode
     gets the same colour and legend position across figures/re-runs rather
     than depending on dict iteration order.
+
+    ``rational_series``, if given (see :func:`ashen.diagnostics.four_modes.
+    rational_surface_series`), overlays each mode's amplitude pinned to its
+    ``q = m/n`` resonant surface as a dashed line in the same colour --
+    directly comparable to the solid whole-domain-max line for the same
+    mode, so a reader can see whether the mode's growth is actually
+    localised at the surface it resonates on.
     """
     modes = sorted((n, m) for (var, n, m) in series if var == variable)
 
@@ -45,6 +53,13 @@ def draw_mode_amplitudes(
         y = series[(variable, n, m)]
         color = DISCRETE_PALETTE[i % len(DISCRETE_PALETTE)]
         ax.plot(x, y, color=color, label=f"n={n}, m={m}")
+
+        key = (variable, n, m)
+        if rational_series is not None and key in rational_series and n != 0:
+            ax.plot(
+                x, rational_series[key], color=color, linestyle="--", alpha=0.6,
+                label=f"n={n}, m={m} @ q={m / n:g} surface",
+            )
 
     if log:
         ax.set_yscale("log")
@@ -62,6 +77,7 @@ def plot_mode_amplitudes(
     variable: str,
     out_path: Path | str,
     *,
+    rational_series: Mapping[ModeKey, "object"] | None = None,
     log: bool = True,
     xlabel: str = "",
     figsize: tuple[float, float] = (7, 5),
@@ -75,7 +91,10 @@ def plot_mode_amplitudes(
 
     with style():
         fig, ax = plt.subplots(figsize=figsize)
-        draw_mode_amplitudes(ax, x, series, variable=variable, log=log, xlabel=xlabel)
+        draw_mode_amplitudes(
+            ax, x, series, variable=variable, rational_series=rational_series,
+            log=log, xlabel=xlabel,
+        )
         fig.tight_layout()
         fig.savefig(out_path, dpi=dpi)
     plt.close(fig)

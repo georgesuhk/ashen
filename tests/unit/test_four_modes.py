@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from ashen.diagnostics import four_cache as fc
-from ashen.diagnostics.four_modes import max_amplitude_series
+from ashen.diagnostics.four_modes import max_amplitude_series, rational_surface_series
 from ashen.paths import RunPaths
 
 pytest.importorskip("h5py")
@@ -90,3 +90,99 @@ def test_modes_filter(paths):
 
 def test_no_caches_returns_empty(paths):
     assert max_amplitude_series(paths, [100, 200]) == {}
+
+
+# --- rational_surface_series ---------------------------------------------------
+
+
+def _write_qprofile(paths, step, psi_n, q):
+    text = ["# Psi_n q", f"# time step #{step:06d}"]
+    text += [f"{p} {v}" for p, v in zip(psi_n, q)]
+    text.append("")
+    paths.qprofile(step).parent.mkdir(parents=True, exist_ok=True)
+    paths.qprofile(step).write_text("\n".join(text), encoding="utf-8")
+
+
+def test_rational_surface_pins_amplitude_to_the_q_crossing(paths):
+    # n=1, m=2 -> resonant at q=2.0, which this profile crosses exactly at
+    # psi_n=0.5.
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=1.0)],
+    )
+    _write_qprofile(paths, 100, [0.0, 0.5, 1.0], [1.0, 2.0, 3.0])
+
+    series = rational_surface_series(paths, [100], [(1, 2)])
+    record = fc.read_cache(paths.four_cache(100))[("Psi", 1, 2)]
+    expected = float(np.interp(0.5, record.psi_n, record.abs))
+
+    assert series[("Psi", 1, 2)] == pytest.approx([expected])
+
+
+def test_n_zero_modes_are_skipped(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 0, 1, real_peak=1.0)],
+    )
+    _write_qprofile(paths, 100, [0.0, 0.5, 1.0], [1.0, 2.0, 3.0])
+
+    series = rational_surface_series(paths, [100], [(0, 1)])
+    assert series == {}
+
+
+def test_missing_qprofile_cache_is_nan(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=1.0)],
+    )
+    # No qprofile written for step 100.
+    series = rational_surface_series(paths, [100], [(1, 2)])
+    assert np.isnan(series[("Psi", 1, 2)][0])
+
+
+def test_no_crossing_is_nan(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=1.0)],
+    )
+    # q never reaches 2.0 in this profile.
+    _write_qprofile(paths, 100, [0.0, 0.5, 1.0], [1.0, 1.2, 1.4])
+
+    series = rational_surface_series(paths, [100], [(1, 2)])
+    assert np.isnan(series[("Psi", 1, 2)][0])
+
+
+def test_variables_filter_applies(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[
+            _record("Psi", 1, 2, real_peak=1.0),
+            _record("u", 1, 2, real_peak=2.0),
+        ],
+    )
+    _write_qprofile(paths, 100, [0.0, 0.5, 1.0], [1.0, 2.0, 3.0])
+
+    series = rational_surface_series(paths, [100], [(1, 2)], variables=["u"])
+    assert set(series) == {("u", 1, 2)}
+
+
+def test_reversed_shear_takes_the_strongest_crossing(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=5.0)],
+    )
+    # q=2.0 crossed twice: once near psi_n=0.5 (near the real_peak=5.0
+    # sample) and once near psi_n=0.9 (near a small-amplitude sample).
+    _write_qprofile(paths, 100, [0.0, 0.5, 0.8, 1.0], [1.0, 2.0, 1.8, 2.2])
+
+    series = rational_surface_series(paths, [100], [(1, 2)])
+    record = fc.read_cache(paths.four_cache(100))[("Psi", 1, 2)]
+    # Second crossing lies between psi_n=0.8 (q=1.8) and 1.0 (q=2.2).
+    from ashen.diagnostics.qprofile import find_rational_surfaces
+
+    crossings = find_rational_surfaces(
+        np.array([0.0, 0.5, 0.8, 1.0]), np.array([1.0, 2.0, 1.8, 2.2]), 2.0
+    )
+    expected = float(np.max(np.interp(crossings, record.psi_n, record.abs)))
+
+    assert series[("Psi", 1, 2)] == pytest.approx([expected])

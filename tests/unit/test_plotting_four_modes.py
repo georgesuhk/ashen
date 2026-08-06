@@ -93,3 +93,54 @@ def test_output_directory_is_created(series, tmp_path):
     out = plot_mode_amplitudes([100, 200, 300], series, "Psi", out_dir / "Psi_modes.png")
     assert out.parent == out_dir
     assert out.is_file()
+
+
+# --- rational_series overlay -----------------------------------------------------
+
+
+def test_rational_series_adds_a_dashed_line_per_mode(series):
+    rational = {
+        # n=0,m=1 has no rational surface (m/0) and must be skipped even
+        # though an entry is present; only n=1,m=0 gets an overlay.
+        ("Psi", 0, 1): np.array([1.5, 2.5, 3.5]),
+        ("Psi", 1, 0): np.array([0.6, 0.5, 0.4]),
+    }
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", rational_series=rational)
+    # 2 solid domain-max lines + 1 dashed rational-surface line (n=1,m=0 only).
+    assert len(ax.lines) == 3
+    plt.close(fig)
+
+
+def test_n_zero_mode_has_no_rational_overlay(series):
+    """n=0,m=1 has no q=m/n rational surface (m/0), so even if a caller
+    somehow provides a value keyed on it, it must not get a dashed line."""
+    rational = {("Psi", 0, 1): np.array([0.6, 0.5, 0.4])}
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", rational_series=rational)
+    assert len(ax.lines) == 2  # 2 solid lines, no dashed overlay
+    plt.close(fig)
+
+
+def test_missing_rational_entry_draws_no_extra_line(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", rational_series={})
+    assert len(ax.lines) == 2
+    plt.close(fig)
+
+
+def test_rational_overlay_uses_dashed_linestyle(series):
+    rational = {("Psi", 1, 0): np.array([0.6, 0.5, 0.4])}
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", rational_series=rational)
+    dashed = [line for line in ax.lines if line.get_linestyle() == "--"]
+    assert len(dashed) == 1
+    plt.close(fig)
+
+
+def test_plot_mode_amplitudes_accepts_rational_series(series, tmp_path):
+    rational = {("Psi", 0, 1): np.array([1.5, 2.5, 3.5])}
+    out = plot_mode_amplitudes(
+        [100, 200, 300], series, "Psi", tmp_path / "Psi_modes.png", rational_series=rational,
+    )
+    assert out.is_file()

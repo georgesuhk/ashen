@@ -74,3 +74,61 @@ def test_force_recomputes_cached_steps(jrun_and_paths, monkeypatch):
     analyse_cli._gather_zero_d(run, paths, [100], force=True, n_workers=1)
 
     assert calls == [100]
+
+
+# --- _gather_qprofile: same cache-gating/fan-out shape, mirrored onto the
+# q-profile gather that rides along with `--diag four`. ------------------
+
+
+def test_qprofile_missing_restart_is_warned_and_skipped(jrun_and_paths, monkeypatch):
+    run, paths = jrun_and_paths
+
+    def fake_run_qprofile_step(jrun, step, paths):
+        if step == 200:
+            raise MissingRestartError(f"restart file not found: step {step}")
+        paths.qprofile(step).parent.mkdir(parents=True, exist_ok=True)
+        paths.qprofile(step).write_text("# Psi_n q\n# time step #000100\n0.5 1.0\n\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        analyse_cli.qprofile_diag, "run_qprofile_step", fake_run_qprofile_step
+    )
+
+    with pytest.warns(UserWarning, match="skipping qprofile step 200"):
+        analyse_cli._gather_qprofile(run, paths, [100, 200, 300], force=False, n_workers=1)
+
+    assert paths.qprofile(100).is_file()
+    assert not paths.qprofile(200).is_file()
+    assert paths.qprofile(300).is_file()
+
+
+def test_qprofile_cached_steps_are_not_recomputed(jrun_and_paths, monkeypatch, capsys):
+    run, paths = jrun_and_paths
+    paths.qprofile(100).parent.mkdir(parents=True, exist_ok=True)
+    paths.qprofile(100).write_text("# Psi_n q\n# time step #000100\n0.5 1.0\n\n", encoding="utf-8")
+
+    calls = []
+    monkeypatch.setattr(
+        analyse_cli.qprofile_diag, "run_qprofile_step",
+        lambda jrun, step, paths: calls.append(step),
+    )
+
+    analyse_cli._gather_qprofile(run, paths, [100, 200], force=False, n_workers=1)
+
+    assert calls == [200]
+    assert "[cached]" in capsys.readouterr().out
+
+
+def test_qprofile_force_recomputes_cached_steps(jrun_and_paths, monkeypatch):
+    run, paths = jrun_and_paths
+    paths.qprofile(100).parent.mkdir(parents=True, exist_ok=True)
+    paths.qprofile(100).write_text("# Psi_n q\n# time step #000100\n0.5 1.0\n\n", encoding="utf-8")
+
+    calls = []
+    monkeypatch.setattr(
+        analyse_cli.qprofile_diag, "run_qprofile_step",
+        lambda jrun, step, paths: calls.append(step),
+    )
+
+    analyse_cli._gather_qprofile(run, paths, [100], force=True, n_workers=1)
+
+    assert calls == [100]

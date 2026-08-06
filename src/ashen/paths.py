@@ -123,6 +123,12 @@ class RunPaths:
             / f"fluxsurface_at_psi_{psi_n:.3f}_s{self.step_str(step)}.dat"
         )
 
+    def qprofile(self, step: int | float) -> Path:
+        """One step's ``Psi_n``/``q`` table -- ``exec_commands.f90::qprofile``'s
+        own naming for a single-step ``for step`` loop (``loop_min_step ==
+        loop_max_step``): ``qprofile_s<step>.dat``, no range suffix."""
+        return self.postproc_dir / f"qprofile_s{self.step_str(step)}.dat"
+
     # --- Poincare artefacts ---
 
     @property

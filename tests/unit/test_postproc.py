@@ -6,6 +6,7 @@ from ashen.postproc import (
     flux_surface_script,
     parse_macroscopic_vars,
     profile_script,
+    qprofile_script,
     read_postproc_profile,
     read_zeroD,
     zero_d_script,
@@ -34,6 +35,17 @@ def test_flux_surface_script():
         "set units 1",
         "for step 200 do",
         "  fluxsurface 0.5",
+        "done",
+    ]
+
+
+def test_qprofile_script():
+    text = qprofile_script("in_main", 200)
+    assert text.splitlines() == [
+        "namelist in_main",
+        "set units 1",
+        "for step 200 do",
+        "  qprofile",
         "done",
     ]
 

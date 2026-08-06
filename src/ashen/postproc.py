@@ -20,6 +20,7 @@ import numpy as np
 __all__ = [
     "profile_script",
     "flux_surface_script",
+    "qprofile_script",
     "zero_d_script",
     "read_zeroD",
     "read_postproc_profile",
@@ -63,6 +64,25 @@ def flux_surface_script(namelist: str, step: int, psi_n: float, *, units: int = 
         f"set units {units}",
         f"for step {step} do",
         f"  fluxsurface {psi_n}",
+        "done",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def qprofile_script(namelist: str, step: int | str, *, units: int = 1) -> str:
+    """The ``jorek2_postproc`` ``qprofile`` command, one step at a time.
+
+    Same shape as :func:`flux_surface_script` -- ``qprofile`` writes
+    ``Psi_n``/``q`` pairs to ``postproc/qprofile_s<step>.dat``
+    (``exec_commands.f90::qprofile``), single-step naming matching
+    :meth:`ashen.paths.RunPaths.qprofile`.
+    """
+    lines = [
+        f"namelist {namelist}",
+        f"set units {units}",
+        f"for step {step} do",
+        "  qprofile",
         "done",
         "",
     ]

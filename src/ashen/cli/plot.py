@@ -29,7 +29,7 @@ from pathlib import Path
 from ashen.cases import Case, CasesError, load_cases
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
-from ashen.diagnostics.four_modes import max_amplitude_series
+from ashen.diagnostics.four_modes import max_amplitude_series, rational_surface_series
 from ashen.diagnostics.poincare_cache import read_step
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
@@ -219,11 +219,26 @@ def _plot_four_modes(
               "(run analyse --diag four)")
         return
 
+    # Pin each n!=0 mode's amplitude to its q=m/n rational surface, using
+    # whatever q-profile cache `analyse --diag four` already gathered
+    # alongside it. Silently empty (not an error) if that cache is missing --
+    # e.g. plotting a case gathered before this feature existed -- so the
+    # plot still draws the plain domain-max series.
+    rational_modes = {(n, m) for _, n, m in series if n != 0}
+    rational = (
+        rational_surface_series(paths, steps, sorted(rational_modes), variables=case.four_vars or None)
+        if rational_modes
+        else {}
+    )
+
     x, xlabel = _time_axis(paths, steps)
     kwargs = {} if dpi is None else {"dpi": dpi}
     for variable in sorted({var for var, _, _ in series}):
         out = paths.four_dir / f"{variable}_modes.png"
-        plot_mode_amplitudes(x, series, variable, out, log=log, xlabel=xlabel, **kwargs)
+        plot_mode_amplitudes(
+            x, series, variable, out, rational_series=rational or None,
+            log=log, xlabel=xlabel, **kwargs,
+        )
         print(f"  {out}")
 
 
