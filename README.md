@@ -212,12 +212,15 @@ default (`ashen.plotting.colors`); a discrete palette is also available.
 `--diag four` draws one figure per variable, one coloured line per `(n, m)`
 mode -- the peak `|amplitude|` over the radial (psi_n) grid at each restart
 step, from the caches `analyse --diag four` already wrote
-(`four_dir/four_s<step>.h5`). Saved to `four_dir/<variable>_modes.png`.
+(`four_dir/four_s<step>.h5`). Each restart step is drawn as a marker, joined
+by a line, so a sparse or irregular step selection stays legible rather than
+implying data between steps that weren't actually gathered.
 
-X-axis is true time in microseconds if the zeroD cache covers every requested
-step, else raw step index (with a printed note) -- unlike connection_length's
-LC/LCTT split, this is always a single figure per variable, so it falls back
-rather than skipping.
+Two x-axis variants are always written, mirroring connection_length's
+LC/LCTT split: `four_dir/<variable>_modes_step.png` (raw step index) and
+`four_dir/<variable>_modes_time.png` (true time in microseconds, from the
+zeroD cache). The time variant is skipped -- with a printed note, not an
+error -- if the zeroD cache doesn't cover every requested step.
 
 `four_vars` and `four_modes` (case fields, plot-time only) restrict which
 variables/`(n, m)` pairs get drawn; empty (default) draws everything found in

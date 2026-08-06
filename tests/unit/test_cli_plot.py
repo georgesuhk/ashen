@@ -216,13 +216,32 @@ def test_four_diag_writes_one_file_per_variable(campaign):
         _four_record("u", 0, 0, real_peak=2.5),
     ])
     assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
-    assert (campaign / "four_dir" / "Psi_modes.png").is_file()
-    assert (campaign / "four_dir" / "u_modes.png").is_file()
+    # The campaign fixture writes a zeroD cache for every step, so both the
+    # step-indexed and true-time variants are written.
+    assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
+    assert (campaign / "four_dir" / "u_modes_step.png").is_file()
+    assert (campaign / "four_dir" / "Psi_modes_time.png").is_file()
+    assert (campaign / "four_dir" / "u_modes_time.png").is_file()
 
 
 def test_four_diag_with_no_cache_reports_and_does_not_crash(campaign, capsys):
     assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
     assert "no jorek2_four cache found" in capsys.readouterr().out
+
+
+def test_four_diag_skips_time_variant_without_zerod_cache(campaign, capsys):
+    """A step missing from the zeroD cache must not produce a partial/wrong
+    time axis -- the time variant is skipped outright, with the step variant
+    still written."""
+    (campaign / "postproc" / "zeroD_quantities_s000200.dat").unlink()
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])
+
+    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+
+    assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
+    assert not (campaign / "four_dir" / "Psi_modes_time.png").exists()
+    assert "skipping time-axis four-mode plots" in capsys.readouterr().out
 
 
 def test_four_vars_filters_which_files_are_written(campaign):
@@ -239,5 +258,7 @@ def test_four_vars_filters_which_files_are_written(campaign):
         _four_record("u", 0, 0, real_peak=2.0),
     ])
     assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
-    assert (campaign / "four_dir" / "Psi_modes.png").is_file()
-    assert not (campaign / "four_dir" / "u_modes.png").exists()
+    assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
+    assert not (campaign / "four_dir" / "u_modes_step.png").exists()
+    assert (campaign / "four_dir" / "Psi_modes_time.png").is_file()
+    assert not (campaign / "four_dir" / "u_modes_time.png").exists()

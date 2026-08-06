@@ -52,13 +52,13 @@ def draw_mode_amplitudes(
     for i, (n, m) in enumerate(modes):
         y = series[(variable, n, m)]
         color = DISCRETE_PALETTE[i % len(DISCRETE_PALETTE)]
-        ax.plot(x, y, color=color, label=f"n={n}, m={m}")
+        ax.plot(x, y, color=color, marker="o", markersize=4, label=f"n={n}, m={m}")
 
         key = (variable, n, m)
         if rational_series is not None and key in rational_series and n != 0:
             ax.plot(
-                x, rational_series[key], color=color, linestyle="--", alpha=0.6,
-                label=f"n={n}, m={m} @ q={m / n:g} surface",
+                x, rational_series[key], color=color, linestyle="--", marker="o",
+                markersize=4, alpha=0.6, label=f"n={n}, m={m} @ q={m / n:g} surface",
             )
 
     if log:

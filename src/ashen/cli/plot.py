@@ -164,13 +164,7 @@ def _plot_connection_length(
         records_by_step, steps, psi_n_targets, real_psi_edge=real_psi_edge, R0=R0
     )
 
-    true_times = []
-    for step in steps:
-        try:
-            true_times.append(read_zeroD(paths.zero_d(step))["Time"])
-        except (FileNotFoundError, KeyError):
-            true_times = None
-            break
+    true_times = _read_true_times(paths, steps)
 
     kwargs = {} if dpi is None else {"dpi": dpi}
     for plot_true_times in (True, False):
@@ -185,25 +179,17 @@ def _plot_connection_length(
         print(f"  {out}")
 
 
-def _time_axis(paths: RunPaths, steps: list[int]) -> tuple[list[float], str]:
-    """True time in microseconds if the zeroD cache covers every step, else
-    raw step indices -- unlike connection_length's LC/LCTT split (which draws
-    both variants and skips LCTT if true time is unavailable), four-mode
-    plots are single figures, so this always produces *something* to plot
-    against rather than skipping.
-    """
+def _read_true_times(paths: RunPaths, steps: list[int]) -> list[float] | None:
+    """Each step's true time (seconds) from the zeroD cache, or ``None`` if
+    any requested step's cache is missing -- a partial time axis is worse
+    than none, so this is all-or-nothing rather than dropping steps."""
     true_times = []
     for step in steps:
         try:
             true_times.append(read_zeroD(paths.zero_d(step))["Time"])
         except (FileNotFoundError, KeyError):
-            true_times = None
-            break
-    if true_times is not None:
-        return [t * 1e6 for t in true_times], r"t [$\mu s$]"
-    print("  no zeroD cache for one or more steps (run analyse --diag zerod); "
-          "using step index for the time axis")
-    return list(steps), "Time step"
+            return None
+    return true_times
 
 
 def _plot_four_modes(
@@ -231,15 +217,27 @@ def _plot_four_modes(
         else {}
     )
 
-    x, xlabel = _time_axis(paths, steps)
+    # Both x-axis variants are always written (unlike connection_length's
+    # LC/LCTT, which are separate figures too, but this mirrors that split
+    # rather than picking one): "step" always works, "time" only if the
+    # zeroD cache covers every requested step.
+    variants = [("step", list(steps), "Time step")]
+    true_times = _read_true_times(paths, steps)
+    if true_times is not None:
+        variants.append(("time", [t * 1e6 for t in true_times], r"t [$\mu s$]"))
+    else:
+        print("  skipping time-axis four-mode plots: no zeroD cache for one or "
+              "more steps (run analyse --diag zerod)")
+
     kwargs = {} if dpi is None else {"dpi": dpi}
-    for variable in sorted({var for var, _, _ in series}):
-        out = paths.four_dir / f"{variable}_modes.png"
-        plot_mode_amplitudes(
-            x, series, variable, out, rational_series=rational or None,
-            log=log, xlabel=xlabel, **kwargs,
-        )
-        print(f"  {out}")
+    for suffix, x, xlabel in variants:
+        for variable in sorted({var for var, _, _ in series}):
+            out = paths.four_dir / f"{variable}_modes_{suffix}.png"
+            plot_mode_amplitudes(
+                x, series, variable, out, rational_series=rational or None,
+                log=log, xlabel=xlabel, **kwargs,
+            )
+            print(f"  {out}")
 
 
 def _resolve_n_workers(args) -> int:

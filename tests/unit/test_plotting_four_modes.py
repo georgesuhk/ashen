@@ -52,6 +52,14 @@ def test_legend_labels_encode_n_and_m(series):
     plt.close(fig)
 
 
+def test_lines_carry_markers_for_each_data_point(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi")
+    for line in ax.lines:
+        assert line.get_marker() != "None"
+    plt.close(fig)
+
+
 def test_log_scale_is_the_default(series):
     fig, ax = plt.subplots()
     draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi")
