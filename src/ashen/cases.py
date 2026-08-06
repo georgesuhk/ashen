@@ -143,8 +143,8 @@ class Case:
     #: weights sum to 1). None (default) falls back to 1/theta_bins at plot
     #: time -- the value a perfectly uniform distribution would put in every
     #: bin, so "wetted" means "above what uniform spreading would give".
-    #: `--wetted-threshold` on the plot command line outranks this the same
-    #: way `--theta-target-psi` outranks theta_target_psi.
+    #: `--theta_wetted_threshold` on the plot command line outranks this the
+    #: same way `--theta_target_psi` outranks theta_target_psi.
     theta_wetted_threshold: float | None = None
 
     def steps_for(self, diag: str) -> list[int]:

@@ -1144,7 +1144,7 @@ def test_theta_hist_cli_overrides_take_precedence_over_case_config(theta_campaig
 
     assert plot_cli.main([
         "--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "theta_hist",
-        "--theta-target-psi", "1.2", "--theta-psi-range", "0.1", "0.4",
+        "--theta_target_psi", "1.2", "--theta_psi_n_range", "0.1", "0.4",
     ]) == 0
     assert captured["target_psi"] == pytest.approx(1.2)
     assert captured["psi_n_range"] == (0.1, 0.4)
@@ -1331,7 +1331,7 @@ def test_compare_wetted_fraction_threshold_override(comparison_campaign, monkeyp
     monkeypatch.setattr(plot_cli, "wetted_fraction", spy)
 
     assert plot_cli.main(
-        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--wetted-threshold", "0.02"]
+        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--theta_wetted_threshold", "0.02"]
     ) == 0
     assert captured == [0.02, 0.02]
 
@@ -1356,7 +1356,7 @@ def test_compare_wetted_fraction_default_threshold_is_one_over_bins(
 def test_compare_wetted_fraction_uses_case_theta_wetted_threshold(
     comparison_campaign, monkeypatch
 ):
-    """A case's own theta_wetted_threshold is used when --wetted-threshold
+    """A case's own theta_wetted_threshold is used when --theta_wetted_threshold
     is not given -- the config-in-cases.toml path being asked about."""
     _add_x_values_with_case_threshold(
         comparison_campaign, x_values=[1e-3, 1e-4], threshold=0.03,
@@ -1377,8 +1377,8 @@ def test_compare_wetted_fraction_uses_case_theta_wetted_threshold(
 def test_compare_wetted_fraction_cli_flag_overrides_case_config(
     comparison_campaign, monkeypatch
 ):
-    """--wetted-threshold on the command line outranks each case's own
-    theta_wetted_threshold, same precedence as --theta-target-psi."""
+    """--theta_wetted_threshold on the command line outranks each case's own
+    theta_wetted_threshold, same precedence as --theta_target_psi."""
     _add_x_values_with_case_threshold(
         comparison_campaign, x_values=[1e-3, 1e-4], threshold=0.03,
     )
@@ -1392,7 +1392,7 @@ def test_compare_wetted_fraction_cli_flag_overrides_case_config(
     monkeypatch.setattr(plot_cli, "wetted_fraction", spy)
 
     assert plot_cli.main(
-        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--wetted-threshold", "0.05"]
+        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--theta_wetted_threshold", "0.05"]
     ) == 0
     assert captured == [pytest.approx(0.05), pytest.approx(0.05)]
 
@@ -1459,7 +1459,7 @@ def test_compare_wetted_fraction_cli_flag_outranks_comparison_config(
     monkeypatch.setattr(plot_cli, "wetted_fraction", spy)
 
     assert plot_cli.main(
-        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--wetted-threshold", "0.09"]
+        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--theta_wetted_threshold", "0.09"]
     ) == 0
     assert captured == [pytest.approx(0.09), pytest.approx(0.09)]
 
@@ -1549,7 +1549,7 @@ def test_compare_wetted_fraction_no_warning_for_a_field_with_a_cli_flag(
     still warn -- the suppression is per field, not all-or-nothing."""
     _add_x_values_with_comparison_overrides(comparison_campaign, x_values=[1e-3, 1e-4])
     assert plot_cli.main(
-        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--wetted-threshold", "0.09"]
+        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--theta_wetted_threshold", "0.09"]
     ) == 0
     out = capsys.readouterr().out
     assert "theta_wetted_threshold" not in out
@@ -1562,7 +1562,7 @@ def test_compare_wetted_fraction_no_warning_when_every_field_has_a_cli_flag(
     _add_x_values_with_comparison_overrides(comparison_campaign, x_values=[1e-3, 1e-4])
     assert plot_cli.main([
         "--compare", "eta_scan", "--diag", "wetted_fraction",
-        "--theta-target-psi", "1.0", "--theta-bins", "20", "--wetted-threshold", "0.09",
+        "--theta_target_psi", "1.0", "--theta_bins", "20", "--theta_wetted_threshold", "0.09",
     ]) == 0
     out = capsys.readouterr().out
     assert "overriding this case's own" not in out

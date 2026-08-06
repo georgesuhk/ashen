@@ -136,8 +136,8 @@ n_points        = 100
 # Same scale as theta_hist's own output (a fraction-of-lines-per-bin, since
 # bin weights sum to 1) -- omit it to default to 1/theta_bins at plot time,
 # the value a perfectly uniform distribution would put in every bin.
-# `--wetted-threshold` on the plot command line overrides this per case, the
-# same way `--theta-target-psi` overrides theta_target_psi.
+# `--theta_wetted_threshold` on the plot command line overrides this per
+# case, the same way `--theta_target_psi` overrides theta_target_psi.
 # theta_wetted_threshold = 0.002
 
 # A case's name IS its run folder -- [cases."qa2.1_g2.3/eta1e-3_RE"] points at
@@ -213,7 +213,7 @@ note  = "internal kink investigation"
 # copy. A scan is only a fair comparison if every point used the same
 # target/bins/threshold, so this is the natural place for them to live, not
 # scattered across the member cases. Precedence, most specific wins: a CLI
-# flag (e.g. --theta-target-psi) > this comparison's own setting > the
+# flag (e.g. --theta_target_psi) > this comparison's own setting > the
 # member case's own setting > the diagnostic's built-in default.
 # theta_target_psi       = 1.05
 # theta_bins              = 500

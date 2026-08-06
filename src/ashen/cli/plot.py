@@ -132,16 +132,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="four: linear amplitude scale instead of the default log",
     )
     parser.add_argument(
-        "--theta-target-psi", type=float, default=None,
-        help="theta_hist: override case.theta_target_psi",
+        "--theta_target_psi", type=float, default=None,
+        help="theta_hist: override case/comparison theta_target_psi",
     )
     parser.add_argument(
-        "--theta-bins", type=int, default=None,
-        help="theta_hist: override case.theta_bins",
+        "--theta_bins", type=int, default=None,
+        help="theta_hist: override case/comparison theta_bins",
     )
     parser.add_argument(
-        "--theta-psi-range", type=float, nargs=2, metavar=("MIN", "MAX"), default=None,
-        help="theta_hist: override case.theta_psi_n_range",
+        "--theta_psi_n_range", type=float, nargs=2, metavar=("MIN", "MAX"), default=None,
+        help="theta_hist: override case/comparison theta_psi_n_range",
     )
     parser.add_argument(
         "--n-cols", type=int, default=None,
@@ -149,9 +149,9 @@ def build_parser() -> argparse.ArgumentParser:
         "the comparison's own n_cols for --compare)",
     )
     parser.add_argument(
-        "--wetted-threshold", type=float, default=None,
+        "--theta_wetted_threshold", type=float, default=None,
         help="wetted_fraction: bin-count threshold a theta_hist bin must "
-        "exceed to count as 'wetted', overriding every case's "
+        "exceed to count as 'wetted', overriding every case/comparison's "
         "theta_wetted_threshold (default per case: theta_wetted_threshold, "
         "or 1/theta_bins if that's unset -- the value a uniform distribution "
         "would put in every bin)",
@@ -982,7 +982,9 @@ def main(argv: list[str] | None = None) -> int:
     dpi = args.dpi
     theta_target_psi = args.theta_target_psi
     theta_bins = args.theta_bins
-    theta_psi_range = tuple(args.theta_psi_range) if args.theta_psi_range is not None else None
+    theta_psi_range = (
+        tuple(args.theta_psi_n_range) if args.theta_psi_n_range is not None else None
+    )
     n_cols = args.n_cols
 
     if args.comparisons:
@@ -991,7 +993,7 @@ def main(argv: list[str] | None = None) -> int:
             diags=diags, steps=args.steps, dpi=dpi,
             theta_target_psi=theta_target_psi, theta_bins=theta_bins,
             theta_psi_range=theta_psi_range, n_cols=n_cols,
-            wetted_threshold=args.wetted_threshold,
+            wetted_threshold=args.theta_wetted_threshold,
         )
 
     selected = args.selected or list(cases)

@@ -231,9 +231,9 @@ touching the gathering path.
   needed.
 - `--four-linear` draws four's mode amplitudes on a linear scale instead of
   the default log.
-- `--theta-target-psi`, `--theta-bins`, `--theta-psi-range MIN MAX` override
+- `--theta_target_psi`, `--theta_bins`, `--theta_psi_n_range MIN MAX` override
   `theta_hist`'s case config; `--n-cols` sets its grid width (see below).
-- `--wetted-threshold FLOAT` overrides `wetted_fraction`'s bin-count
+- `--theta_wetted_threshold FLOAT` overrides `wetted_fraction`'s bin-count
   threshold (comparison-only, see below).
 - `--compare NAME` (repeatable) draws a `[comparisons.*]` figure instead of
   per-case figures; `--list-comparisons` shows what's defined (see below).
@@ -342,7 +342,7 @@ theta_bins        = 1000
 theta_psi_n_range = [0.2, 0.9]   # optional: only count lines starting in this psi_n_in range
 ```
 
-`--theta-target-psi`, `--theta-bins`, `--theta-psi-range MIN MAX`, and
+`--theta_target_psi`, `--theta_bins`, `--theta_psi_n_range MIN MAX`, and
 `--n-cols` override the case config per invocation. `theta_psi_n_range`
 filters by each line's **starting** flux surface (its `psi_n_in`), unlike
 `lc_psi_n_in`'s bounds filter above which selects *which already-gathered
@@ -371,7 +371,7 @@ n_cols = 5
 
 ```bash
 python ~/ashen/bin/plot --list-comparisons
-python ~/ashen/bin/plot --compare eta_scan --diag theta_hist --theta-target-psi 1.05
+python ~/ashen/bin/plot --compare eta_scan --diag theta_hist --theta_target_psi 1.05
 ```
 
 Each member's own steps still supply that panel's pooled time window --
@@ -421,8 +421,8 @@ theta_wetted_threshold = 0.002
 python ~/ashen/bin/plot --compare eta_scan --diag wetted_fraction
 ```
 
-Precedence, most specific wins: a CLI flag (`--theta-target-psi`,
-`--theta-bins`, `--theta-psi-range`, `--wetted-threshold`) overrides this
+Precedence, most specific wins: a CLI flag (`--theta_target_psi`,
+`--theta_bins`, `--theta_psi_n_range`, `--theta_wetted_threshold`) overrides this
 comparison's own setting, which overrides the member case's own setting,
 which falls back to the diagnostic's built-in default. A member case can
 still set these individually for when it's plotted **outside** this
@@ -430,7 +430,7 @@ comparison (e.g. its own `theta_hist` figure via `--case`) -- the comparison
 tier only wins while `--compare eta_scan` is the one being drawn:
 
 ```bash
-python ~/ashen/bin/plot --compare eta_scan --diag wetted_fraction --wetted-threshold 0.01
+python ~/ashen/bin/plot --compare eta_scan --diag wetted_fraction --theta_wetted_threshold 0.01
 ```
 
 `theta_hist` under `--compare` respects the same comparison-level

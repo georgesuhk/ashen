@@ -25,7 +25,7 @@ member case needing its own matching copy (or all cases sharing one
 A scan is only an apples-to-apples comparison if every point was computed
 the same way, so these belong to the comparison, not scattered across its
 members. Precedence, most specific wins: CLI flag (e.g.
-``--theta-target-psi``) > this comparison's own setting > the member case's
+``--theta_target_psi``) > this comparison's own setting > the member case's
 own setting > the diagnostic's built-in default.
 """
 
