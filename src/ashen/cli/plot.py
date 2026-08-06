@@ -22,6 +22,7 @@ stochastic factor, the never-implemented ``max_fieldline_pos``) is not ported
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
@@ -625,6 +626,42 @@ def _resolve_theta_range(
     return tuple(chosen) if chosen is not None else None
 
 
+#: Each theta_* field's declared default, read off Case itself rather than
+#: hardcoded a second time here -- used only to detect "this case explicitly
+#: set a non-default value that a comparison override is about to shadow".
+_CASE_THETA_DEFAULTS = {
+    f.name: f.default
+    for f in dataclasses.fields(Case)
+    if f.name in (
+        "theta_target_psi", "theta_bins", "theta_psi_n_range", "theta_wetted_threshold",
+    )
+}
+
+
+def _warn_if_case_value_shadowed(
+    field_name: str, *, cli_value, comparison: Comparison, case: Case, case_name: str,
+) -> None:
+    """Warn when a case's own non-default setting for `field_name` is about
+    to be silently overridden by `comparison`'s setting for the same field.
+
+    Only fires when no CLI flag was given for this field: a CLI flag already
+    outranks both the comparison and the case, so it overriding either is
+    the documented, unsurprising behaviour -- nothing to warn about there.
+    """
+    if cli_value is not None:
+        return
+    comparison_value = getattr(comparison, field_name)
+    if comparison_value is None:
+        return
+    case_value = getattr(case, field_name)
+    if case_value == _CASE_THETA_DEFAULTS[field_name]:
+        return
+    print(
+        f"  {case_name}: comparison {comparison.name!r} sets {field_name}="
+        f"{comparison_value!r}, overriding this case's own {field_name}={case_value!r}"
+    )
+
+
 def _compare_theta_hist(
     comparison: Comparison,
     cases: dict[str, Case],
@@ -655,6 +692,14 @@ def _compare_theta_hist(
         paths = RunPaths.detect(run_dir)
         real_psi_edge = read_float(paths.real_psi_edge)
 
+        _warn_if_case_value_shadowed(
+            "theta_target_psi", cli_value=target_psi, comparison=comparison,
+            case=case, case_name=case_name,
+        )
+        _warn_if_case_value_shadowed(
+            "theta_psi_n_range", cli_value=psi_range, comparison=comparison,
+            case=case, case_name=case_name,
+        )
         target = _first_not_none(
             target_psi, comparison.theta_target_psi, case.theta_target_psi
         )
@@ -727,6 +772,22 @@ def _compare_wetted_fraction(
         paths = RunPaths.detect(run_dir)
         real_psi_edge = read_float(paths.real_psi_edge)
 
+        _warn_if_case_value_shadowed(
+            "theta_target_psi", cli_value=target_psi, comparison=comparison,
+            case=case, case_name=case_name,
+        )
+        _warn_if_case_value_shadowed(
+            "theta_bins", cli_value=bins, comparison=comparison,
+            case=case, case_name=case_name,
+        )
+        _warn_if_case_value_shadowed(
+            "theta_psi_n_range", cli_value=psi_range, comparison=comparison,
+            case=case, case_name=case_name,
+        )
+        _warn_if_case_value_shadowed(
+            "theta_wetted_threshold", cli_value=threshold, comparison=comparison,
+            case=case, case_name=case_name,
+        )
         target = _first_not_none(
             target_psi, comparison.theta_target_psi, case.theta_target_psi
         )

@@ -1482,6 +1482,92 @@ def test_compare_theta_hist_comparison_target_psi_overrides_case_target_psi(
     assert captured == [pytest.approx(1.0), pytest.approx(1.0)]
 
 
+# --- warning when a comparison override shadows a case's own explicit setting ----
+
+
+def test_compare_theta_hist_warns_when_comparison_shadows_case_target_psi(
+    comparison_campaign, capsys
+):
+    _add_x_values_with_comparison_overrides(comparison_campaign, x_values=[1e-3, 1e-4])
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "theta_hist"]) == 0
+    out = capsys.readouterr().out
+    assert (
+        "qa2.1_g2.3/eta1e-3_RE: comparison 'eta_scan' sets theta_target_psi=1.0, "
+        "overriding this case's own theta_target_psi=1.0" in out
+    )
+    assert (
+        "qa2.1_g2.3/eta1e-4_RE: comparison 'eta_scan' sets theta_target_psi=1.0, "
+        "overriding this case's own theta_target_psi=1.02" in out
+    )
+
+
+def test_compare_wetted_fraction_warns_for_every_shadowed_field(
+    comparison_campaign, capsys
+):
+    _add_x_values_with_comparison_overrides(comparison_campaign, x_values=[1e-3, 1e-4])
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    out = capsys.readouterr().out
+    assert "sets theta_target_psi=1.0, overriding this case's own theta_target_psi=1.02" in out
+    assert "sets theta_bins=20, overriding this case's own theta_bins=50" in out
+    assert (
+        "sets theta_wetted_threshold=0.04, overriding this case's own "
+        "theta_wetted_threshold=0.02" in out
+    )
+
+
+def test_compare_wetted_fraction_no_warning_when_case_uses_the_default(
+    comparison_campaign, capsys
+):
+    """A case that never set theta_target_psi/theta_bins (still at their
+    dataclass defaults) has nothing meaningful being shadowed -- no warning,
+    even though the comparison does override them."""
+    cases_toml = comparison_campaign / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\n'
+        '[cases."qa2.1_g2.3/eta1e-4_RE"]\n'
+        'steps = [100]\n'
+        '[comparisons.eta_scan]\n'
+        'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
+        'labels = ["1e-3", "1e-4"]\n'
+        'x_values = [1e-3, 1e-4]\n'
+        'theta_target_psi = 1.0\n'
+        'theta_bins = 20\n',
+        encoding="utf-8",
+    )
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    out = capsys.readouterr().out
+    assert "overriding this case's own" not in out
+
+
+def test_compare_wetted_fraction_no_warning_for_a_field_with_a_cli_flag(
+    comparison_campaign, capsys
+):
+    """A CLI flag already outranks both tiers for its own field, so its
+    override is expected, not surprising -- no warning for that one field.
+    Other fields (theta_target_psi, theta_bins) have no CLI flag here and
+    still warn -- the suppression is per field, not all-or-nothing."""
+    _add_x_values_with_comparison_overrides(comparison_campaign, x_values=[1e-3, 1e-4])
+    assert plot_cli.main(
+        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--wetted-threshold", "0.09"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "theta_wetted_threshold" not in out
+    assert "theta_target_psi" in out  # no CLI flag for this one -- still warns
+
+
+def test_compare_wetted_fraction_no_warning_when_every_field_has_a_cli_flag(
+    comparison_campaign, capsys
+):
+    _add_x_values_with_comparison_overrides(comparison_campaign, x_values=[1e-3, 1e-4])
+    assert plot_cli.main([
+        "--compare", "eta_scan", "--diag", "wetted_fraction",
+        "--theta-target-psi", "1.0", "--theta-bins", "20", "--wetted-threshold", "0.09",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "overriding this case's own" not in out
+
+
 def test_wetted_fraction_diag_is_comparison_only_per_case(theta_campaign, capsys):
     assert plot_cli.main(
         ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "wetted_fraction"]

@@ -438,6 +438,19 @@ python ~/ashen/bin/plot --compare eta_scan --diag wetted_fraction --wetted-thres
 `theta_wetted_threshold`, which only `wetted_fraction` uses) -- so one
 `[comparisons.eta_scan]` table keeps both figures computed identically.
 
+If a member case has its *own* non-default setting for one of these fields
+and the comparison also sets it, the comparison wins silently for the
+resolved value -- but the CLI prints a warning naming which case and field
+got shadowed, so a leftover per-case override doesn't quietly do nothing:
+
+```
+qa2.1_g2.3/eta1e-4_RE: comparison 'eta_scan' sets theta_target_psi=1.0, overriding this case's own theta_target_psi=1.02
+```
+
+No warning when a case simply never set the field (nothing to shadow), and
+none when a CLI flag is given for that field (a CLI flag legitimately
+outranks both tiers, so its override isn't surprising).
+
 Written to `figures/<comparison-name>_wetted_fraction.png`; the CLI also
 prints each case's fraction. `x_values` is required for this diag --
 `theta_hist` on the same comparison works fine without it, since its panels
