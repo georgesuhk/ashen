@@ -37,6 +37,7 @@ from ashen.diagnostics.four_modes import (
 )
 from ashen.diagnostics.poincare_cache import read_step
 from ashen.diagnostics.profiles import expand_compound_vars, read_profile_series
+from ashen.diagnostics.qprofile import rational_surface_matches, read_qprofile
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.connection_length import plot_connection_length_map
@@ -101,42 +102,86 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _render_poincare_step(step: int, records, *, paths: RunPaths, kwargs: dict) -> Path:
+def _render_poincare_step(
+    step: int, records, highlight: dict[float, str] | None, *, paths: RunPaths, kwargs: dict
+) -> Path:
     """Module-level so it can be pickled for :class:`ProcessPoolExecutor`."""
     out = paths.figures_dir / f"{step}_poincare.png"
-    plot_poincare_step(records, out, title=f"t={step}", **kwargs)
+    step_kwargs = dict(kwargs)
+    if highlight:
+        step_kwargs["highlight"] = highlight
+    plot_poincare_step(records, out, title=f"t={step}", **step_kwargs)
     return out
+
+
+def _rational_highlight_for_step(
+    case: Case, paths: RunPaths, step: int, records, real_psi_edge: float
+) -> dict[float, str] | None:
+    """``{psi_n: color}`` (physical units, matching ``LineKey.psi_n``) for the
+    field lines nearest each of ``case``'s configured rational surfaces at
+    this step -- ``None`` if highlighting is off or the qprofile cache for
+    this step isn't there yet.
+    """
+    if not case.poincare_highlight:
+        return None
+    q_path = paths.qprofile(step)
+    if not q_path.is_file():
+        print(f"  step {step}: no qprofile cache, skipping rational-surface highlight "
+              "(run analyse --diag poincare with poincare_highlight, or --diag four)")
+        return None
+
+    physical_groups = sorted({key.psi_n for key in records})
+    if not physical_groups:
+        return None
+    normalised_to_physical = {p / real_psi_edge: p for p in physical_groups}
+
+    psi_n_q, q = read_qprofile(q_path)
+    modes = [
+        (n, m, color)
+        for (m, n), color in zip(case.poincare_highlight_modes, case.poincare_highlight_colors)
+    ]
+    matches = rational_surface_matches(psi_n_q, q, modes, list(normalised_to_physical))
+    return {normalised_to_physical[p]: color for p, color in matches.items()}
 
 
 def _plot_poincare(
     case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1
 ) -> None:
     kwargs = {} if dpi is None else {"dpi": dpi}
+    real_psi_edge = read_float(paths.real_psi_edge) if case.poincare_highlight else None
 
-    to_render: list[tuple[int, dict]] = []
+    to_render: list[tuple[int, dict, dict[float, str] | None]] = []
     for step in steps:
         records = read_step(paths, step)
         if not records:
             print(f"  step {step}: no Poincare cache, skipped")
             continue
-        to_render.append((step, records))
+        highlight = (
+            _rational_highlight_for_step(case, paths, step, records, real_psi_edge)
+            if real_psi_edge is not None
+            else None
+        )
+        to_render.append((step, records, highlight))
 
     if not to_render:
         return
 
     if n_workers <= 1 or len(to_render) <= 1:
-        for step, records in to_render:
-            out = _render_poincare_step(step, records, paths=paths, kwargs=kwargs)
+        for step, records, highlight in to_render:
+            out = _render_poincare_step(step, records, highlight, paths=paths, kwargs=kwargs)
             print(f"  step {step}: {out}")
         return
 
     one = partial(_render_poincare_step, paths=paths, kwargs=kwargs)
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(one, step, records): step for step, records in to_render}
+        futures = {
+            executor.submit(one, step, records, highlight): step
+            for step, records, highlight in to_render
+        }
         outputs: dict[int, Path] = {}
         for future in as_completed(futures):
             outputs[futures[future]] = future.result()
-    for step, _ in to_render:
+    for step, _, _ in to_render:
         print(f"  step {step}: {outputs[step]}")
 
 

@@ -135,6 +135,68 @@ def test_qprofile_force_recomputes_cached_steps(jrun_and_paths, monkeypatch):
     assert calls == [100]
 
 
+# --- poincare_highlight: qprofile gathered alongside poincare --------------------
+
+
+@pytest.fixture
+def poincare_case_and_run_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    run_dir = tmp_path / "myrun"
+    run_dir.mkdir()
+    (run_dir / "in_main").write_text("&in1\n&end\n", encoding="utf-8")
+    (run_dir / "jorek000100.h5").write_bytes(b"")
+    (run_dir / "real_psi_edge.dat").write_text("1.0\n", encoding="utf-8")
+    return run_dir
+
+
+def test_poincare_highlight_gathers_qprofile_alongside_poincare(
+    poincare_case_and_run_dir, monkeypatch
+):
+    run_dir = poincare_case_and_run_dir
+    case = Case(
+        name="myrun", steps=[100], psi_n_in=[0.5],
+        poincare_highlight=True, poincare_highlight_modes=[[2, 1]],
+        poincare_highlight_colors=["red"],
+    )
+
+    calls = []
+    monkeypatch.setattr(analyse_cli, "run_zero_d", lambda *a, **k: None)
+    monkeypatch.setattr(
+        analyse_cli, "_gather_qprofile",
+        lambda *a, **k: calls.append("qprofile"),
+    )
+    monkeypatch.setattr(
+        analyse_cli.poincare_diag, "run_poincare_scan",
+        lambda *a, **k: calls.append("poincare") or [],
+    )
+
+    analyse_cli._run_case(case, diags=["poincare"], force=False, n_workers=1, omp_threads=1)
+
+    assert calls == ["qprofile", "poincare"]
+
+
+def test_poincare_without_highlight_does_not_gather_qprofile(
+    poincare_case_and_run_dir, monkeypatch
+):
+    run_dir = poincare_case_and_run_dir
+    case = Case(name="myrun", steps=[100], psi_n_in=[0.5])
+
+    calls = []
+    monkeypatch.setattr(analyse_cli, "run_zero_d", lambda *a, **k: None)
+    monkeypatch.setattr(
+        analyse_cli, "_gather_qprofile",
+        lambda *a, **k: calls.append("qprofile"),
+    )
+    monkeypatch.setattr(
+        analyse_cli.poincare_diag, "run_poincare_scan",
+        lambda *a, **k: [],
+    )
+
+    analyse_cli._run_case(case, diags=["poincare"], force=False, n_workers=1, omp_threads=1)
+
+    assert calls == []
+
+
 # --- profiles: _run_case's per-mode never-succeeded warning ----------------------
 
 

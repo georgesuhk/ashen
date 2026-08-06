@@ -302,6 +302,72 @@ def test_four_growth_steps_rejects_start_after_end(tmp_path):
         load_cases(path)
 
 
+# --- poincare_highlight ---------------------------------------------------------
+
+
+def test_poincare_highlight_defaults_off_and_empty(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.poincare_highlight is False
+    assert case.poincare_highlight_modes == []
+    assert case.poincare_highlight_colors == []
+
+
+def test_poincare_highlight_modes_and_colors_are_settable(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [1]
+        poincare_highlight = true
+        poincare_highlight_modes = [[3, 2], [2, 1]]
+        poincare_highlight_colors = ["red", "blue"]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.poincare_highlight is True
+    assert case.poincare_highlight_modes == [[3, 2], [2, 1]]
+    assert case.poincare_highlight_colors == ["red", "blue"]
+
+
+def test_poincare_highlight_modes_rejects_non_pair_entries(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\npoincare_highlight_modes = [[3, 2, 1]]\n',
+    )
+    with pytest.raises(CasesError, match="\\[m, n\\] pairs"):
+        load_cases(path)
+
+
+def test_poincare_highlight_modes_rejects_n_equals_zero(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\npoincare_highlight_modes = [[3, 0]]\n'
+        'poincare_highlight_colors = ["red"]\n',
+    )
+    with pytest.raises(CasesError, match="n=0"):
+        load_cases(path)
+
+
+def test_poincare_highlight_colors_length_mismatch_raises(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\npoincare_highlight_modes = [[3, 2], [2, 1]]\n'
+        'poincare_highlight_colors = ["red"]\n',
+    )
+    with pytest.raises(CasesError, match="same length"):
+        load_cases(path)
+
+
+def test_poincare_highlight_true_without_modes_raises(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\npoincare_highlight = true\n',
+    )
+    with pytest.raises(CasesError, match="poincare_highlight_modes"):
+        load_cases(path)
+
+
 def test_case_name_is_its_own_run_folder(tmp_path):
     path = _write(
         tmp_path,

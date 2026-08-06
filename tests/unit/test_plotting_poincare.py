@@ -64,10 +64,25 @@ def test_empty_cache_draws_nothing_but_does_not_raise():
 
 def test_highlight_dims_everything_else(records):
     fig, ax = plt.subplots()
-    draw_poincare(ax, records, highlight={0.5})
+    draw_poincare(ax, records, highlight={0.5: "red"})
     # Still one scatter call per group; dimming is a colour/alpha change,
     # not a change in what gets drawn.
     assert len(ax.collections) == 3
+    plt.close(fig)
+
+
+def test_highlight_uses_the_mapped_color_per_surface(records):
+    fig, ax = plt.subplots()
+    draw_poincare(ax, records, highlight={0.1: "red", 0.9: "blue"})
+    colors_by_psi_n = {}
+    for psi_n, coll in zip(sorted({0.1, 0.5, 0.9}, reverse=True), ax.collections):
+        colors_by_psi_n[psi_n] = tuple(coll.get_facecolor()[0])
+    import matplotlib.colors as mcolors
+
+    assert colors_by_psi_n[0.1] == mcolors.to_rgba("red")
+    assert colors_by_psi_n[0.9] == mcolors.to_rgba("blue")
+    assert colors_by_psi_n[0.5][:3] == mcolors.to_rgba("lightgray")[:3]
+    assert colors_by_psi_n[0.5][3] < 1.0  # dimmed
     plt.close(fig)
 
 

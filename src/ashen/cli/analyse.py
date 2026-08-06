@@ -190,6 +190,12 @@ def _run_case(
         _gather_zero_d(jrun, paths, case.steps, force=force, n_workers=n_workers)
 
     if "poincare" in diags:
+        # The rational-surface highlight needs the qprofile cache to locate
+        # q=m/n, same reasoning as poincare implying zerod above: gathered
+        # here so a poincare-only case doesn't also need `--diag four`.
+        if case.poincare_highlight:
+            _gather_qprofile(jrun, paths, case.steps, force=force, n_workers=n_workers)
+
         real_psi_edge = read_float(paths.real_psi_edge)
         psi_n_in = [p * real_psi_edge for p in case.psi_n_in]
 

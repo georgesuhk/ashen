@@ -25,6 +25,7 @@ _CASE_KEYS = (
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
     "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
+    "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
 )
 
 
@@ -97,6 +98,16 @@ class Case:
     profile_rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
     profile_nmaxsteps: int = 2500
     profile_deltaphi: float = 0.3
+    #: Draw the Poincare plot with only the field lines nearest each chosen
+    #: rational surface in colour, everything else dimmed grey. Needs the
+    #: qprofile cache -- `analyse --diag poincare` gathers it automatically
+    #: when this is true, same as poincare implies zerod.
+    poincare_highlight: bool = False
+    #: [m, n] pairs, same convention as four_modes -- e.g. [3, 2] is m=3, n=2.
+    poincare_highlight_modes: list[list[int]] = field(default_factory=list)
+    #: Parallel to poincare_highlight_modes: poincare_highlight_colors[i] is
+    #: the colour drawn for poincare_highlight_modes[i].
+    poincare_highlight_colors: list[str] = field(default_factory=list)
 
 
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:
@@ -256,6 +267,38 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                         f"[m, n] pairs, got {mode!r}"
                     )
             merged["four_modes"] = [[int(m), int(n)] for m, n in merged["four_modes"]]
+
+        if "poincare_highlight_modes" in merged:
+            for mode in merged["poincare_highlight_modes"]:
+                if not (isinstance(mode, list) and len(mode) == 2):
+                    raise CasesError(
+                        f"{path}: case {name!r} poincare_highlight_modes entries "
+                        f"must be [m, n] pairs, got {mode!r}"
+                    )
+            modes = [[int(m), int(n)] for m, n in merged["poincare_highlight_modes"]]
+            zero_n = [mode for mode in modes if mode[1] == 0]
+            if zero_n:
+                raise CasesError(
+                    f"{path}: case {name!r} poincare_highlight_modes has n=0 "
+                    f"entries {zero_n}; q=m/n is undefined for n=0"
+                )
+            merged["poincare_highlight_modes"] = modes
+
+        if "poincare_highlight_colors" in merged or "poincare_highlight_modes" in merged:
+            modes = merged.get("poincare_highlight_modes", [])
+            colors = merged.get("poincare_highlight_colors", [])
+            if len(colors) != len(modes):
+                raise CasesError(
+                    f"{path}: case {name!r} poincare_highlight_colors "
+                    f"({len(colors)}) must have the same length as "
+                    f"poincare_highlight_modes ({len(modes)})"
+                )
+
+        if merged.get("poincare_highlight") and not merged.get("poincare_highlight_modes"):
+            raise CasesError(
+                f"{path}: case {name!r} has poincare_highlight = true but no "
+                "poincare_highlight_modes/poincare_highlight_colors configured"
+            )
 
         if "four_growth_steps" in merged:
             spec = merged["four_growth_steps"]

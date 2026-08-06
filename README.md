@@ -253,6 +253,19 @@ traced during gathering renders as a visible black cell rather than an
 error -- widening `lc_psi_n_in` beyond what was gathered doesn't add real
 data, only `analyse --diag poincare` with a wider/denser `psi_n_in` does.
 
+### Highlighting rational surfaces in Poincare plots
+
+Setting `poincare_highlight = true` (plus `poincare_highlight_modes`,
+`[m, n]` pairs like `four_modes`, and a parallel `poincare_highlight_colors`)
+colours the field lines nearest each mode's `q = m/n` resonant surface,
+dimming everything else to grey. It needs the q-profile cache -- `analyse
+--diag poincare` gathers it automatically once this is set, the same way it
+already force-includes `zerod`. Because Poincare only traces the discrete
+`psi_n_in` grid requested, a computed rational surface is snapped to the
+*nearest actually-traced* line rather than requiring an exact match; which
+physical line that is can shift step to step as the q-profile evolves --
+that tracks the real resonance moving, not a bug.
+
 Covered this pass: Poincare puncture plots, the LC/LCTT connection-length
 maps, jorek2_four mode-amplitude time series, and radial profiles -- see
 below. Everything else the legacy `data_jorek.py` plotted (macroscopic-variable

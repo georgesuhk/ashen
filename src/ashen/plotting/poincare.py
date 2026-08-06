@@ -36,16 +36,18 @@ def draw_poincare(
     alpha: float = 1.0,
     cmap: str = "viridis",
     discrete: bool = False,
-    highlight: set[float] | None = None,
+    highlight: Mapping[float, str] | None = None,
     title: str | None = None,
 ) -> None:
     """Scatter every cached puncture of ``records`` onto ``ax``, coloured by
     each line's starting ``psi_n``.
 
-    ``highlight`` is a set of ``psi_n`` values to draw at full opacity with
-    everything else dimmed to light grey -- ports the legacy ``highlight`` /
-    ``highlight_idx`` pair (``data_jorek.py:354,376-380``), now selecting by
-    the physical quantity instead of a scan index that no longer exists.
+    ``highlight`` maps a ``psi_n`` value to the colour it should draw in at
+    full opacity, with everything else dimmed to light grey -- ports the
+    legacy ``highlight`` / ``highlight_idx`` pair
+    (``data_jorek.py:354,376-380``), extended so each highlighted surface can
+    carry its own colour (e.g. one per rational surface) instead of a single
+    shared one.
     """
     grouped: dict[float, list[LineRecord]] = {}
     for key, record in records.items():
@@ -60,8 +62,9 @@ def draw_poincare(
         if R.size == 0:
             continue
         if highlight:
-            color = color_of(psi_n) if psi_n in highlight else "lightgray"
-            point_alpha = alpha if psi_n in highlight else 0.1
+            hl_color = highlight.get(psi_n)
+            color = hl_color if hl_color is not None else "lightgray"
+            point_alpha = alpha if hl_color is not None else 0.1
         else:
             color = color_of(psi_n)
             point_alpha = alpha

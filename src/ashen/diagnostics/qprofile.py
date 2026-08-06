@@ -20,6 +20,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
@@ -27,7 +28,10 @@ from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError
 from ashen.paths import RunPaths
 from ashen.postproc import qprofile_script, read_postproc_profile
 
-__all__ = ["run_qprofile_step", "read_qprofile", "find_rational_surfaces"]
+__all__ = [
+    "run_qprofile_step", "read_qprofile", "find_rational_surfaces",
+    "rational_surface_matches",
+]
 
 POSTPROC_TOOL = "jorek2_postproc"
 
@@ -124,3 +128,39 @@ def find_rational_surfaces(
             frac = (q_target - q0) / (q1 - q0)
             crossings.append(float(psi_n[i]) + frac * (float(psi_n[i + 1]) - float(psi_n[i])))
     return crossings
+
+
+def rational_surface_matches(
+    psi_n_q: np.ndarray,
+    q: np.ndarray,
+    modes: Sequence[tuple[int, int, str]],
+    traced_psi_n: Sequence[float],
+) -> dict[float, str]:
+    """Snap each requested ``(n, m, color)``'s ``q = m/n`` rational surface(s)
+    onto the nearest value in ``traced_psi_n`` -- the discrete grid a Poincare
+    scan actually traced, since a computed crossing essentially never lands
+    exactly on one of those. All arguments are in the same (normalised
+    ``psi_n``) units; the caller owns any conversion to/from the physical
+    units :class:`~ashen.diagnostics.poincare_cache.LineKey` stores.
+
+    A reversed-shear profile can cross a given ``q`` more than once; every
+    crossing is matched and coloured the same, since each is a distinct
+    physical resonance for that mode (same precedent as
+    :func:`ashen.diagnostics.four_modes.rational_surface_series`). ``n == 0``
+    entries are skipped (``m/0`` is undefined) rather than erroring, so a
+    mixed list of resonant and non-resonant modes doesn't need filtering by
+    the caller. Returns ``{}`` if ``traced_psi_n`` is empty -- nothing to
+    snap onto.
+    """
+    traced = list(traced_psi_n)
+    matches: dict[float, str] = {}
+    if not traced:
+        return matches
+    for n, m, color in modes:
+        if n == 0:
+            continue
+        q_target = m / n
+        for crossing in find_rational_surfaces(psi_n_q, q, q_target):
+            nearest = min(traced, key=lambda p: abs(p - crossing))
+            matches[nearest] = color
+    return matches

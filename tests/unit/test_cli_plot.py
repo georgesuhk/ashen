@@ -107,6 +107,76 @@ def test_step_filter_restricts_poincare_output(campaign):
     assert not (campaign / "poinc_dir" / "200_poincare.png").is_file()
 
 
+# --- poincare rational-surface highlight -------------------------------------------
+
+
+def _write_qprofile_cache(run_dir, step, *, psi_n, q, pad_width=6):
+    paths = RunPaths(run_dir, pad_width=pad_width)
+    lines = ["# Psi_n q", f"# time step #{step:0{pad_width}d}"]
+    lines += [f"{p} {v}" for p, v in zip(psi_n, q)]
+    paths.qprofile(step).parent.mkdir(parents=True, exist_ok=True)
+    paths.qprofile(step).write_text("\n".join(lines) + "\n\n", encoding="utf-8")
+
+
+def _add_highlight_case(tmp_path, *, modes, colors):
+    cases_toml = tmp_path / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        'poincare_highlight = true\n'
+        f'poincare_highlight_modes = {modes}\n'
+        f'poincare_highlight_colors = {colors}\n',
+        encoding="utf-8",
+    )
+
+
+def test_poincare_highlight_colors_the_matched_line(campaign, monkeypatch):
+    # q = 1 + 2*psi_n crosses q=2.0 (m=2, n=1) exactly at psi_n=0.5, which is
+    # one of the two traced surfaces -- an exact match, not just "nearest".
+    _write_qprofile_cache(
+        campaign, 100, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    _write_qprofile_cache(
+        campaign, 200, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    _add_highlight_case(campaign.parent.parent, modes=[[2, 1]], colors=["red"])
+
+    captured = {}
+    real_draw = plot_cli.plot_poincare_step
+
+    def spy(records, out, **kwargs):
+        captured[out.name] = kwargs.get("highlight")
+        return real_draw(records, out, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_poincare_step", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
+    assert captured["100_poincare.png"] == {0.5: "red"}
+    assert captured["200_poincare.png"] == {0.5: "red"}
+
+
+def test_poincare_highlight_missing_qprofile_cache_is_skipped_not_crashed(
+    campaign, capsys
+):
+    # No qprofile cache written for either step.
+    _add_highlight_case(campaign.parent.parent, modes=[[2, 1]], colors=["red"])
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
+    assert (campaign / "poinc_dir" / "100_poincare.png").is_file()
+    assert "no qprofile cache" in capsys.readouterr().out
+
+
+def test_poincare_highlight_false_never_reads_qprofile(campaign, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        plot_cli, "read_qprofile", lambda path: calls.append(path) or (np.array([]), np.array([]))
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
+    assert calls == []
+
+
 def test_unknown_case_is_an_error(campaign, capsys):
     assert plot_cli.main(["--case", "does_not_exist"]) == 1
     assert "unknown case" in capsys.readouterr().out

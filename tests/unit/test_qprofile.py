@@ -6,7 +6,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ashen.diagnostics.qprofile import find_rational_surfaces, read_qprofile, run_qprofile_step
+from ashen.diagnostics.qprofile import (
+    find_rational_surfaces,
+    rational_surface_matches,
+    read_qprofile,
+    run_qprofile_step,
+)
 from ashen.jorek2 import Jorek2Run, MissingRestartError
 from ashen.paths import RunPaths
 
@@ -40,6 +45,51 @@ def test_exact_sample_match_is_a_crossing():
     q = np.array([1.0, 1.5, 2.0])
     crossings = find_rational_surfaces(psi_n, q, 1.5)
     assert crossings == pytest.approx([0.5])
+
+
+# --- rational_surface_matches --------------------------------------------------------
+
+
+def test_single_crossing_snaps_to_nearest_traced_value():
+    psi_n = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    q = np.array([1.0, 1.3, 1.6, 1.9, 2.2])  # crosses 1.5 near psi_n=0.42
+    traced = [0.1, 0.4, 0.6, 0.9]
+    matches = rational_surface_matches(psi_n, q, [(2, 3, "red")], traced)
+    assert matches == {0.4: "red"}
+
+
+def test_multiple_crossings_all_get_the_same_mode_color():
+    psi_n = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    q = np.array([2.5, 1.8, 1.5, 1.8, 2.5])  # crosses 2.0 twice
+    traced = [0.1, 0.3, 0.7, 0.9]
+    matches = rational_surface_matches(psi_n, q, [(1, 2, "blue")], traced)
+    assert matches == {0.1: "blue", 0.9: "blue"}
+
+
+def test_n_zero_entries_are_skipped():
+    psi_n = np.array([0.0, 0.5, 1.0])
+    q = np.array([1.0, 1.5, 2.0])
+    traced = [0.5]
+    matches = rational_surface_matches(psi_n, q, [(0, 1, "red")], traced)
+    assert matches == {}
+
+
+def test_empty_traced_psi_n_returns_empty():
+    psi_n = np.array([0.0, 0.5, 1.0])
+    q = np.array([1.0, 1.5, 2.0])
+    matches = rational_surface_matches(psi_n, q, [(2, 1, "red")], [])
+    assert matches == {}
+
+
+def test_multiple_modes_can_map_to_different_traced_values():
+    psi_n = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    q = np.array([1.0, 1.3, 1.6, 1.9, 2.2])
+    traced = [0.1, 0.4, 0.6, 0.9]
+    matches = rational_surface_matches(
+        psi_n, q, [(2, 3, "red"), (1, 2, "green")], traced
+    )
+    assert matches[0.4] == "red"
+    assert matches[0.9] == "green"
 
 
 # --- read_qprofile ------------------------------------------------------------------

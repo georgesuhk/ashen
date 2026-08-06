@@ -82,6 +82,19 @@ n_points        = 100
 # four_growth_rate  = true
 # four_growth_steps = [1000, 3000]
 
+# Colour the field lines nearest chosen rational surfaces in `plot --diag
+# poincare`, everything else dimmed grey -- needs the qprofile cache
+# (`analyse --diag poincare` gathers it automatically once this is on, same
+# as poincare already implies zerod). A rational surface computed from q
+# essentially never lands exactly on a traced psi_n_in, so each mode's
+# crossing(s) snap to the nearest surface actually traced -- which line that
+# is can shift step to step as the q-profile evolves; that's the resonance
+# moving, not a bug. poincare_highlight_modes are [m, n] pairs, same
+# convention as four_modes; poincare_highlight_colors is parallel to it.
+# poincare_highlight        = true
+# poincare_highlight_modes  = [[3, 2], [2, 1]]
+# poincare_highlight_colors = ["red", "blue"]
+
 # A case's name IS its run folder -- [cases."qa2.1_g2.3/eta1e-3_RE"] points at
 # that exact path under the campaign directory. There is no separate `folder`
 # key; re-analysing the same run under a different label means copying its
