@@ -118,6 +118,19 @@ n_points        = 100
 # poincare_highlight_modes  = [[3, 2], [2, 1]]
 # poincare_highlight_colors = ["red", "blue"]
 
+# `plot --diag theta_hist`: for each traced field line, find its first
+# puncture past theta_target_psi (a user-facing plasma-fraction psi_n) and
+# histogram the poloidal angle theta there -- a strike-position/loss-angle
+# distribution. theta_target_psi > 1 so it is genuinely "left the plasma
+# core", not just "past the requested psi_n_in surfaces themselves".
+# theta_bins is the histogram resolution over (-pi, pi]. theta_psi_n_range
+# restricts which *starting* flux surfaces are counted (a [min, max] filter
+# on psi_n_in, in the same user-facing units) -- omit it to count every
+# traced surface.
+# theta_target_psi  = 1.05
+# theta_bins        = 500
+# theta_psi_n_range = [0.2, 0.9]
+
 # A case's name IS its run folder -- [cases."qa2.1_g2.3/eta1e-3_RE"] points at
 # that exact path under the campaign directory. There is no separate `folder`
 # key; re-analysing the same run under a different label means copying its
@@ -131,13 +144,46 @@ note  = "internal kink investigation"
 # steps = [11800, 12000, 12100, 12200, 12300, 12400, 12420, 12430]
 # note  = "ntor=11 island growth"
 
+# A list entry can itself be a {start, stop, step} table -- mix explicit
+# values with one or more ranges, e.g. a dense early stretch plus a coarser
+# range after it. Entries are unioned and returned sorted, so a value that's
+# both listed explicitly and covered by a range (like 3400 below) collapses
+# to one rather than being processed twice:
+# [cases."qa2.1_g2.3/eta1e-5_RE"]
+# steps = [
+#   200, 400, 600, 800, 1000, 1200, 1400, 1600, 1700, 1800, 1900, 2000,
+#   2100, 2200, 2300, 2400, 2500, 2600, 2700, 2800, 2900, 3000, 3100, 3200,
+#   3400,
+#   { start = 3400, stop = 8000, step = 200 },
+# ]
+
 # A case's steps can be overridden per diag: [cases.NAME.<diag>] (diag is
 # one of zerod/poincare/profiles/four/connection_length) with its own
-# `steps`, same list/range formats as above -- e.g. a long step range for
-# four's growth curve alongside a handful of poincare snapshots for the
+# `steps`, same list/range/mixed formats as above -- e.g. a long step range
+# for four's growth curve alongside a handful of poincare snapshots for the
 # same run. default -> case -> case+diag, most specific wins; `--step` on
 # the plot command line outranks all three. [defaults.<diag>] works the
 # same way, seeding every case, replaced wholesale (not merged key-by-key)
 # by a case's own [cases.NAME.<diag>] table.
 # [cases."qa2.1_g2.3/eta1e-3_RE".four]
 # steps = { start = 200, stop = 12000, step = 200 }
+
+# [comparisons.*]: group already-defined cases into one cross-run figure,
+# e.g. an eta scan's theta_hist distributions, one panel per run instead of
+# per step. `cases` names existing [cases.*] entries (every name must already
+# be defined above); `labels` is parallel to `cases` and defaults to the case
+# names themselves if omitted. `bin/plot --compare eta_scan --diag theta_hist`
+# draws it; `--list-comparisons` shows what's defined. Each member case's own
+# per-diag steps override still supplies that run's pooled time window --
+# e.g. [cases."qa2.1_g2.3/eta1e-4_RE".theta_hist] steps = [2400, 2600, 2800]
+# picks which steps that one run's panel pools, same mechanism as any other
+# [cases.NAME.<diag>] override.
+# [comparisons.eta_scan]
+# note   = "resistivity scan, theta dispersion at the q=1 crossing"
+# cases  = [
+#   "qa2.1_g2.3/eta1e-3_RE",
+#   "qa2.1_g2.3/eta1e-4_RE",
+#   "qa2.1_g2.3/eta1e-5_RE",
+# ]
+# labels = ["$\\eta = 10^{-3}$", "$\\eta = 10^{-4}$", "$\\eta = 10^{-5}$"]
+# n_cols = 5

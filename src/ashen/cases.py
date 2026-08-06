@@ -26,12 +26,12 @@ _CASE_KEYS = (
     "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
-    "four_quantities",
+    "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
 )
 
 #: Diag names recognised as [cases.NAME.<diag>] step-override tables -- the
 #: union of both CLIs' DIAG_CHOICES (ashen.cli.analyse, ashen.cli.plot).
-_DIAG_NAMES = ("zerod", "poincare", "profiles", "four", "connection_length")
+_DIAG_NAMES = ("zerod", "poincare", "profiles", "four", "connection_length", "theta_hist")
 
 
 class CasesError(RuntimeError):
@@ -123,6 +123,19 @@ class Case:
     #: is the value pinned to each mode's q=m/n resonant surface. Both
     #: together draws max solid with rational_surface dashed over it.
     four_quantities: list[str] = field(default_factory=lambda: ["max"])
+    #: `plot --diag theta_hist`: the user-facing (plasma-fraction) psi_n a
+    #: field line must cross to be counted -- ashen.diagnostics.
+    #: theta_histogram.crossing_angles applies real_psi_edge to this once,
+    #: at comparison time, never to the traced data (KNOWN_ISSUES.md #7).
+    theta_target_psi: float = 1.05
+    #: `plot --diag theta_hist`: histogram bins over (-pi, pi].
+    theta_bins: int = 500
+    #: `plot --diag theta_hist`: [min, max] user-facing psi_n_in bounds
+    #: restricting which *starting* flux surfaces are counted -- None (default)
+    #: counts every traced surface. Replaces the notebook's `i_lim` (a
+    #: positional index into scan order, which silently changes meaning
+    #: whenever psi_n_in is widened or reordered).
+    theta_psi_n_range: list[float] | None = None
 
     def steps_for(self, diag: str) -> list[int]:
         """`steps`, unless `diag` has its own override in `diag_steps` --
@@ -130,17 +143,36 @@ class Case:
         return self.diag_steps.get(diag, self.steps)
 
 
+def _steps_from_range_dict(spec: dict, *, case_name: str, source: Path) -> list[int]:
+    missing = {"start", "stop"} - set(spec)
+    if missing:
+        raise CasesError(
+            f"{source}: case {case_name!r} steps table missing {sorted(missing)}"
+        )
+    start, stop, step = spec["start"], spec["stop"], spec.get("step", 1)
+    return list(range(int(start), int(stop), int(step)))
+
+
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:
+    """A plain list, a single ``{start, stop, step}`` range table, or a list
+    mixing both -- e.g. ``[200, 400, {start = 400, stop = 2000, step = 200}]``
+    for a dense early stretch plus a coarser range after it. Entries are
+    unioned and returned sorted, so overlapping values (like the ``400``
+    both an explicit entry and a range boundary might share) collapse to
+    one rather than processing the same step twice.
+    """
     if isinstance(spec, list):
-        return [int(s) for s in spec]
+        steps: set[int] = set()
+        for item in spec:
+            if isinstance(item, dict):
+                steps.update(
+                    _steps_from_range_dict(item, case_name=case_name, source=source)
+                )
+            else:
+                steps.add(int(item))
+        return sorted(steps)
     if isinstance(spec, dict):
-        missing = {"start", "stop"} - set(spec)
-        if missing:
-            raise CasesError(
-                f"{source}: case {case_name!r} steps table missing {sorted(missing)}"
-            )
-        start, stop, step = spec["start"], spec["stop"], spec.get("step", 1)
-        return list(range(int(start), int(stop), int(step)))
+        return _steps_from_range_dict(spec, case_name=case_name, source=source)
     raise CasesError(
         f"{source}: case {case_name!r} steps must be a list or a "
         f"{{start, stop, step}} table, got {spec!r}"
@@ -361,6 +393,21 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                     f"{path}: case {name!r} four_quantities must not be empty"
                 )
             merged["four_quantities"] = quantities
+
+        if "theta_psi_n_range" in merged:
+            spec = merged["theta_psi_n_range"]
+            if not (isinstance(spec, list) and len(spec) == 2):
+                raise CasesError(
+                    f"{path}: case {name!r} theta_psi_n_range must be "
+                    f"[min, max], got {spec!r}"
+                )
+            lo, hi = float(spec[0]), float(spec[1])
+            if not lo < hi:
+                raise CasesError(
+                    f"{path}: case {name!r} theta_psi_n_range must satisfy "
+                    f"min < max, got [{lo}, {hi}]"
+                )
+            merged["theta_psi_n_range"] = [lo, hi]
 
         if "four_growth_steps" in merged:
             spec = merged["four_growth_steps"]

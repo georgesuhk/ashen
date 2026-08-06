@@ -57,6 +57,27 @@ def _write_cache(run_dir, step, *, pad_width=6):
     return path
 
 
+def _write_crossing_cache(run_dir, step, *, pad_width=6):
+    """A cache whose lines actually cross psi_n=1 (unlike `_write_cache`,
+    whose constant-psi_n lines never do) -- for theta_hist tests."""
+    path = run_dir / "poinc_dir" / f"poinc_s{step:0{pad_width}d}.h5"
+    with pc.open_cache(path, step=step, pad_width=pad_width) as h:
+        for psi_n, R, theta in [(0.2, 1.7, 0.5), (0.5, 1.8, -0.5)]:
+            key = pc.LineKey(psi_n=psi_n, R=R, Z=0.0, phi=0.0)
+            n = 3
+            pc.append_line(
+                h, key,
+                {
+                    "R": np.full(n, R, dtype=np.float32),
+                    "Z": np.zeros(n, dtype=np.float32),
+                    "rho": np.sqrt(np.array([0.3, 1.5, 1.6], dtype=np.float32)),
+                    "theta": np.array([0.0, theta, theta + 0.1], dtype=np.float32),
+                },
+                n_turns=n, terminated=False,
+            )
+    return path
+
+
 @pytest.fixture
 def campaign(tmp_path, monkeypatch):
     run_dir = tmp_path / "qa2.1_g2.3" / "eta1e-3_RE"
@@ -1063,6 +1084,170 @@ def test_profiles_diag_colors_by_true_time_when_zerod_available(campaign, monkey
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
     assert captured["color_label"] == r"t [$\mu s$]"
     assert captured["color_by"] == {100: 100.0, 200: 200.0}  # 1e-4 s, 2e-4 s -> us
+
+
+# --- theta_hist: field-line theta-crossing histograms -----------------------------
+
+
+@pytest.fixture
+def theta_campaign(tmp_path, monkeypatch):
+    """A separate campaign (rather than reusing `campaign`) because its
+    Poincare cache needs lines that actually cross psi_n=1 -- `campaign`'s
+    `_write_cache` gives every line a constant psi_n, which never crosses."""
+    run_dir = tmp_path / "qa2.1_g2.3" / "eta1e-3_RE"
+    run_dir.mkdir(parents=True)
+    write_float(run_dir / "real_psi_edge.dat", 1.0)
+    (run_dir / "log").write_text("R_axis = 1.363245\n", encoding="utf-8")
+    for step in (100, 200):
+        (run_dir / f"jorek{step:06d}.h5").write_bytes(b"")
+        _write_crossing_cache(run_dir, step)
+
+    cases_toml = tmp_path / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        'theta_target_psi = 1.0\n'
+        'theta_bins = 20\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    return run_dir
+
+
+def test_theta_hist_diag_writes_one_file_per_case(theta_campaign):
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "theta_hist"]
+    ) == 0
+    assert (theta_campaign / "poinc_dir" / "theta_hist.png").is_file()
+
+
+def test_theta_hist_reports_crossed_and_considered_counts(theta_campaign, capsys):
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "theta_hist"]
+    ) == 0
+    out = capsys.readouterr().out
+    # Both lines in _write_crossing_cache cross target_psi=1.0.
+    assert "2 of 2 lines crossed" in out
+
+
+def test_theta_hist_cli_overrides_take_precedence_over_case_config(theta_campaign, monkeypatch):
+    captured = {}
+    original = plot_cli.pooled_crossing_angles
+
+    def spy(records_by_step, steps, **kwargs):
+        captured["target_psi"] = kwargs.get("target_psi")
+        captured["psi_n_range"] = kwargs.get("psi_n_range")
+        return original(records_by_step, steps, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "pooled_crossing_angles", spy)
+
+    assert plot_cli.main([
+        "--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "theta_hist",
+        "--theta-target-psi", "1.2", "--theta-psi-range", "0.1", "0.4",
+    ]) == 0
+    assert captured["target_psi"] == pytest.approx(1.2)
+    assert captured["psi_n_range"] == (0.1, 0.4)
+
+
+def test_theta_hist_no_poincare_cache_is_reported_not_crashed(tmp_path, monkeypatch, capsys):
+    run_dir = tmp_path / "qa2.1_g2.3" / "eta1e-3_RE"
+    run_dir.mkdir(parents=True)
+    write_float(run_dir / "real_psi_edge.dat", 1.0)
+    (run_dir / "jorek000100.h5").write_bytes(b"")
+    (tmp_path / "cases.toml").write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\nsteps = [100]\n', encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "theta_hist"]
+    ) == 0
+    assert "no Poincare cache" in capsys.readouterr().out
+    assert not (run_dir / "poinc_dir" / "theta_hist.png").exists()
+
+
+# --- cross-case comparisons ---------------------------------------------------------
+
+
+@pytest.fixture
+def comparison_campaign(tmp_path, monkeypatch):
+    """Two runs under one campaign, grouped by a [comparisons.*] table."""
+    for name in ("eta1e-3_RE", "eta1e-4_RE"):
+        run_dir = tmp_path / "qa2.1_g2.3" / name
+        run_dir.mkdir(parents=True)
+        write_float(run_dir / "real_psi_edge.dat", 1.0)
+        (run_dir / "log").write_text("R_axis = 1.363245\n", encoding="utf-8")
+        (run_dir / "jorek000100.h5").write_bytes(b"")
+        _write_crossing_cache(run_dir, 100)
+
+    cases_toml = tmp_path / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\n'
+        'theta_target_psi = 1.0\n'
+        '[cases."qa2.1_g2.3/eta1e-4_RE"]\n'
+        'steps = [100]\n'
+        'theta_target_psi = 1.0\n'
+        '[comparisons.eta_scan]\n'
+        'note = "resistivity scan"\n'
+        'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
+        'labels = ["1e-3", "1e-4"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def test_compare_theta_hist_writes_one_file_for_the_comparison(comparison_campaign):
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "theta_hist"]) == 0
+    assert (comparison_campaign / "figures" / "eta_scan_theta_hist.png").is_file()
+
+
+def test_compare_reports_per_case_crossing_counts(comparison_campaign, capsys):
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "theta_hist"]) == 0
+    out = capsys.readouterr().out
+    assert "qa2.1_g2.3/eta1e-3_RE: 2 of 2 lines crossed" in out
+    assert "qa2.1_g2.3/eta1e-4_RE: 2 of 2 lines crossed" in out
+
+
+def test_compare_unknown_comparison_is_an_error(comparison_campaign, capsys):
+    assert plot_cli.main(["--compare", "does_not_exist"]) == 1
+    assert "unknown comparison" in capsys.readouterr().out
+
+
+def test_compare_diag_without_a_comparison_renderer_is_reported_and_skipped(
+    comparison_campaign, capsys
+):
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "profiles"]) == 0
+    out = capsys.readouterr().out
+    assert "no comparison renderer" in out
+    assert not (comparison_campaign / "figures").exists()
+
+
+def test_list_comparisons(comparison_campaign, capsys):
+    assert plot_cli.main(["--list-comparisons"]) == 0
+    out = capsys.readouterr().out
+    assert "eta_scan (2 cases)" in out
+    assert "resistivity scan" in out
+
+
+def test_compare_step_override_applies_to_every_member(comparison_campaign, monkeypatch):
+    _write_crossing_cache(comparison_campaign / "qa2.1_g2.3" / "eta1e-3_RE", 200)
+    _write_crossing_cache(comparison_campaign / "qa2.1_g2.3" / "eta1e-4_RE", 200)
+
+    captured = []
+    original = plot_cli.pooled_crossing_angles
+
+    def spy(records_by_step, steps, **kwargs):
+        captured.append(list(steps))
+        return original(records_by_step, steps, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "pooled_crossing_angles", spy)
+
+    assert plot_cli.main(
+        ["--compare", "eta_scan", "--diag", "theta_hist", "--step", "200"]
+    ) == 0
+    assert captured == [[200], [200]]
 
 
 def test_profiles_diag_falls_back_to_step_index_without_zerod(campaign, capsys):

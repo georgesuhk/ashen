@@ -238,6 +238,22 @@ maps (`ashen/plotting/connection_length.py`, ports
 `data_jorek.py:597 color_con_length_plot`), driven by a new `bin/plot` /
 `ashen/cli/plot.py` that reads the same `cases.toml` as `analyse`.
 
+**2026-08-06 addition:** a further pass ports `plot_theta_histogram_matrix`
+(`Columbia/NL_kinks/prod_plots_draft0.ipynb`, cell 5 -- a notebook function,
+not `data_jorek.py`; not previously tracked here) as
+`ashen/diagnostics/theta_histogram.py` + `ashen/plotting/theta_histogram.py`,
+`--diag theta_hist`. Its `i_lim` (a positional index into scan order) is
+replaced by `theta_psi_n_range`, a `psi_n_in`-based filter -- consistent with
+why the Phase 4b cache is keyed by starting position rather than index in the
+first place. The notebook's `show_threshold`/`threshold_percentile` line
+overlay and `counts_compare` companion are dropped, not ported (George,
+2026-08-06). Alongside it, `ashen/comparisons.py` adds a `[comparisons.*]`
+section to `cases.toml` and `--compare`/`--list-comparisons` to `bin/plot` --
+grouping already-defined cases into one cross-run figure (e.g. an eta scan),
+which nothing in `ashen` had a mechanism for before this pass. `theta_hist` is
+the only diag with a comparison renderer so far; the mechanism itself is
+general.
+
 **Deliberately not ported this pass** (recorded here as future work, per
 George, 2026-08-05):
 - `plot_field_line_diffusion` (`data_jorek.py:180`) — the scatter-by-time

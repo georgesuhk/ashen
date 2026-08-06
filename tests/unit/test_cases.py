@@ -41,6 +41,71 @@ def test_case_with_range_steps(tmp_path):
     assert case.steps == [200, 400, 600]
 
 
+def test_case_with_steps_list_mixing_explicit_values_and_a_range(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [200, 400, { start = 1000, stop = 1600, step = 200 }]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.steps == [200, 400, 1000, 1200, 1400]
+
+
+def test_case_with_steps_list_mixing_two_ranges(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [{ start = 200, stop = 600, step = 200 }, { start = 1000, stop = 1400, step = 200 }]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.steps == [200, 400, 1000, 1200]
+
+
+def test_case_with_steps_list_overlapping_range_and_explicit_value_dedupes(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [200, 400, 600, { start = 600, stop = 1000, step = 200 }]
+        """,
+    )
+    case = load_cases(path)["a"]
+    # 600 appears both as an explicit entry and as the range's start -- must
+    # collapse to one, not be processed twice.
+    assert case.steps == [200, 400, 600, 800]
+
+
+def test_case_with_steps_list_of_ranges_is_sorted_regardless_of_toml_order(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [{ start = 1000, stop = 1400, step = 200 }, 200, 400]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.steps == [200, 400, 1000, 1200]
+
+
+def test_diag_steps_override_accepts_a_mixed_list(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [1]
+
+        [cases.a.four]
+        steps = [200, 400, { start = 1000, stop = 1400, step = 200 }]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.steps_for("four") == [200, 400, 1000, 1200]
+
+
 def test_defaults_are_inherited_and_overridable(tmp_path):
     path = _write(
         tmp_path,
@@ -657,3 +722,64 @@ def test_profile_rad_range_rejects_out_of_unit_range(tmp_path):
     )
     with pytest.raises(CasesError, match="0 <= min < max <= 1"):
         load_cases(path)
+
+
+# --- theta_* knobs: field-line theta-crossing histogram --------------------------
+
+
+def test_theta_knobs_default(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.theta_target_psi == pytest.approx(1.05)
+    assert case.theta_bins == 500
+    assert case.theta_psi_n_range is None
+
+
+def test_theta_knobs_are_settable(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [1]
+        theta_target_psi = 1.1
+        theta_bins = 1000
+        theta_psi_n_range = [0.2, 0.8]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.theta_target_psi == pytest.approx(1.1)
+    assert case.theta_bins == 1000
+    assert case.theta_psi_n_range == [0.2, 0.8]
+
+
+def test_theta_psi_n_range_rejects_non_pair(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\ntheta_psi_n_range = [0.5]\n',
+    )
+    with pytest.raises(CasesError, match="\\[min, max\\]"):
+        load_cases(path)
+
+
+def test_theta_psi_n_range_rejects_min_not_less_than_max(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\ntheta_psi_n_range = [0.8, 0.2]\n',
+    )
+    with pytest.raises(CasesError, match="min < max"):
+        load_cases(path)
+
+
+def test_theta_hist_steps_override(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [100, 200, 300]
+        [cases.a.theta_hist]
+        steps = [200]
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.steps_for("theta_hist") == [200]
+    assert case.steps_for("poincare") == [100, 200, 300]

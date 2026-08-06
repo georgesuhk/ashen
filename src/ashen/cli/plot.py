@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 
 from ashen.cases import Case, CasesError, load_cases
+from ashen.comparisons import Comparison, load_comparisons
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
 from ashen.diagnostics.four_modes import (
@@ -48,6 +49,7 @@ from ashen.diagnostics.profiles import (
     read_profile_series,
 )
 from ashen.diagnostics.qprofile import rational_surface_matches, read_qprofile
+from ashen.diagnostics.theta_histogram import pooled_crossing_angles
 from ashen.jorek2 import Jorek2Error, Jorek2Run
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
@@ -55,9 +57,14 @@ from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes
 from ashen.plotting.poincare import plot_poincare_step
 from ashen.plotting.profiles import plot_profile_comparison
+from ashen.plotting.theta_histogram import plot_theta_histogram_grid
 from ashen.postproc import read_zeroD
 
-DIAG_CHOICES = ("poincare", "connection_length", "four", "profiles")
+DIAG_CHOICES = ("poincare", "connection_length", "four", "profiles", "theta_hist")
+
+#: Diags with a registered --compare renderer -- asking for one without (e.g.
+#: --compare X --diag profiles) is reported, not silently a no-op.
+COMPARABLE_DIAGS = ("theta_hist",)
 
 #: four_vars entries that are derived from "Psi" at plot time rather than
 #: read directly from the jorek2_four cache -- see _plot_four_modes.
@@ -110,6 +117,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--four-linear", action="store_true",
         help="four: linear amplitude scale instead of the default log",
+    )
+    parser.add_argument(
+        "--theta-target-psi", type=float, default=None,
+        help="theta_hist: override case.theta_target_psi",
+    )
+    parser.add_argument(
+        "--theta-bins", type=int, default=None,
+        help="theta_hist: override case.theta_bins",
+    )
+    parser.add_argument(
+        "--theta-psi-range", type=float, nargs=2, metavar=("MIN", "MAX"), default=None,
+        help="theta_hist: override case.theta_psi_n_range",
+    )
+    parser.add_argument(
+        "--n-cols", type=int, default=None,
+        help="theta_hist: panels per row (default: 4 for per-case mode, or "
+        "the comparison's own n_cols for --compare)",
+    )
+    parser.add_argument(
+        "--compare", action="append", dest="comparisons",
+        help="draw a [comparisons.NAME] figure instead of per-case figures "
+        "(repeatable; only diags with a comparison renderer are valid here)",
+    )
+    parser.add_argument(
+        "--list-comparisons", action="store_true",
+        help="list defined comparisons and exit",
     )
     parser.add_argument("--site", type=Path, default=None, help="explicit site.toml")
     parser.add_argument(
@@ -507,6 +540,105 @@ def _plot_profiles(case: Case, paths: RunPaths, steps: list[int], *, dpi: int | 
         print(f"  {out}")
 
 
+def _plot_theta_hist(
+    case: Case,
+    paths: RunPaths,
+    steps: list[int],
+    *,
+    target_psi: float | None,
+    bins: int | None,
+    psi_range: tuple[float, float] | None,
+    n_cols: int | None,
+    dpi: int | None,
+) -> None:
+    """One panel per step, pooled into a single case's own figure."""
+    real_psi_edge = read_float(paths.real_psi_edge)
+    target = target_psi if target_psi is not None else case.theta_target_psi
+    n_bins = bins if bins is not None else case.theta_bins
+    if psi_range is not None:
+        theta_range = psi_range
+    elif case.theta_psi_n_range is not None:
+        theta_range = tuple(case.theta_psi_n_range)
+    else:
+        theta_range = None
+
+    panels = []
+    for step in steps:
+        records = read_step(paths, step)
+        if not records:
+            print(f"  step {step}: no Poincare cache, skipped")
+            continue
+        result = pooled_crossing_angles(
+            {step: records}, [step],
+            target_psi=target, real_psi_edge=real_psi_edge, psi_n_range=theta_range,
+        )
+        print(f"  step {step}: {result.n_crossed} of {result.n_considered} lines crossed")
+        panels.append((f"t={step}", result.angles))
+
+    if not panels:
+        return
+
+    kwargs = {} if dpi is None else {"dpi": dpi}
+    out = plot_theta_histogram_grid(
+        panels, paths.figures_dir / "theta_hist.png",
+        bins=n_bins, n_cols=n_cols or 4, **kwargs,
+    )
+    print(f"  {out}")
+
+
+def _compare_theta_hist(
+    comparison: Comparison,
+    cases: dict[str, Case],
+    *,
+    target_psi: float | None,
+    bins: int | None,
+    psi_range: tuple[float, float] | None,
+    n_cols: int | None,
+    dpi: int | None,
+    steps: list[int] | None,
+) -> None:
+    """One panel per member case, each pooling that case's own theta_hist
+    steps (or `--step`, if given, applied uniformly across every member)."""
+    panels = []
+    for label, case_name in comparison.labelled_cases():
+        case = cases[case_name]
+        run_dir = Path.cwd() / case.name
+        if not run_dir.is_dir():
+            print(f"  {case_name}: no such folder {run_dir}, skipped")
+            continue
+        paths = RunPaths.detect(run_dir)
+        real_psi_edge = read_float(paths.real_psi_edge)
+
+        target = target_psi if target_psi is not None else case.theta_target_psi
+        if psi_range is not None:
+            theta_range = psi_range
+        elif case.theta_psi_n_range is not None:
+            theta_range = tuple(case.theta_psi_n_range)
+        else:
+            theta_range = None
+
+        case_steps = steps or case.steps_for("theta_hist")
+        records_by_step = {step: read_step(paths, step) for step in case_steps}
+        result = pooled_crossing_angles(
+            records_by_step, case_steps,
+            target_psi=target, real_psi_edge=real_psi_edge, psi_n_range=theta_range,
+        )
+        print(f"  {case_name}: {result.n_crossed} of {result.n_considered} lines crossed")
+        panels.append((label, result.angles))
+
+    if not panels:
+        return
+
+    n_bins = bins if bins is not None else 500
+    out_dir = Path.cwd() / "figures"
+    kwargs = {} if dpi is None else {"dpi": dpi}
+    out = plot_theta_histogram_grid(
+        panels, out_dir / f"{comparison.name}_theta_hist.png",
+        bins=n_bins, n_cols=n_cols or comparison.n_cols, **kwargs,
+    )
+    print(f"  {out}")
+
+
 def _resolve_n_workers(args) -> int:
     """``--n-workers`` if given, else ``site.toml``'s ``[diagnostics]
     n_workers`` if that's explicitly set, else 1 (serial).
@@ -537,6 +669,10 @@ def _run_case(
     n_workers: int = 1,
     psi_range: tuple[float, float] | None = None,
     four_log: bool = True,
+    theta_target_psi: float | None = None,
+    theta_bins: int | None = None,
+    theta_psi_range: tuple[float, float] | None = None,
+    n_cols: int | None = None,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -565,6 +701,49 @@ def _run_case(
         _plot_four_modes(case, paths, steps or case.steps_for("four"), log=four_log, dpi=dpi)
     if "profiles" in diags:
         _plot_profiles(case, paths, steps or case.steps_for("profiles"), dpi=dpi)
+    if "theta_hist" in diags:
+        _plot_theta_hist(
+            case, paths, steps or case.steps_for("theta_hist"),
+            target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
+            n_cols=n_cols, dpi=dpi,
+        )
+
+
+def _run_comparisons(
+    names: list[str],
+    comparisons: dict[str, Comparison],
+    cases: dict[str, Case],
+    *,
+    diags: list[str],
+    steps: list[int] | None,
+    dpi: int | None,
+    theta_target_psi: float | None,
+    theta_bins: int | None,
+    theta_psi_range: tuple[float, float] | None,
+    n_cols: int | None,
+) -> int:
+    unknown = [name for name in names if name not in comparisons]
+    if unknown:
+        print(f"error: unknown comparison(s) {unknown}; --list-comparisons to see defined ones")
+        return 1
+
+    comparable = [d for d in diags if d in COMPARABLE_DIAGS]
+    not_comparable = [d for d in diags if d not in COMPARABLE_DIAGS]
+    if not_comparable:
+        print(f"  diag(s) {not_comparable} have no comparison renderer, skipped")
+    if not comparable:
+        return 0
+
+    for name in names:
+        print(f"==== compare: {name} ====")
+        comparison = comparisons[name]
+        if "theta_hist" in comparable:
+            _compare_theta_hist(
+                comparison, cases,
+                target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
+                n_cols=n_cols, dpi=dpi, steps=steps,
+            )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -585,11 +764,38 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}")
         return 1
 
+    try:
+        comparisons = load_comparisons(args.cases, cases)
+    except CasesError as exc:
+        print(f"error: {exc}")
+        return 1
+
     if args.list:
         for name, case in cases.items():
             note = f" -- {case.note}" if case.note else ""
             print(f"{name} ({len(case.steps)} steps){note}")
         return 0
+
+    if args.list_comparisons:
+        for name, comparison in comparisons.items():
+            note = f" -- {comparison.note}" if comparison.note else ""
+            print(f"{name} ({len(comparison.cases)} cases){note}")
+        return 0
+
+    diags = args.diags or list(DIAG_CHOICES)
+    dpi = args.dpi
+    theta_target_psi = args.theta_target_psi
+    theta_bins = args.theta_bins
+    theta_psi_range = tuple(args.theta_psi_range) if args.theta_psi_range is not None else None
+    n_cols = args.n_cols
+
+    if args.comparisons:
+        return _run_comparisons(
+            args.comparisons, comparisons, cases,
+            diags=diags, steps=args.steps, dpi=dpi,
+            theta_target_psi=theta_target_psi, theta_bins=theta_bins,
+            theta_psi_range=theta_psi_range, n_cols=n_cols,
+        )
 
     selected = args.selected or list(cases)
     unknown = [name for name in selected if name not in cases]
@@ -597,7 +803,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: unknown case(s) {unknown}; --list to see defined cases")
         return 1
 
-    diags = args.diags or list(DIAG_CHOICES)
     n_workers = _resolve_n_workers(args)
     psi_range = tuple(args.psi_range) if args.psi_range is not None else None
 
@@ -610,10 +815,14 @@ def main(argv: list[str] | None = None) -> int:
                 steps=args.steps,
                 log=not args.linear,
                 smooth=args.smooth,
-                dpi=args.dpi,
+                dpi=dpi,
                 n_workers=n_workers,
                 psi_range=psi_range,
                 four_log=not args.four_linear,
+                theta_target_psi=theta_target_psi,
+                theta_bins=theta_bins,
+                theta_psi_range=theta_psi_range,
+                n_cols=n_cols,
             )
         except FileNotFoundError as exc:
             print(f"error: {exc}")

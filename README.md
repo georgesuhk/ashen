@@ -215,7 +215,7 @@ a `jorek2_*` tool itself, and reads the same `cases.toml`:
 
 ```bash
 python ~/ashen/bin/plot --list
-python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag poincare --diag connection_length --diag four --diag profiles
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag poincare --diag connection_length --diag four --diag profiles --diag theta_hist
 ```
 
 Kept as a separate command from `analyse` on purpose: gathering is slow and
@@ -231,6 +231,10 @@ touching the gathering path.
   needed.
 - `--four-linear` draws four's mode amplitudes on a linear scale instead of
   the default log.
+- `--theta-target-psi`, `--theta-bins`, `--theta-psi-range MIN MAX` override
+  `theta_hist`'s case config; `--n-cols` sets its grid width (see below).
+- `--compare NAME` (repeatable) draws a `[comparisons.*]` figure instead of
+  per-case figures; `--list-comparisons` shows what's defined (see below).
 - `--dpi N` overrides the figure resolution.
 
 ### Different step ranges for different diags
@@ -252,6 +256,18 @@ steps = { start = 200, stop = 12000, step = 200 }   # four gets a longer range
 [cases."qa2.1_g2.3/eta1e-3_RE".poincare]
 steps = [200, 3000, 5800]                            # poincare only these
 ```
+
+A `steps` list can also mix explicit values with one or more `{start, stop,
+step}` tables as entries -- e.g. a dense early stretch plus a coarser range
+after it:
+
+```toml
+steps = [200, 400, 600, 800, { start = 1000, stop = 5800, step = 200 }]
+```
+
+Entries are unioned and returned sorted, so a value covered by both an
+explicit entry and a range (like a range's own `start`) collapses to one
+rather than being processed twice. `cases.example.toml` has a fuller example.
 
 Both `analyse` and `plot` respect it -- `analyse --diag four` gathers exactly
 the `four`-overridden steps, not the case's plain ones. `--step` on the
@@ -298,12 +314,72 @@ physical line that is can shift step to step as the q-profile evolves --
 that tracks the real resonance moving, not a bug.
 
 Covered this pass: Poincare puncture plots, the LC/LCTT connection-length
-maps, jorek2_four mode-amplitude time series, and radial profiles -- see
-below. Everything else the legacy `data_jorek.py` plotted (macroscopic-variable
-traces, field-line diffusion, the derived q-profile/`dJ/dr`, stochastic
-factor) is not ported -- see `KNOWN_ISSUES.md` #8. Colour is by each line's
-`psi_n` through a colormap by default (`ashen.plotting.colors`); a discrete
-palette is also available.
+maps, jorek2_four mode-amplitude time series, radial profiles, and the
+field-line theta-crossing histogram -- see below. Everything else the legacy
+`data_jorek.py` plotted (macroscopic-variable traces, field-line diffusion,
+the derived q-profile/`dJ/dr`, stochastic factor) is not ported -- see
+`KNOWN_ISSUES.md` #8. Colour is by each line's `psi_n` through a colormap by
+default (`ashen.plotting.colors`); a discrete palette is also available.
+
+### Field-line theta-crossing histogram
+
+`--diag theta_hist` answers "where poloidally do field lines leave?" -- for
+each traced line it finds the first puncture past `theta_target_psi` (a
+user-facing plasma-fraction `psi_n`, default `1.05`) and histograms the
+poloidal angle `theta` there over `theta_bins` bins (default `500`) spanning
+`(-pi, pi]`. A line that never crosses (confined) contributes nothing. One
+figure per case, one panel per step, written to `theta_hist.png`; the CLI
+also prints how many lines crossed out of how many were considered per step,
+so a `target_psi` set too high to produce anything shows up immediately
+rather than as a flat, silent histogram.
+
+```toml
+[cases."qa2.1_g2.3/eta1e-3_RE"]
+theta_target_psi  = 1.05
+theta_bins        = 1000
+theta_psi_n_range = [0.2, 0.9]   # optional: only count lines starting in this psi_n_in range
+```
+
+`--theta-target-psi`, `--theta-bins`, `--theta-psi-range MIN MAX`, and
+`--n-cols` override the case config per invocation. `theta_psi_n_range`
+filters by each line's **starting** flux surface (its `psi_n_in`), unlike
+`lc_psi_n_in`'s bounds filter above which selects *which already-gathered
+surfaces to plot* -- here every traced surface within range is pooled into
+one histogram, not drawn as separate panels.
+
+Ported from a notebook (`Columbia/NL_kinks/prod_plots_draft0.ipynb`,
+`plot_theta_histogram_matrix`) -- see the docstring of
+`ashen.diagnostics.theta_histogram` for how `real_psi_edge` is applied
+(exactly once, scaling the threshold, never dividing the traced data).
+
+### Comparing across runs
+
+Most figures are about one run's own evolution. `[comparisons.*]` in
+`cases.toml` groups **already-defined cases** into a single cross-run figure
+instead -- e.g. a resistivity scan's theta-crossing histograms, one panel per
+run rather than per step:
+
+```toml
+[comparisons.eta_scan]
+note   = "resistivity scan, theta dispersion at the q=1 crossing"
+cases  = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE", "qa2.1_g2.3/eta1e-5_RE"]
+labels = ["$\\eta = 10^{-3}$", "$\\eta = 10^{-4}$", "$\\eta = 10^{-5}$"]
+n_cols = 5
+```
+
+```bash
+python ~/ashen/bin/plot --list-comparisons
+python ~/ashen/bin/plot --compare eta_scan --diag theta_hist --theta-target-psi 1.05
+```
+
+Each member's own steps still supply that panel's pooled time window --
+`[cases.NAME.theta_hist] steps = [...]` picks which steps one run's panel
+draws from, the same per-diag override mechanism as everywhere else in
+`cases.toml`. Figures land in `./figures/`, named
+`<comparison-name>_<diag>.png`, not in any one member's own run folder.
+`theta_hist` is the only diag with a comparison renderer this pass; asking
+for one without (e.g. `--compare eta_scan --diag profiles`) is reported and
+skipped, not silently ignored.
 
 ### Radial profiles
 
