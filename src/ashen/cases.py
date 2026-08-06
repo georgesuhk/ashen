@@ -20,10 +20,11 @@ __all__ = ["Case", "CasesError", "load_cases"]
 
 #: Case fields that come from [defaults] or a case table, not computed.
 _CASE_KEYS = (
-    "folder", "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
+    "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
     "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
+    "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
 )
 
 
@@ -34,8 +35,6 @@ class CasesError(RuntimeError):
 @dataclass(frozen=True)
 class Case:
     name: str
-    #: Defaults to ``name`` if not given explicitly -- see ``load_cases``.
-    folder: str
     steps: list[int]
     note: str = ""
     #: Poincare requests, satisfied incrementally against the cache -- widening
@@ -48,7 +47,13 @@ class Case:
     phi_start: float = 0.0
     vars: list[str] = field(default_factory=list)
     coords_var: str = "R"
-    tor_mode: str = "midplane"
+    #: Which postproc command(s) to cut the profile with. A bare string in
+    #: cases.toml is normalised to a one-element list by ``load_cases``, so
+    #: listing two (e.g. ``["midplane outer", "average"]``) gathers the same
+    #: variables both ways for comparison. Note ``coords_var = "Psi_N"``
+    #: needs ``midplane outer``, not bare ``midplane`` -- see
+    #: ``ashen.diagnostics.profiles._TOR_MODE_PREFIX``.
+    tor_mode: list[str] = field(default_factory=lambda: ["midplane"])
     namelist: str = "in_main"
     n_points: int = 100
     #: jorek2_four's own defaults (jorek2_four.f90:44-50) -- an unconfigured
@@ -79,6 +84,19 @@ class Case:
     #: visually-linear region of the log-amplitude curve, since points near
     #: the noise floor or past saturation bias a whole-range fit.
     four_growth_steps: list[int] | None = None
+    #: Field-line-tracing knobs for the `average` tor_mode only; the midplane
+    #: family uses n_points instead. Defaults match jorek2_postproc's own
+    #: (jorek2_postproc.f90:44-51). Deliberately separate from the
+    #: identically-named nstpts/nmaxsteps/deltaphi/rad_range above, which
+    #: configure jorek2_four: same physical knobs, different consumer, and
+    #: sharing them would make a jorek2_four tweak silently move the
+    #: profiles. profile_rad_range is the main lever for keeping `average`
+    #: alive on a nonlinear run -- pulling the outer bound in off the
+    #: separatrix keeps tracing inside surfaces that still exist.
+    profile_surfaces: int = 100
+    profile_rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
+    profile_nmaxsteps: int = 2500
+    profile_deltaphi: float = 0.3
 
 
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:
@@ -177,12 +195,6 @@ def load_cases(path: Path | str) -> dict[str, Case]:
     for name, raw in raw_cases.items():
         merged = {**defaults, **raw}
 
-        # folder defaults to the case's own name -- [cases."qa2.1_g2.3/eta1e-3_RE"]
-        # needs no separate folder = "qa2.1_g2.3/eta1e-3_RE" line, since the two
-        # are the overwhelmingly common case. Still overridable when a case is
-        # named for something other than its run folder (e.g. a `[defaults]`-only
-        # rerun under a different label).
-        merged.setdefault("folder", name)
         if "steps" not in merged:
             raise CasesError(f"{path}: case {name!r} has no 'steps'")
         steps = _steps_from_spec(merged.pop("steps"), case_name=name, source=path)
@@ -202,6 +214,39 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                 merged["lc_psi_n_in"] = _psi_from_spec(
                     spec, case_name=name, source=path, field_name="lc_psi_n_in"
                 )
+
+        if "tor_mode" in merged:
+            # A bare string stays valid in cases.toml (and is what every
+            # existing config has); normalise here so downstream code only
+            # ever sees a list. Validated up front rather than deep inside a
+            # pool worker, where the traceback names neither the case nor the
+            # file it came from.
+            from ashen.diagnostics.profiles import TOR_MODES
+
+            spec = merged["tor_mode"]
+            modes = [spec] if isinstance(spec, str) else list(spec)
+            unknown = [m for m in modes if m not in TOR_MODES]
+            if unknown:
+                raise CasesError(
+                    f"{path}: case {name!r} has unknown tor_mode(s) {unknown}; "
+                    f"expected any of {list(TOR_MODES)}"
+                )
+            merged["tor_mode"] = modes
+
+        if "profile_rad_range" in merged:
+            spec = merged["profile_rad_range"]
+            if not (isinstance(spec, list) and len(spec) == 2):
+                raise CasesError(
+                    f"{path}: case {name!r} profile_rad_range must be "
+                    f"[min, max], got {spec!r}"
+                )
+            lo, hi = float(spec[0]), float(spec[1])
+            if not 0.0 <= lo < hi <= 1.0:
+                raise CasesError(
+                    f"{path}: case {name!r} profile_rad_range must satisfy "
+                    f"0 <= min < max <= 1, got [{lo}, {hi}]"
+                )
+            merged["profile_rad_range"] = [lo, hi]
 
         if "four_modes" in merged:
             for mode in merged["four_modes"]:

@@ -28,6 +28,48 @@ def test_profile_script_accepts_single_string_var():
     assert "  expressions R currdens" in text.splitlines()
 
 
+def test_profile_script_midplane_outer_and_inner_pass_through_verbatim():
+    """tor_mode is emitted as the literal command word -- 'midplane outer'/
+    'midplane inner' aren't special-cased here, only in
+    ashen.diagnostics.profiles._TOR_MODE_PREFIX."""
+    text = profile_script("in_main", 1, "Psi_N", "currdens", 100, tor_mode="midplane outer")
+    assert "  midplane outer" in text.splitlines()
+
+
+def test_profile_script_average_uses_surfaces_not_linepoints():
+    """average reads the 'surfaces' setting (exec_commands.f90:1771), not
+    'linepoints' -- the legacy script emitted only linepoints, so an average
+    run silently ignored n_points and traced at the built-in default."""
+    text = profile_script(
+        "in_main", 5000, "Psi_N", "currdens", 100, tor_mode="average",
+        surfaces=250, rad_range=(0.01, 0.85), nmaxsteps=10000,
+        deltaphi=0.05, nsmallsteps=5,
+    )
+    lines = text.splitlines()
+    assert "  set linepoints 100" not in lines
+    assert "  set surfaces 250" in lines
+    assert "  set rad_range_min 0.01" in lines
+    assert "  set rad_range_max 0.85" in lines
+    assert "  set nmaxsteps 10000" in lines
+    assert "  set deltaphi 0.05" in lines
+    assert "  set nsmallsteps 5" in lines
+    assert "  average" in lines
+
+
+def test_profile_script_average_defaults_match_jorek2_postproc_own_fallback():
+    """Unconfigured knobs should reproduce jorek2_postproc's own built-in
+    defaults (jorek2_postproc.f90:44-51) -- an unconfigured average call
+    behaves like a bare `average` with no `set` lines at all."""
+    text = profile_script("in_main", 1, "Psi_N", "currdens", 100, tor_mode="average")
+    lines = text.splitlines()
+    assert "  set surfaces 100" in lines
+    assert "  set rad_range_min 0.001" in lines
+    assert "  set rad_range_max 0.999" in lines
+    assert "  set nmaxsteps 2500" in lines
+    assert "  set deltaphi 0.3" in lines
+    assert "  set nsmallsteps 3" in lines
+
+
 def test_flux_surface_script():
     text = flux_surface_script("in_main", 200, 0.5)
     assert text.splitlines() == [

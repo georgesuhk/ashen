@@ -27,8 +27,26 @@ ang_sample_freq = 8
 phi_start       = 0.0   # toroidal plane the punctures land on
 vars            = ["Jgrad", "currdens"]
 coords_var      = "R"
+# tor_mode accepts a bare string (normalised to a one-element list) or a
+# list, to gather the same variables more than one way. "midplane"/
+# "midplane outer"/"midplane inner" always work (Psi_N is an ordinary
+# pointwise expression, no field-line tracing); "average" is a genuine
+# flux-surface average but does real tracing and can fail once a nonlinear
+# run's flux surfaces stop being closed -- see KNOWN_ISSUES.md #9. Use
+# "midplane outer", not bare "midplane", when coords_var = "Psi_N": bare
+# midplane crosses the magnetic axis and Psi_N is double-valued along it.
+#   tor_mode = ["midplane outer", "average"]   # e.g. current density vs Psi_N
 tor_mode        = "midplane"
 n_points        = 100
+# average-only field-line-tracing knobs; ignored by the midplane family.
+# Commented values are jorek2_postproc's own built-in defaults.
+# Widening profile_rad_range's upper bound past the separatrix is the most
+# likely thing to make `average` fail -- narrow it if a run needs `average`
+# to survive further into a disruption.
+# profile_surfaces  = 100
+# profile_rad_range = [0.001, 0.999]
+# profile_nmaxsteps = 2500
+# profile_deltaphi  = 0.3
 # jorek2_four's own field-line-tracing (magnetic-coordinate) parameters,
 # normally supplied by a hand-written four_params.nml -- `analyse` generates
 # that file itself per step from these. Commented values below are
@@ -64,9 +82,10 @@ n_points        = 100
 # four_growth_rate  = true
 # four_growth_steps = [1000, 3000]
 
-# A case's folder defaults to its own name, the common case since a case
-# usually just points at the run folder it's named after -- no separate
-# folder = "..." line needed.
+# A case's name IS its run folder -- [cases."qa2.1_g2.3/eta1e-3_RE"] points at
+# that exact path under the campaign directory. There is no separate `folder`
+# key; re-analysing the same run under a different label means copying its
+# steps/settings into a differently-named case, not overriding where it reads.
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 steps = { start = 200, stop = 5800, step = 200 }
 note  = "internal kink investigation"
@@ -75,10 +94,3 @@ note  = "internal kink investigation"
 # [cases."qa2.8_g1.8/eta1e-5_RE_ntor11"]
 # steps = [11800, 12000, 12100, 12200, 12300, 12400, 12420, 12430]
 # note  = "ntor=11 island growth"
-
-# Give an explicit folder only when a case is named for something other than
-# the run folder it points at (e.g. re-analysing the same run under a
-# different label/configuration):
-# [cases.eta1e-3_rescan]
-# folder = "qa2.1_g2.3/eta1e-3_RE"
-# steps  = { start = 200, stop = 5800, step = 200 }

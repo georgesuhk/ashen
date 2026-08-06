@@ -5,11 +5,11 @@ and ``get_postproc_profiles``. Staging and execution now go through
 :func:`ashen.jorek2.run_tool` instead of a second hand-rolled
 ``shell=True`` subprocess call.
 
-**Not ported in this pass**: ``plot_postproc_profs`` and ``postproc_get_q``
-(matplotlib plotting on top of the ``.npz`` caches this module writes) --
-see ``ashen/diagnostics/poincare.py``'s module docstring for why plotting is
-deferred, and ``ashen/KNOWN_ISSUES.md`` for the hardcoded-``R0`` issue that
-plotting code carries.
+Drawing lives in :mod:`ashen.plotting.profiles`, which consumes the ``.npz``
+caches written here via :func:`read_profile_series`. ``postproc_get_q``
+(the derived q-profile half of the legacy ``plot_postproc_profs``, and the
+``dJ/dr``-at-the-q=2-surface scatter buried inside it) is still not ported --
+see ``ashen/KNOWN_ISSUES.md`` #8.
 """
 
 from __future__ import annotations
@@ -17,18 +17,36 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import partial
 from pathlib import Path
 
 import numpy as np
 
-from ashen.jorek2 import Jorek2Run, MissingRestartError, run_tool
+from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_tool
 from ashen.paths import RunPaths, step_str
 from ashen.postproc import profile_script, read_postproc_profile
 
-__all__ = ["extract_profile", "expand_compound_vars", "gather_profiles"]
+__all__ = [
+    "extract_profile", "expand_compound_vars", "gather_profiles",
+    "read_profile_series", "TOR_MODES",
+]
 
-_TOR_MODE_PREFIX = {"average": "exprs_averaged_s", "midplane": "exprs_midplane_s"}
+#: Postproc command -> the output filename prefix it writes under ``postproc/``.
+#:
+#: The three midplane variants are distinct commands with distinct output
+#: names (``exec_commands.f90:1332-1345``), not one command with an option:
+#: bare ``midplane`` is ``BOTH_SIDES``, so its cut crosses the magnetic axis
+#: and ``Psi_N`` runs 1 -> 0 -> 1 along it -- double-valued, and useless as a
+#: radial coordinate. ``midplane outer`` (LFS only) is the one to use when
+#: ``coords_var = "Psi_N"``.
+_TOR_MODE_PREFIX = {
+    "average": "exprs_averaged_s",
+    "midplane": "exprs_midplane_s",
+    "midplane outer": "exprs_outer-midplane_s",
+    "midplane inner": "exprs_inner-midplane_s",
+}
+
+#: The valid ``tor_mode`` values, for config validation in ashen.cases.
+TOR_MODES: tuple[str, ...] = tuple(_TOR_MODE_PREFIX)
 
 #: Compound variables that aren't real jorek2_postproc outputs -- they're
 #: derived downstream (e.g. q from r_minor/Btheta/Btor) from these components.
@@ -59,20 +77,36 @@ def extract_profile(
     n_points: int,
     tor_mode: str,
     dest_dir: Path,
+    surfaces: int = 100,
+    rad_range: tuple[float, float] = (0.001, 0.999),
+    nmaxsteps: int = 2500,
+    deltaphi: float = 0.3,
+    nsmallsteps: int = 3,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """One ``(step, var)`` pair. Ports ``gather_profiles.py:17``
+    """One ``(step, var, tor_mode)`` triple. Ports ``gather_profiles.py:17``
     ``run_single_var``.
 
     Stages the *actual* padded restart filename into the scratch dir (not
     ``jorek_restart.h5``) and copies the exe alongside it, matching the
     legacy behaviour exactly -- unlike Poincare tracing, this wasn't
     confirmed to be safe to simplify, so it is preserved as-is.
+
+    The ``surfaces``/``rad_range``/``nmaxsteps``/``deltaphi``/``nsmallsteps``
+    arguments only reach ``average`` (see :func:`ashen.postproc.
+    profile_script`); the midplane family ignores them and uses ``n_points``.
     """
     if tor_mode not in _TOR_MODE_PREFIX:
-        raise ValueError(f"tor_mode {tor_mode!r} has no associated file prefix")
+        raise ValueError(
+            f"tor_mode {tor_mode!r} has no associated file prefix; "
+            f"expected one of {list(_TOR_MODE_PREFIX)}"
+        )
     out_name = f"{_TOR_MODE_PREFIX[tor_mode]}{step_str(step, run.pad_width)}.dat"
 
-    script = profile_script(run.namelist.name, step, coords_var, var, n_points, tor_mode=tor_mode)
+    script = profile_script(
+        run.namelist.name, step, coords_var, var, n_points, tor_mode=tor_mode,
+        surfaces=surfaces, rad_range=rad_range, nmaxsteps=nmaxsteps,
+        deltaphi=deltaphi, nsmallsteps=nsmallsteps,
+    )
     collected = run_tool(
         run,
         "jorek2_postproc",
@@ -95,61 +129,147 @@ def gather_profiles(
     variables: list[str],
     *,
     coords_var: str = "Psi_N",
-    tor_mode: str = "midplane",
+    tor_modes: list[str] | str = "midplane",
     n_points: int = 100,
     n_workers: int = 4,
     force: bool = False,
-    on_progress: Callable[[int, int, int, str], None] | None = None,
-) -> None:
-    """Gathers every ``(step, var)`` profile in parallel and caches each as
-    ``postproc/{coords_var}_{var}_{step}.npz``. Ports
-    ``gather_profiles.py:89`` ``get_postproc_profiles``.
+    surfaces: int = 100,
+    rad_range: tuple[float, float] = (0.001, 0.999),
+    nmaxsteps: int = 2500,
+    deltaphi: float = 0.3,
+    nsmallsteps: int = 3,
+    on_progress: Callable[[int, int, int, str, str], None] | None = None,
+) -> dict[str, int]:
+    """Gathers every ``(step, var, tor_mode)`` profile in parallel, caching
+    each via :meth:`ashen.paths.RunPaths.profile_cache`. Ports
+    ``gather_profiles.py:89`` ``get_postproc_profiles``, extended to several
+    modes at once.
+
+    Returns ``{tor_mode: n_succeeded}`` so the caller can tell a mode that
+    partly worked from one that never worked at all.
+
+    **A failing step no longer aborts the whole gather.** ``average`` does
+    real field-line tracing, and a trace that fails hits a hard Fortran
+    ``stop`` (``mod_straight_field_line.f90:518``) rather than returning an
+    error -- so ``jorek2_postproc`` exits non-zero and :func:`ashen.jorek2.
+    run_tool` raises :class:`~ashen.jorek2.Jorek2Error`. That is the *normal*
+    outcome for late steps of a nonlinear run, where the flux surfaces the
+    average is defined on no longer exist (see ``KNOWN_ISSUES.md`` #9), so it
+    is caught per task, warned about, and stepped over. Where the average
+    stops succeeding is itself the physics signal.
 
     ``force`` replaces the legacy ``force_data = True`` hardcoded at
     ``analysis.py:76`` (which meant every diagnostic always re-ran, cache or
     not) with a real opt-in flag.
 
-    ``on_progress(done, total, step, var)``, if given, fires as each
-    ``(step, var)`` pair finishes -- in completion order, not submission
-    order, since that's the only order a process pool can report in.
+    ``on_progress(done, total, step, var, tor_mode)``, if given, fires as
+    each task finishes -- in completion order, not submission order, since
+    that's the only order a process pool can report in.
     """
+    if isinstance(tor_modes, str):
+        tor_modes = [tor_modes]
     variables = expand_compound_vars(variables)
     paths.postproc_dir.mkdir(parents=True, exist_ok=True)
 
+    succeeded = {mode: 0 for mode in tor_modes}
+
     tasks = []
-    for step in steps:
-        for var in variables:
-            cache = paths.postproc_dir / f"{coords_var}_{var}_{step_str(step, paths.pad_width)}.npz"
-            if force or not cache.is_file():
-                tasks.append((step, var, cache))
+    for mode in tor_modes:
+        for step in steps:
+            for var in variables:
+                cache = paths.profile_cache(coords_var, var, step, mode)
+                if force or not cache.is_file():
+                    tasks.append((step, var, mode, cache))
+                else:
+                    succeeded[mode] += 1
 
     if not tasks:
-        return
+        return succeeded
 
-    extract_one = partial(
-        extract_profile,
-        run,
-        coords_var=coords_var,
-        n_points=n_points,
-        tor_mode=tor_mode,
-        dest_dir=paths.postproc_dir / "_scratch",
-    )
+    scratch = paths.postproc_dir / "_scratch"
     total = len(tasks)
+
+    def _record(step: int, var: str, mode: str, cache: Path, done: int) -> None:
+        try:
+            coords_out, var_out = extract_profile(
+                run, step, var, coords_var,
+                n_points=n_points, tor_mode=mode, dest_dir=scratch,
+                surfaces=surfaces, rad_range=rad_range, nmaxsteps=nmaxsteps,
+                deltaphi=deltaphi, nsmallsteps=nsmallsteps,
+            )
+        except (MissingRestartError, Jorek2Error) as exc:
+            warnings.warn(
+                f"skipping profile step {step} var {var!r} mode {mode!r}: {exc}",
+                stacklevel=2,
+            )
+            return
+        np.savez_compressed(cache, x=coords_out, y=var_out)
+        succeeded[mode] += 1
+        if on_progress is not None:
+            on_progress(done, total, step, var, mode)
+
+    # Serial fallback, same shape (and same reason) as run_four_scan and
+    # cli/analyse.py's _gather_zero_d/_gather_qprofile: it keeps a single
+    # task or n_workers<=1 out of a process pool entirely, so a caller that
+    # substitutes a stand-in extract_profile (e.g. via monkeypatch) is
+    # actually exercised -- a pooled call is pickled by reference and
+    # re-imports the real function fresh in the child process, where no
+    # in-process patch can reach it.
+    if n_workers <= 1 or len(tasks) <= 1:
+        for done, (step, var, mode, cache) in enumerate(tasks, start=1):
+            _record(step, var, mode, cache, done)
+        return succeeded
+
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         futures = {
-            executor.submit(extract_one, step, var): (step, var, cache)
-            for step, var, cache in tasks
+            executor.submit(
+                extract_profile, run, step, var, coords_var,
+                n_points=n_points, tor_mode=mode, dest_dir=scratch,
+                surfaces=surfaces, rad_range=rad_range, nmaxsteps=nmaxsteps,
+                deltaphi=deltaphi, nsmallsteps=nsmallsteps,
+            ): (step, var, mode, cache)
+            for step, var, mode, cache in tasks
         }
         done = 0
         for future in as_completed(futures):
-            step, var, cache = futures[future]
+            step, var, mode, cache = futures[future]
+            done += 1
             try:
                 coords_out, var_out = future.result()
-            except MissingRestartError as exc:
-                warnings.warn(f"skipping profile step {step} var {var!r}: {exc}", stacklevel=2)
-                done += 1
+            except (MissingRestartError, Jorek2Error) as exc:
+                warnings.warn(
+                    f"skipping profile step {step} var {var!r} mode {mode!r}: {exc}",
+                    stacklevel=2,
+                )
                 continue
             np.savez_compressed(cache, x=coords_out, y=var_out)
-            done += 1
+            succeeded[mode] += 1
             if on_progress is not None:
-                on_progress(done, total, step, var)
+                on_progress(done, total, step, var, mode)
+
+    return succeeded
+
+
+def read_profile_series(
+    paths: RunPaths,
+    steps: list[int],
+    coords_var: str,
+    var: str,
+    tor_mode: str = "midplane",
+) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """``{step: (x, y)}`` from the cached ``.npz`` profiles.
+
+    A step with no cache is simply absent from the result rather than
+    ``nan``-filled: unlike a mode-amplitude time series, where a gap has to
+    line up with its neighbours on a shared time axis, each profile here is
+    an independent curve, so "not gathered" and "gathered as empty" stay
+    distinguishable by just not drawing a line.
+    """
+    series: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    for step in steps:
+        cache = paths.profile_cache(coords_var, var, step, tor_mode)
+        if not cache.is_file():
+            continue
+        with np.load(cache) as data:
+            series[step] = (np.asarray(data["x"]), np.asarray(data["y"]))
+    return series

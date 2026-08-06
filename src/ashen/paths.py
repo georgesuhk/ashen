@@ -129,6 +129,29 @@ class RunPaths:
         loop_max_step``): ``qprofile_s<step>.dat``, no range suffix."""
         return self.postproc_dir / f"qprofile_s{self.step_str(step)}.dat"
 
+    def profile_cache(
+        self,
+        coords_var: str,
+        var: str,
+        step: int | float,
+        tor_mode: str = "midplane",
+    ) -> Path:
+        """One ``(coords_var, var, tor_mode)`` radial profile for one step.
+
+        ``midplane`` keeps the legacy name exactly --
+        ``<coords_var>_<var>_<step>.npz``, the format and path the legacy
+        ``gather_profiles.plot_postproc_profs`` still reads, and the one
+        ``KNOWN_ISSUES.md`` #5 explicitly promises is unaffected by the
+        cache changes elsewhere. Every other mode takes a slug suffix, so
+        gathering the same variable under two modes (the flux-averaged
+        ``average`` alongside a ``midplane outer`` cut) doesn't have the
+        second silently overwrite the first.
+        """
+        stem = f"{coords_var}_{var}"
+        if tor_mode != "midplane":
+            stem += "_" + tor_mode.strip().replace(" ", "-")
+        return self.postproc_dir / f"{stem}_{self.step_str(step)}.npz"
+
     # --- Poincare artefacts ---
 
     @property

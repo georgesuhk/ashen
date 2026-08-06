@@ -169,7 +169,7 @@ def _run_case(
     n_workers: int,
     omp_threads: int,
 ) -> None:
-    run_dir = Path.cwd() / case.folder
+    run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
         raise FileNotFoundError(f"case {case.name!r}: no such folder {run_dir}")
 
@@ -212,15 +212,35 @@ def _run_case(
 
     if "profiles" in diags:
 
-        def _profiles_progress(done: int, total: int, step: int, var: str) -> None:
-            print(f"  profiles {done}/{total}: step {step} {var}")
+        def _profiles_progress(done: int, total: int, step: int, var: str, mode: str) -> None:
+            print(f"  profiles {done}/{total}: step {step} {var} [{mode}]")
 
-        profiles_diag.gather_profiles(
+        succeeded = profiles_diag.gather_profiles(
             jrun, paths, case.steps, case.vars,
-            coords_var=case.coords_var, tor_mode=case.tor_mode,
+            coords_var=case.coords_var, tor_modes=case.tor_mode,
             n_points=case.n_points, n_workers=n_workers, force=force,
+            surfaces=case.profile_surfaces,
+            rad_range=tuple(case.profile_rad_range),
+            nmaxsteps=case.profile_nmaxsteps,
+            deltaphi=case.profile_deltaphi,
             on_progress=_profiles_progress,
         )
+        # A mode that partly worked is expected -- `average` stops being
+        # computable once the flux surfaces it averages over are gone. A mode
+        # that never worked once is a configuration problem, and easy to miss
+        # among per-step warnings, so it is called out separately.
+        for mode, n_ok in succeeded.items():
+            if n_ok == 0:
+                print(
+                    f"  warning: tor_mode {mode!r} produced no profiles at all "
+                    f"(every step failed or was skipped)"
+                )
+                if mode.split()[0] == "average":
+                    print(
+                        "    `average` traces field lines and dies where flux "
+                        "surfaces no longer close; try lowering "
+                        "profile_rad_range's upper bound (see KNOWN_ISSUES.md #9)"
+                    )
 
     if "four" in diags:
         # The q-profile locates each mode's q=m/n rational surface for
@@ -286,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         for name, case in cases.items():
             note = f" -- {case.note}" if case.note else ""
-            print(f"{name}: {case.folder} ({len(case.steps)} steps){note}")
+            print(f"{name} ({len(case.steps)} steps){note}")
         return 0
 
     selected = args.selected or list(cases)

@@ -73,8 +73,7 @@ def campaign(tmp_path, monkeypatch):
 
     cases_toml = tmp_path / "cases.toml"
     cases_toml.write_text(
-        '[cases.test]\n'
-        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'psi_n_in = [0.2, 0.5]\n',
         encoding="utf-8",
@@ -86,24 +85,24 @@ def campaign(tmp_path, monkeypatch):
 def test_list_shows_defined_cases(campaign, capsys):
     assert plot_cli.main(["--list"]) == 0
     out = capsys.readouterr().out
-    assert "test:" in out
+    assert "qa2.1_g2.3/eta1e-3_RE (" in out
 
 
 def test_poincare_diag_writes_one_file_per_step(campaign):
-    assert plot_cli.main(["--case", "test", "--diag", "poincare"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
     assert (campaign / "poinc_dir" / "100_poincare.png").is_file()
     assert (campaign / "poinc_dir" / "200_poincare.png").is_file()
 
 
 def test_connection_length_diag_writes_lc_and_lctt(campaign):
-    assert plot_cli.main(["--case", "test", "--diag", "connection_length"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]) == 0
     files = list((campaign / "poinc_dir").glob("L*_*.png"))
     assert any(f.name.startswith("LC_") for f in files)
     assert any(f.name.startswith("LCTT_") for f in files)
 
 
 def test_step_filter_restricts_poincare_output(campaign):
-    assert plot_cli.main(["--case", "test", "--diag", "poincare", "--step", "100"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare", "--step", "100"]) == 0
     assert (campaign / "poinc_dir" / "100_poincare.png").is_file()
     assert not (campaign / "poinc_dir" / "200_poincare.png").is_file()
 
@@ -115,7 +114,7 @@ def test_unknown_case_is_an_error(campaign, capsys):
 
 def test_missing_run_folder_is_reported(tmp_path, monkeypatch):
     (tmp_path / "cases.toml").write_text(
-        '[cases.ghost]\nfolder = "nope"\nsteps = [1]\n', encoding="utf-8"
+        '[cases.ghost]\nsteps = [1]\n', encoding="utf-8"
     )
     monkeypatch.chdir(tmp_path)
     assert plot_cli.main(["--case", "ghost"]) == 1
@@ -125,12 +124,12 @@ def test_missing_log_is_reported_not_raised(campaign, capsys):
     """r_axis raises LogfileError on a missing/unparseable log -- the CLI
     must catch it and continue, not crash the whole run."""
     (campaign / "log").write_text("no axis here\n", encoding="utf-8")
-    assert plot_cli.main(["--case", "test", "--diag", "connection_length"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]) == 0
     assert "error" in capsys.readouterr().out.lower()
 
 
 def test_default_diags_run_both(campaign):
-    assert plot_cli.main(["--case", "test"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE"]) == 0
     assert (campaign / "poinc_dir" / "100_poincare.png").is_file()
     assert list((campaign / "poinc_dir").glob("LC_*.png"))
 
@@ -155,14 +154,14 @@ def test_cli_psi_range_filters_plotted_psi_n(campaign, monkeypatch):
     captured = {}
     _spy_on_matrix_targets(monkeypatch, captured)
     assert plot_cli.main(
-        ["--case", "test", "--diag", "connection_length", "--psi-range", "0.4", "0.6"]
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length", "--psi-range", "0.4", "0.6"]
     ) == 0
     assert captured["targets"] == [0.5]
 
 
 def test_cli_psi_range_with_no_matches_reports_error(campaign, capsys):
     assert plot_cli.main(
-        ["--case", "test", "--diag", "connection_length", "--psi-range", "0.6", "0.9"]
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length", "--psi-range", "0.6", "0.9"]
     ) == 0
     assert "no psi_n_in within range" in capsys.readouterr().out
 
@@ -170,8 +169,7 @@ def test_cli_psi_range_with_no_matches_reports_error(campaign, capsys):
 def test_case_lc_psi_n_in_is_used_without_cli_override(campaign, monkeypatch):
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
-        '[cases.test]\n'
-        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'psi_n_in = [0.2, 0.5]\n'
         'lc_psi_n_in = [0.5]\n',
@@ -179,7 +177,7 @@ def test_case_lc_psi_n_in_is_used_without_cli_override(campaign, monkeypatch):
     )
     captured = {}
     _spy_on_matrix_targets(monkeypatch, captured)
-    assert plot_cli.main(["--case", "test", "--diag", "connection_length"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]) == 0
     assert captured["targets"] == [0.5]
 
 
@@ -188,8 +186,7 @@ def test_cli_psi_range_overrides_case_lc_psi_n_in(campaign, monkeypatch):
     rather than replacing it outright."""
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
-        '[cases.test]\n'
-        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'psi_n_in = [0.2, 0.5]\n'
         'lc_psi_n_in = [0.2, 0.5]\n',
@@ -198,7 +195,7 @@ def test_cli_psi_range_overrides_case_lc_psi_n_in(campaign, monkeypatch):
     captured = {}
     _spy_on_matrix_targets(monkeypatch, captured)
     assert plot_cli.main(
-        ["--case", "test", "--diag", "connection_length", "--psi-range", "0.4", "0.6"]
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length", "--psi-range", "0.4", "0.6"]
     ) == 0
     assert captured["targets"] == [0.5]
 
@@ -215,7 +212,7 @@ def test_four_diag_writes_one_file_per_variable(campaign):
         _four_record("Psi", 0, 1, real_peak=1.5),
         _four_record("u", 0, 0, real_peak=2.5),
     ])
-    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     # The campaign fixture writes a zeroD cache for every step, so both the
     # step-indexed and true-time variants are written.
     assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
@@ -225,7 +222,7 @@ def test_four_diag_writes_one_file_per_variable(campaign):
 
 
 def test_four_diag_with_no_cache_reports_and_does_not_crash(campaign, capsys):
-    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert "no jorek2_four cache found" in capsys.readouterr().out
 
 
@@ -237,7 +234,7 @@ def test_four_diag_skips_time_variant_without_zerod_cache(campaign, capsys):
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])
 
-    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
 
     assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
     assert not (campaign / "four_dir" / "Psi_modes_time.png").exists()
@@ -259,23 +256,21 @@ def test_four_modes_are_m_n_pairs_not_n_m(campaign, monkeypatch):
 
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
-        '[cases.test]\n'
-        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'four_modes = [[3, 2]]\n',  # m=3, n=2
         encoding="utf-8",
     )
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 2, 3, real_peak=1.0)])
 
-    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert captured["modes"] == [(2, 3)]  # (n, m)
 
 
 def test_four_vars_filters_which_files_are_written(campaign):
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
-        '[cases.test]\n'
-        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'four_vars = ["Psi"]\n',
         encoding="utf-8",
@@ -284,7 +279,7 @@ def test_four_vars_filters_which_files_are_written(campaign):
         _four_record("Psi", 0, 1, real_peak=1.0),
         _four_record("u", 0, 0, real_peak=2.0),
     ])
-    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
     assert not (campaign / "four_dir" / "u_modes_step.png").exists()
     assert (campaign / "four_dir" / "Psi_modes_time.png").is_file()
@@ -297,15 +292,14 @@ def test_four_vars_filters_which_files_are_written(campaign):
 def test_four_growth_rate_off_by_default_writes_no_summary(campaign):
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])
-    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert not (campaign / "four_dir" / "growth_rates.txt").exists()
 
 
 def test_four_growth_rate_writes_a_summary_with_the_fitted_gamma(campaign):
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
-        '[cases.test]\n'
-        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'four_growth_rate = true\n',
         encoding="utf-8",
@@ -315,7 +309,7 @@ def test_four_growth_rate_writes_a_summary_with_the_fitted_gamma(campaign):
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 2, 1, real_peak=1.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 2, 1, real_peak=1.64872)])
 
-    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
 
     growth_path = campaign / "four_dir" / "growth_rates.txt"
     assert growth_path.is_file()
@@ -331,8 +325,7 @@ def test_four_growth_rate_skipped_without_zerod_cache(campaign, capsys):
     (campaign / "postproc" / "zeroD_quantities_s000200.dat").unlink()
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
-        '[cases.test]\n'
-        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'four_growth_rate = true\n',
         encoding="utf-8",
@@ -340,7 +333,7 @@ def test_four_growth_rate_skipped_without_zerod_cache(campaign, capsys):
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])
 
-    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
 
     assert not (campaign / "four_dir" / "growth_rates.txt").exists()
     assert "skipping growth-rate fit" in capsys.readouterr().out
@@ -358,8 +351,7 @@ def test_four_growth_steps_is_passed_through_as_step_range(campaign, monkeypatch
 
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
-        '[cases.test]\n'
-        'folder = "qa2.1_g2.3/eta1e-3_RE"\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'four_growth_rate = true\n'
         'four_growth_steps = [100, 150]\n',
@@ -368,5 +360,158 @@ def test_four_growth_steps_is_passed_through_as_step_range(campaign, monkeypatch
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])
 
-    assert plot_cli.main(["--case", "test", "--diag", "four"]) == 0
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert captured["step_range"] == (100, 150)
+
+
+# --- radial profiles: current density (or anything else) vs psi_n -----------------
+
+
+def _write_profile_cache(run_dir, coords_var, var, step, tor_mode, x, y):
+    paths = RunPaths(run_dir, pad_width=6)
+    cache = paths.profile_cache(coords_var, var, step, tor_mode)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(cache, x=np.asarray(x), y=np.asarray(y))
+    return cache
+
+
+def test_profiles_diag_writes_one_file_per_var(campaign):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens", "T"]\n',
+        encoding="utf-8",
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+        )
+        _write_profile_cache(
+            campaign, "Psi_N", "T", step, "midplane", [0.1, 0.5, 0.9], [3.0, 2.0, 1.0],
+        )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+
+    assert (campaign / "poinc_dir" / "Psi_N_currdens_profile.png").is_file()
+    assert (campaign / "poinc_dir" / "Psi_N_T_profile.png").is_file()
+
+
+def test_profiles_diag_with_no_cache_reports_and_does_not_crash(campaign, capsys):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'vars = ["currdens"]\n',
+        encoding="utf-8",
+    )
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert "no cached" in capsys.readouterr().out
+
+
+def test_profiles_diag_with_no_vars_reports_and_does_not_crash(campaign, capsys):
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert "no vars configured" in capsys.readouterr().out
+
+
+def test_profiles_diag_draws_every_configured_tor_mode(campaign, monkeypatch):
+    """Two tor_modes in the case must both be read and passed to the plot,
+    even when only one of them actually has a cache -- the missing one
+    should show as an empty panel, not silently drop out."""
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n'
+        'tor_mode = ["midplane", "average"]\n',
+        encoding="utf-8",
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5], [1.0, 2.0],
+    )
+    # No cache for "average" -- simulates a run where the flux average died.
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["modes"] = list(series_by_mode)
+        captured["average_is_empty"] = series_by_mode.get("average") == {}
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["modes"] == ["midplane", "average"]
+    assert captured["average_is_empty"] is True
+
+
+def test_profiles_diag_jgrad_expands_to_its_components(campaign):
+    """Jgrad is a compound var (ashen-side, not a real jorek2_postproc
+    expression) -- the cache lookup must be by its expanded component names,
+    matching what gather_profiles actually wrote."""
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["Jgrad"]\n',
+        encoding="utf-8",
+    )
+    for var in ("currdens", "Btheta", "Btor", "r_minor"):
+        _write_profile_cache(
+            campaign, "Psi_N", var, 100, "midplane", [0.1, 0.5], [1.0, 2.0],
+        )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert (campaign / "poinc_dir" / "Psi_N_currdens_profile.png").is_file()
+
+
+def test_profiles_diag_colors_by_true_time_when_zerod_available(campaign, monkeypatch):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n',
+        encoding="utf-8",
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane", [0.1], [1.0],
+        )
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["color_label"] = kwargs.get("color_label")
+        captured["color_by"] = kwargs.get("color_by")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["color_label"] == r"t [$\mu s$]"
+    assert captured["color_by"] == {100: 100.0, 200: 200.0}  # 1e-4 s, 2e-4 s -> us
+
+
+def test_profiles_diag_falls_back_to_step_index_without_zerod(campaign, capsys):
+    (campaign / "postproc" / "zeroD_quantities_s000100.dat").unlink()
+    (campaign / "postproc" / "zeroD_quantities_s000200.dat").unlink()
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n',
+        encoding="utf-8",
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 100, "midplane", [0.1], [1.0],
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert "colouring profiles by step index" in capsys.readouterr().out

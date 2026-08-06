@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from ashen.cases import Case
 from ashen.cli import analyse as analyse_cli
 from ashen.jorek2 import Jorek2Run, MissingRestartError
 from ashen.paths import RunPaths
@@ -132,3 +133,83 @@ def test_qprofile_force_recomputes_cached_steps(jrun_and_paths, monkeypatch):
     analyse_cli._gather_qprofile(run, paths, [100], force=True, n_workers=1)
 
     assert calls == [100]
+
+
+# --- profiles: _run_case's per-mode never-succeeded warning ----------------------
+
+
+@pytest.fixture
+def case_and_run_dir(tmp_path, monkeypatch):
+    """A minimal on-disk run folder + Case, real enough for _run_case's
+    Path.cwd()/case.name existence check, with gather_profiles itself
+    always monkeypatched by the individual test."""
+    monkeypatch.chdir(tmp_path)
+    run_dir = tmp_path / "myrun"
+    run_dir.mkdir()
+    (run_dir / "in_main").write_text("&in1\n&end\n", encoding="utf-8")
+    (run_dir / "jorek000100.h5").write_bytes(b"")
+    (run_dir / "jorek000200.h5").write_bytes(b"")
+    case = Case(name="myrun", steps=[100, 200], vars=["currdens"])
+    return case, run_dir
+
+
+def test_profiles_warns_when_a_mode_never_succeeds(case_and_run_dir, monkeypatch, capsys):
+    case, run_dir = case_and_run_dir
+    monkeypatch.setattr(
+        analyse_cli.profiles_diag, "gather_profiles",
+        lambda *a, **k: {"midplane": 2, "average": 0},
+    )
+
+    analyse_cli._run_case(case, diags=["profiles"], force=False, n_workers=1, omp_threads=1)
+
+    out = capsys.readouterr().out
+    assert "tor_mode 'average' produced no profiles at all" in out
+    assert "tor_mode 'midplane' produced no profiles" not in out
+
+
+def test_profiles_average_failure_hint_only_shown_for_average(case_and_run_dir, monkeypatch, capsys):
+    case, run_dir = case_and_run_dir
+    monkeypatch.setattr(
+        analyse_cli.profiles_diag, "gather_profiles",
+        lambda *a, **k: {"average": 0},
+    )
+
+    analyse_cli._run_case(case, diags=["profiles"], force=False, n_workers=1, omp_threads=1)
+
+    assert "traces field lines and dies" in capsys.readouterr().out
+
+
+def test_profiles_no_warning_when_every_mode_succeeds(case_and_run_dir, monkeypatch, capsys):
+    case, run_dir = case_and_run_dir
+    monkeypatch.setattr(
+        analyse_cli.profiles_diag, "gather_profiles",
+        lambda *a, **k: {"midplane": 2, "average": 1},
+    )
+
+    analyse_cli._run_case(case, diags=["profiles"], force=False, n_workers=1, omp_threads=1)
+
+    assert "produced no profiles" not in capsys.readouterr().out
+
+
+def test_profiles_passes_case_knobs_through_to_gather_profiles(case_and_run_dir, monkeypatch):
+    case, run_dir = case_and_run_dir
+    captured = {}
+
+    def fake_gather(jrun, paths, steps, variables, **kwargs):
+        captured.update(kwargs)
+        captured["steps"] = steps
+        captured["variables"] = variables
+        return {m: 1 for m in kwargs["tor_modes"]}
+
+    monkeypatch.setattr(analyse_cli.profiles_diag, "gather_profiles", fake_gather)
+
+    analyse_cli._run_case(case, diags=["profiles"], force=False, n_workers=1, omp_threads=1)
+
+    assert captured["coords_var"] == case.coords_var
+    assert captured["tor_modes"] == case.tor_mode
+    assert captured["surfaces"] == case.profile_surfaces
+    assert captured["rad_range"] == tuple(case.profile_rad_range)
+    assert captured["nmaxsteps"] == case.profile_nmaxsteps
+    assert captured["deltaphi"] == case.profile_deltaphi
+    assert captured["steps"] == case.steps
+    assert captured["variables"] == case.vars

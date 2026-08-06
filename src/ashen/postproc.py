@@ -37,11 +37,48 @@ def profile_script(
     *,
     units: int = 1,
     tor_mode: str = "midplane",
+    surfaces: int = 100,
+    rad_range: tuple[float, float] = (0.001, 0.999),
+    nmaxsteps: int = 2500,
+    deltaphi: float = 0.3,
+    nsmallsteps: int = 3,
 ) -> str:
-    """Ports ``basics.py:25`` ``write_jorek_postproc_script``."""
+    """Ports ``basics.py:25`` ``write_jorek_postproc_script``.
+
+    **The legacy version emitted the wrong knob for ``average``.** The
+    midplane family (``midplane``/``midplane outer``/``midplane inner``,
+    and ``pol_line``/``tor_line``) reads ``linepoints``
+    (``exec_commands.f90:1330``), but ``average`` reads ``surfaces``
+    (``exec_commands.f90:1771``) plus the field-line-tracing parameters
+    ``rad_range_min``/``rad_range_max``/``nmaxsteps``/``deltaphi``/
+    ``nsmallsteps`` (``:1772-1777``). ``basics.py:25`` only ever wrote
+    ``set linepoints``, so an ``average`` run silently ignored ``n_points``
+    and traced at whatever the built-in defaults were
+    (``jorek2_postproc.f90:44-51``).
+
+    That matters beyond tidiness: ``rad_range_max`` defaults to 0.999, i.e.
+    tracing right up to the separatrix, which is where ``trace_fieldlines``
+    is most likely to fail -- and its failure is a hard Fortran ``stop``
+    (``mod_straight_field_line.f90:518``) that kills the whole process, not
+    an error return. Pulling ``rad_range`` in to the still-nested core is
+    the main lever for getting a flux average out of a nonlinear run at all.
+    """
     if isinstance(variables, str):
         variables = [variables]
     expressions = [coords_var, *variables]
+
+    if tor_mode.split()[0] == "average":
+        knobs = [
+            f"  set surfaces {int(surfaces)}",
+            f"  set rad_range_min {float(rad_range[0])}",
+            f"  set rad_range_max {float(rad_range[1])}",
+            f"  set nmaxsteps {int(nmaxsteps)}",
+            f"  set deltaphi {float(deltaphi)}",
+            f"  set nsmallsteps {int(nsmallsteps)}",
+        ]
+    else:
+        knobs = [f"  set linepoints {int(n_points)}"]
+
     lines = [
         f"namelist {namelist}",
         f"set units {units}",
@@ -49,7 +86,7 @@ def profile_script(
         "",
         "  expressions " + " ".join(expressions),
         "  mark_coords 1",
-        f"  set linepoints {n_points}",
+        *knobs,
         f"  {tor_mode}",
         "done",
         "",

@@ -99,6 +99,8 @@ def test_all_artefacts_share_one_width(tmp_path):
         paths.zero_d(100).name,
         paths.poincare_cache(100).name,
         paths.flux_surface(0.5, 100).name,
+        paths.profile_cache("Psi_N", "currdens", 100).name,
+        paths.profile_cache("Psi_N", "currdens", 100, "average").name,
     ]
     assert all("00100" in name for name in stamped)
     assert not any("000100" in name for name in stamped)
@@ -132,6 +134,33 @@ def test_postproc_artefact_names(tmp_path):
     assert paths.flux_surface(0.5, 10).name == "fluxsurface_at_psi_0.500_s000010.dat"
     assert paths.poincare_cache(10).name == "poinc_s000010.h5"
     assert paths.poincare_cache_legacy(10, "psi_n").name == "poinc_t000010_psi_n.npz"
+
+
+def test_profile_cache_midplane_keeps_the_legacy_name(tmp_path):
+    """midplane must keep exactly the legacy .npz name/path -- the one cache
+    KNOWN_ISSUES.md #5 promises is unaffected by later changes, since legacy
+    plot_postproc_profs still reads it directly."""
+    paths = RunPaths(tmp_path, pad_width=6)
+    cache = paths.profile_cache("Psi_N", "currdens", 100)
+    assert cache.name == "Psi_N_currdens_000100.npz"
+    assert cache.parent == tmp_path / "postproc"
+
+
+def test_profile_cache_non_midplane_modes_get_a_suffix(tmp_path):
+    paths = RunPaths(tmp_path, pad_width=6)
+    average = paths.profile_cache("Psi_N", "currdens", 100, "average")
+    outer = paths.profile_cache("Psi_N", "currdens", 100, "midplane outer")
+    assert average.name == "Psi_N_currdens_average_000100.npz"
+    assert outer.name == "Psi_N_currdens_midplane-outer_000100.npz"
+
+
+def test_profile_cache_modes_do_not_collide(tmp_path):
+    paths = RunPaths(tmp_path, pad_width=6)
+    names = {
+        paths.profile_cache("Psi_N", "currdens", 100, mode).name
+        for mode in ("midplane", "midplane outer", "midplane inner", "average")
+    }
+    assert len(names) == 4
 
 
 def test_artefacts_live_under_the_run_directory(tmp_path):

@@ -225,11 +225,13 @@ George, 2026-08-05):
   half (LC/LCTT) was in scope this pass.
 - `plot_macro_var` (`data_jorek.py:137`) — macroscopic-variable time series
   from `macroscopic_vars.dat`. Leaks figures (no `plt.close()`).
-- `plot_postproc_profs` / `postproc_get_q` (`gather_profiles.py:130,140`) —
-  radial profile plots and the q-profile calculation. `dJ/dr` at the q=2
-  surface currently exists only as unsaved scatter points inside this
-  function (`gather_profiles.py:163-175`) and would need extracting, same as
-  connection length was.
+- `postproc_get_q` (`gather_profiles.py:130`) — the derived q-profile
+  computed from `Btor`/`Btheta`/`r_minor` (as opposed to `qprofile`'s own
+  q output, already available via `ashen.diagnostics.qprofile`) and the
+  `dJ/dr` at the q=2 surface it feeds, which exists only as unsaved scatter
+  points inside `gather_profiles.py:163-175`. **The plain radial profile
+  plots themselves (`plot_postproc_profs`'s main loop) are ported** -- see
+  #9 -- this bullet is only the q-derivation/`dJ/dr` half.
 - `calc_stochast_factor` (`data_jorek.py:702`) — computed, never plotted;
   the `"plot_stochastic_factor"` diag name in legacy `analysis.py:171`
   is a misnomer that actually calls `plot_connection_length`.
@@ -238,3 +240,65 @@ George, 2026-08-05):
 - The CASTOR3D-scan plots in `castor3d/util/data.py` (`create_li_gr_plot`
   and friends) are a separate lineage entirely, out of scope for the JOREK
   wrapper migration.
+
+---
+
+## 9. `jorek2_postproc`'s `average` command dies once flux surfaces are destroyed
+
+**Where:** vendored JOREK, not ashen -- `Columbia/jorek_RE/diagnostics/
+postproc/exec_commands.f90:1747` (`average`) via `new_diag/mod_position.f90:167`
+(`pol_pos`) via `new_diag/mod_straight_field_line.f90:342` (`trace_fieldlines`).
+Recorded here, not fixed, because the fix is in code this tree does not edit
+(see `CLAUDE.md`: `Columbia/jorek_RE` is vendored upstream).
+
+**What happens:** `average` computes a genuine flux-surface average by real
+field-line tracing (unlike `qprofile`/`fluxsurface`/`find_q_surface`, which use
+2D contour finding and have none of this failure mode). Once a run's magnetic
+axis approaches the grid boundary closely enough,
+`is_LCFS_lost` (`models/equil_info.f90:1265`) sets `ES%LCFS_is_lost = .true.`,
+and `get_psi_n` (`equil_info.f90:982`) then returns the **constant** `1.01`
+for every point in the domain:
+
+```fortran
+if (ES%LCFS_is_lost .or. abs(ES%psi_bnd - ES%psi_axis) < 1d-6 ) then
+  get_psi_n = 1.01d0
+  return
+endif
+```
+
+The tracer's starting-point bisection therefore converges to the magnetic axis
+for every requested surface, no field line ever completes a poloidal turn, and
+the routine hits a **hard Fortran `stop`**
+(`mod_straight_field_line.f90:518`) rather than an error return --
+`jorek2_postproc` exits the whole process, mid-`for`-loop, rather than
+skipping the one bad step. The same `stop` is also reachable earlier and more
+generally whenever a traced line simply leaves the mesh (e.g. near a
+stochastic/ergodic edge, well before `LCFS_is_lost` itself trips).
+
+**Consequence:** `average` cannot produce a flux-surface-averaged profile
+(e.g. `<currdens>(Psi_N)`) past the point in a nonlinear run where the
+original flux surfaces stop being nested and closed -- which, for the kink/
+tearing-mode runs this tree is built around, is often the timestep of actual
+physics interest.
+
+**What ashen does about it:** `ashen.diagnostics.profiles.gather_profiles`
+catches the resulting `Jorek2Error` **per `(step, var, tor_mode)` task**, warns,
+and continues -- one failing `average` step no longer aborts gathering every
+other step, variable, or mode. `Case.profile_rad_range` (default `[0.001,
+0.999]`, matching `jorek2_postproc`'s own default) is the main lever for
+avoiding the failure in the first place: pulling the upper bound in off the
+separatrix keeps tracing inside surfaces that are still actually nested. The
+companion `midplane`/`midplane outer`/`midplane inner` commands do no tracing
+at all (`Psi_N` is an ordinary pointwise expression, `mod_expression.f90:120`,
+evaluated the same way `currdens` is) and always produce *something*, even
+once `average` cannot -- gathering both under one case's `tor_mode` list and
+plotting them side by side (`ashen.plotting.profiles.plot_profile_comparison`)
+makes "where does the flux average stop being computable" a visible result
+rather than a crashed run.
+
+**Not fixed, and cannot be from here:** `pol_pos` (`mod_position.f90:167`)
+also declares its own `ierr` as a local variable it never propagates to its
+caller, and `average` never checks `ierr` after `eval_expr`
+(`exec_commands.f90:1790`) -- so some failure modes end in an unallocated-array
+write rather than even reaching the `stop` above. Both are vendored-source
+bugs.

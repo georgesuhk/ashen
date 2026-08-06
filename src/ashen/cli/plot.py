@@ -36,14 +36,16 @@ from ashen.diagnostics.four_modes import (
     rational_surface_series,
 )
 from ashen.diagnostics.poincare_cache import read_step
+from ashen.diagnostics.profiles import expand_compound_vars, read_profile_series
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes
 from ashen.plotting.poincare import plot_poincare_step
+from ashen.plotting.profiles import plot_profile_comparison
 from ashen.postproc import read_zeroD
 
-DIAG_CHOICES = ("poincare", "connection_length", "four")
+DIAG_CHOICES = ("poincare", "connection_length", "four", "profiles")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -270,6 +272,48 @@ def _plot_four_modes(
             print(f"  {out}")
 
 
+def _plot_profiles(case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None) -> None:
+    """One figure per variable: a panel per ``tor_mode``, a curve per step.
+
+    Colour carries true time where the zeroD cache allows it, falling back to
+    step index -- the same all-or-nothing rule as ``_plot_four_modes``' time
+    axis, since a colour scale mixing seconds and step indices would be worse
+    than one honest unit.
+    """
+    variables = expand_compound_vars(case.vars)
+    if not variables:
+        print("  no vars configured for this case; nothing to plot")
+        return
+
+    true_times = _read_true_times(paths, steps)
+    if true_times is not None:
+        color_by = {step: t * 1e6 for step, t in zip(steps, true_times)}
+        color_label = r"t [$\mu s$]"
+    else:
+        color_by = None
+        color_label = "Time step"
+        print("  no zeroD cache for one or more steps (run analyse --diag zerod); "
+              "colouring profiles by step index")
+
+    kwargs = {} if dpi is None else {"dpi": dpi}
+    for var in variables:
+        series_by_mode = {
+            mode: read_profile_series(paths, steps, case.coords_var, var, mode)
+            for mode in case.tor_mode
+        }
+        if not any(series_by_mode.values()):
+            print(f"  no cached {var!r} profiles (run analyse --diag profiles)")
+            continue
+
+        out = paths.figures_dir / f"{case.coords_var}_{var}_profile.png"
+        plot_profile_comparison(
+            series_by_mode, var, out,
+            color_by=color_by, color_label=color_label,
+            xlabel=case.coords_var, **kwargs,
+        )
+        print(f"  {out}")
+
+
 def _resolve_n_workers(args) -> int:
     """``--n-workers`` if given, else ``site.toml``'s ``[diagnostics]
     n_workers`` if that's explicitly set, else 1 (serial).
@@ -301,7 +345,7 @@ def _run_case(
     psi_range: tuple[float, float] | None = None,
     four_log: bool = True,
 ) -> None:
-    run_dir = Path.cwd() / case.folder
+    run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
         raise FileNotFoundError(f"case {case.name!r}: no such folder {run_dir}")
     paths = RunPaths.detect(run_dir)
@@ -318,6 +362,8 @@ def _run_case(
         )
     if "four" in diags:
         _plot_four_modes(case, paths, case_steps, log=four_log, dpi=dpi)
+    if "profiles" in diags:
+        _plot_profiles(case, paths, case_steps, dpi=dpi)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -341,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         for name, case in cases.items():
             note = f" -- {case.note}" if case.note else ""
-            print(f"{name}: {case.folder} ({len(case.steps)} steps){note}")
+            print(f"{name} ({len(case.steps)} steps){note}")
         return 0
 
     selected = args.selected or list(cases)

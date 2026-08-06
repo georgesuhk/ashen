@@ -82,11 +82,10 @@ current directory → `~/.config/ashen/site.toml`.
 ## Gathering analysis data for a case
 
 Copy `cases.example.toml` to a campaign folder as `cases.toml` and define a
-named entry per investigation -- see the file for the format. A case's
-`folder` defaults to its own name (`[cases."qa2.1_g2.3/eta1e-3_RE"]` needs no
-separate `folder = "qa2.1_g2.3/eta1e-3_RE"` line), the common case; give an
-explicit `folder` only when a case is named for something other than the run
-folder it points at. Then, from anywhere:
+named entry per investigation -- see the file for the format. A case's name
+*is* the run folder it points at (`[cases."qa2.1_g2.3/eta1e-3_RE"]` reads
+that exact path) -- there is no separate `folder` key to override it. Then,
+from anywhere:
 
 ```bash
 python ~/ashen/bin/analyse --list                          # show defined cases
@@ -94,8 +93,7 @@ python ~/ashen/bin/analyse --case "qa2.1_g2.3/eta1e-3_RE" --diag zerod --diag po
 ```
 
 `--force` re-runs even where cached output already exists (default: reuse it).
-This gathers and caches data only -- plotting is not ported yet, see Status
-below.
+This gathers and caches data only; `bin/plot` (below) draws figures from it.
 
 `--diag poincare` also runs `zerod` even if not requested explicitly: `plot`'s
 LCTT figure reads each step's true time from the zeroD cache, so a
@@ -124,6 +122,58 @@ the record). For stochastic lines it will not match an uninterrupted trace of
 the same length point-for-point -- it samples the same field and the same
 invariant set, so island widths, diffusion and Poincaré plots are unaffected,
 but it is not bit-reproducible. Use `--force` when a result must be.
+
+### Radial profiles (jorek2_postproc)
+
+`--diag profiles` gathers `case.vars` against `case.coords_var` (default
+`"R"`; use `"Psi_N"` for a psi-normalised profile) at every requested step,
+cached to `postproc/<coords_var>_<var>_<step>.npz` (or `..._<mode>_<step>.npz`
+for anything other than plain `midplane` -- see below). `q` and `Jgrad` are
+compound vars expanded into their components (`r_minor`/`Btheta`/`Btor`, and
+`currdens`/`Btheta`/`Btor`/`r_minor` respectively) before gathering.
+
+`case.tor_mode` is a list -- a bare string is accepted and normalised to a
+one-element list -- of any of `"midplane"`, `"midplane outer"`,
+`"midplane inner"`, `"average"`. Listing more than one gathers the same
+variables multiple ways for comparison, e.g. `tor_mode = ["midplane outer",
+"average"]` for **toroidal current density vs `Psi_N`**:
+
+```toml
+coords_var = "Psi_N"
+vars       = ["currdens"]
+tor_mode   = ["midplane outer", "average"]
+```
+
+**Use `"midplane outer"`, not bare `"midplane"`, when `coords_var = "Psi_N"`.**
+Bare `midplane` cuts through the magnetic axis, so `Psi_N` runs `1 -> 0 -> 1`
+along it and the profile is double-valued; `midplane outer` is single-sided
+and monotone while surfaces stay nested. Neither does any flux-surface
+finding or field-line tracing -- `Psi_N` is just an ordinary pointwise
+expression, evaluated the same way `currdens` is -- so it always produces a
+profile, at every step, regardless of how disrupted the field is. It is a
+**cut**, not a flux average, though: the value at a point is the local field
+at that point on that line, not `<J>` over the whole surface.
+
+**`average` is a genuine flux-surface average, and it can fail.** It traces
+field lines to build each flux surface, which means it depends on those
+surfaces actually existing and closing -- something a nonlinear kink/tearing
+run can violate at exactly the timesteps of physics interest. When it fails
+the underlying JOREK process exits non-zero (occasionally via a hard abort
+inside the tracer); `gather_profiles` catches this **per step**, warns, and
+moves on rather than losing the rest of the gather -- see `KNOWN_ISSUES.md`
+#9 for the full mechanism. `Case.profile_rad_range` (default `[0.001,
+0.999]`, matching `jorek2_postproc`'s own default) is the main lever for
+keeping it alive longer: pulling the upper bound in off the separatrix keeps
+tracing inside the still-nested core. `profile_surfaces`/`profile_nmaxsteps`/
+`profile_deltaphi` are the remaining tracing knobs, all `average`-only and
+separate from the identically-named `jorek2_four` fields (`nstpts` etc.) --
+same physical parameters, different consumer.
+
+After gathering, `analyse` prints a warning naming any `tor_mode` that
+produced **zero** profiles across every step -- distinct from a mode that
+partly worked (expected for `average` on a disrupting run) versus one that
+never worked at all (more likely a configuration problem, e.g.
+`profile_rad_range` set too wide for this case from the start).
 
 ### Fourier decomposition (jorek2_four)
 
@@ -165,7 +215,7 @@ a `jorek2_*` tool itself, and reads the same `cases.toml`:
 
 ```bash
 python ~/ashen/bin/plot --list
-python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag poincare --diag connection_length --diag four
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag poincare --diag connection_length --diag four --diag profiles
 ```
 
 Kept as a separate command from `analyse` on purpose: gathering is slow and
@@ -204,11 +254,27 @@ error -- widening `lc_psi_n_in` beyond what was gathered doesn't add real
 data, only `analyse --diag poincare` with a wider/denser `psi_n_in` does.
 
 Covered this pass: Poincare puncture plots, the LC/LCTT connection-length
-maps, and jorek2_four mode-amplitude time series -- see below. Everything else
-the legacy `data_jorek.py` plotted (macroscopic-variable traces, field-line
-diffusion, radial profiles, stochastic factor) is not ported -- see
-`KNOWN_ISSUES.md` #8. Colour is by each line's `psi_n` through a colormap by
-default (`ashen.plotting.colors`); a discrete palette is also available.
+maps, jorek2_four mode-amplitude time series, and radial profiles -- see
+below. Everything else the legacy `data_jorek.py` plotted (macroscopic-variable
+traces, field-line diffusion, the derived q-profile/`dJ/dr`, stochastic
+factor) is not ported -- see `KNOWN_ISSUES.md` #8. Colour is by each line's
+`psi_n` through a colormap by default (`ashen.plotting.colors`); a discrete
+palette is also available.
+
+### Radial profiles
+
+`--diag profiles` draws one figure per `(coords_var, var)` gathered by
+`analyse --diag profiles` -- one **panel per `tor_mode`** (sharing a y-axis),
+one **line per restart step** within each panel, coloured by true time (from
+the zeroD cache) or step index if that cache is incomplete. Saved to
+`<coords_var>_<var>_profile.png`.
+
+A `tor_mode` with no cached data still gets its (empty, labelled) panel rather
+than being silently dropped -- when comparing e.g. `["midplane outer",
+"average"]`, that `average`'s panel is empty (or thins out partway through
+the step sequence) *is* the result: it shows directly where the flux-surface
+average stopped being computable, rather than requiring a run through the
+warnings `analyse` printed at gather time. See `KNOWN_ISSUES.md` #9.
 
 ### jorek2_four mode-amplitude time series
 
@@ -321,9 +387,10 @@ touching `profiles.py`.
 ## Status
 
 Phases 1-4 are built. `run_jorek` prepares and submits runs end-to-end;
-`analyse` gathers and caches zeroD/Poincare/profile data; `plot` draws Poincare
-and connection-length figures from it. **Not yet ported:** the rest of the
-matplotlib plotting layer (`plot_field_line_diffusion`, radial profiles,
+`analyse` gathers and caches zeroD/Poincare/profile/jorek2_four/q-profile data;
+`plot` draws Poincare, connection-length, jorek2_four mode-amplitude, and
+radial-profile figures from it. **Not yet ported:** the rest of the matplotlib
+plotting layer (`plot_field_line_diffusion`, the derived q-profile/`dJ/dr`,
 macroscopic-variable traces, stochastic factor -- see `KNOWN_ISSUES.md` #8).
 Legacy `Columbia/NL_kinks/analysis.py` still works for those against
 Ashen-gathered caches, except the Poincare cache itself, which moved to a new

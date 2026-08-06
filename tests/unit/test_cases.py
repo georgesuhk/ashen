@@ -18,14 +18,13 @@ def test_case_with_explicit_step_list(tmp_path):
         tmp_path,
         """
         [cases."qa2.1_g2.3/eta1e-3_RE"]
-        folder = "qa2.1_g2.3/eta1e-3_RE"
         steps = [200, 400, 600]
         note = "internal kink investigation"
         """,
     )
     cases = load_cases(path)
     case = cases["qa2.1_g2.3/eta1e-3_RE"]
-    assert case.folder == "qa2.1_g2.3/eta1e-3_RE"
+    assert case.name == "qa2.1_g2.3/eta1e-3_RE"
     assert case.steps == [200, 400, 600]
     assert case.note == "internal kink investigation"
 
@@ -35,7 +34,6 @@ def test_case_with_range_steps(tmp_path):
         tmp_path,
         """
         [cases.a]
-        folder = "a"
         steps = { start = 200, stop = 800, step = 200 }
         """,
     )
@@ -53,11 +51,9 @@ def test_defaults_are_inherited_and_overridable(tmp_path):
         vars = ["Jgrad", "currdens"]
 
         [cases.a]
-        folder = "a"
         steps = [1]
 
         [cases.b]
-        folder = "b"
         steps = [1]
         n_turns = 500
         """,
@@ -72,7 +68,7 @@ def test_defaults_are_inherited_and_overridable(tmp_path):
 def test_four_defaults_match_jorek2_four_own_fallback(tmp_path):
     """An unconfigured case must reproduce jorek2_four.f90:44-50's own
     defaults, so a case with no [four] knobs behaves like a bare run."""
-    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\n')
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     case = load_cases(path)["a"]
     assert case.nstpts == 30
     assert case.ntht == 32
@@ -91,7 +87,6 @@ def test_four_params_are_overridable_per_case(tmp_path):
         rad_range = [0.01, 0.9]
 
         [cases.a]
-        folder = "a"
         steps = [1]
         ntht = 64
         """,
@@ -103,14 +98,14 @@ def test_four_params_are_overridable_per_case(tmp_path):
 
 
 def test_lc_psi_n_in_defaults_to_none(tmp_path):
-    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\n')
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     assert load_cases(path)["a"].lc_psi_n_in is None
 
 
 def test_psi_n_in_as_explicit_list(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\npsi_n_in = [0.1, 0.5, 0.9]\n',
+        '[cases.a]\nsteps = [1]\npsi_n_in = [0.1, 0.5, 0.9]\n',
     )
     assert load_cases(path)["a"].psi_n_in == [0.1, 0.5, 0.9]
 
@@ -120,7 +115,6 @@ def test_psi_n_in_range_with_step(tmp_path):
         tmp_path,
         """
         [cases.a]
-        folder = "a"
         steps = [1]
         psi_n_in = { start = 0.1, stop = 0.5, step = 0.1 }
         """,
@@ -134,7 +128,6 @@ def test_psi_n_in_range_with_count(tmp_path):
         tmp_path,
         """
         [cases.a]
-        folder = "a"
         steps = [1]
         psi_n_in = { start = 0.0, stop = 1.0, n = 5 }
         """,
@@ -148,7 +141,6 @@ def test_psi_n_in_range_rejects_both_step_and_n(tmp_path):
         tmp_path,
         """
         [cases.a]
-        folder = "a"
         steps = [1]
         psi_n_in = { start = 0.0, stop = 1.0, step = 0.1, n = 5 }
         """,
@@ -160,7 +152,7 @@ def test_psi_n_in_range_rejects_both_step_and_n(tmp_path):
 def test_psi_n_in_range_requires_step_or_n(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\npsi_n_in = { start = 0.0, stop = 1.0 }\n',
+        '[cases.a]\nsteps = [1]\npsi_n_in = { start = 0.0, stop = 1.0 }\n',
     )
     with pytest.raises(CasesError, match="needs 'step' or 'n'"):
         load_cases(path)
@@ -169,7 +161,7 @@ def test_psi_n_in_range_requires_step_or_n(tmp_path):
 def test_psi_n_in_range_rejects_nonpositive_step(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\n'
+        '[cases.a]\nsteps = [1]\n'
         'psi_n_in = { start = 0.0, stop = 1.0, step = 0.0 }\n',
     )
     with pytest.raises(CasesError, match="step must be positive"):
@@ -179,7 +171,7 @@ def test_psi_n_in_range_rejects_nonpositive_step(tmp_path):
 def test_psi_n_in_range_rejects_stop_before_start(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\n'
+        '[cases.a]\nsteps = [1]\n'
         'psi_n_in = { start = 1.0, stop = 0.0, step = 0.1 }\n',
     )
     with pytest.raises(CasesError, match="stop must be >= start"):
@@ -189,7 +181,7 @@ def test_psi_n_in_range_rejects_stop_before_start(tmp_path):
 def test_psi_n_in_range_missing_bounds_raises(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\npsi_n_in = { step = 0.1 }\n',
+        '[cases.a]\nsteps = [1]\npsi_n_in = { step = 0.1 }\n',
     )
     with pytest.raises(CasesError, match="missing"):
         load_cases(path)
@@ -198,7 +190,7 @@ def test_psi_n_in_range_missing_bounds_raises(tmp_path):
 def test_lc_psi_n_in_as_explicit_list(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\n'
+        '[cases.a]\nsteps = [1]\n'
         'psi_n_in = [0.1, 0.3, 0.5, 0.7, 0.9]\n'
         'lc_psi_n_in = [0.3, 0.7]\n',
     )
@@ -210,7 +202,6 @@ def test_lc_psi_n_in_as_range(tmp_path):
         tmp_path,
         """
         [cases.a]
-        folder = "a"
         steps = [1]
         lc_psi_n_in = { start = 0.2, stop = 0.6, step = 0.2 }
         """,
@@ -225,7 +216,7 @@ def test_lc_psi_n_in_bounds_filter_selects_from_psi_n_in(tmp_path):
     case."""
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\n'
+        '[cases.a]\nsteps = [1]\n'
         'psi_n_in = [0.1, 0.3, 0.5, 0.7, 0.9]\n'
         'lc_psi_n_in = { min = 0.25, max = 0.75 }\n',
     )
@@ -235,13 +226,13 @@ def test_lc_psi_n_in_bounds_filter_selects_from_psi_n_in(tmp_path):
 def test_lc_psi_n_in_bounds_filter_with_no_psi_n_in_is_empty(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\nlc_psi_n_in = { min = 0.25, max = 0.75 }\n',
+        '[cases.a]\nsteps = [1]\nlc_psi_n_in = { min = 0.25, max = 0.75 }\n',
     )
     assert load_cases(path)["a"].lc_psi_n_in == []
 
 
 def test_four_vars_and_modes_default_empty(tmp_path):
-    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\n')
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     case = load_cases(path)["a"]
     assert case.four_vars == []
     assert case.four_modes == []
@@ -252,7 +243,6 @@ def test_four_vars_and_modes_are_settable(tmp_path):
         tmp_path,
         """
         [cases.a]
-        folder = "a"
         steps = [1]
         four_vars = ["Psi", "u"]
         four_modes = [[0, 1], [1, 0]]
@@ -266,14 +256,14 @@ def test_four_vars_and_modes_are_settable(tmp_path):
 def test_four_modes_rejects_non_pair_entries(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\nfour_modes = [[0, 1, 2]]\n',
+        '[cases.a]\nsteps = [1]\nfour_modes = [[0, 1, 2]]\n',
     )
     with pytest.raises(CasesError, match="\\[m, n\\] pairs"):
         load_cases(path)
 
 
 def test_four_growth_rate_defaults_off(tmp_path):
-    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\n')
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     case = load_cases(path)["a"]
     assert case.four_growth_rate is False
     assert case.four_growth_steps is None
@@ -284,7 +274,6 @@ def test_four_growth_rate_and_steps_are_settable(tmp_path):
         tmp_path,
         """
         [cases.a]
-        folder = "a"
         steps = [1]
         four_growth_rate = true
         four_growth_steps = [1000, 3000]
@@ -298,7 +287,7 @@ def test_four_growth_rate_and_steps_are_settable(tmp_path):
 def test_four_growth_steps_rejects_non_pair(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\nfour_growth_steps = [1000]\n',
+        '[cases.a]\nsteps = [1]\nfour_growth_steps = [1000]\n',
     )
     with pytest.raises(CasesError, match="start_step, end_step"):
         load_cases(path)
@@ -307,38 +296,41 @@ def test_four_growth_steps_rejects_non_pair(tmp_path):
 def test_four_growth_steps_rejects_start_after_end(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nfolder = "a"\nsteps = [1]\nfour_growth_steps = [3000, 1000]\n',
+        '[cases.a]\nsteps = [1]\nfour_growth_steps = [3000, 1000]\n',
     )
     with pytest.raises(CasesError, match="must not be greater than"):
         load_cases(path)
 
 
-def test_folder_defaults_to_the_case_name(tmp_path):
+def test_case_name_is_its_own_run_folder(tmp_path):
     path = _write(
         tmp_path,
         '[cases."qa2.1_g2.3/eta1e-3_RE"]\nsteps = [1]\n',
     )
     case = load_cases(path)["qa2.1_g2.3/eta1e-3_RE"]
-    assert case.folder == "qa2.1_g2.3/eta1e-3_RE"
+    assert case.name == "qa2.1_g2.3/eta1e-3_RE"
 
 
-def test_explicit_folder_overrides_the_case_name(tmp_path):
+def test_folder_key_is_rejected(tmp_path):
+    """There is no separate `folder` override -- a case's name is always its
+    run folder, so a leftover `folder = ...` line must fail loudly rather
+    than silently doing nothing."""
     path = _write(
         tmp_path,
         '[cases.rerun]\nfolder = "qa2.1_g2.3/eta1e-3_RE"\nsteps = [1]\n',
     )
-    case = load_cases(path)["rerun"]
-    assert case.folder == "qa2.1_g2.3/eta1e-3_RE"
+    with pytest.raises(CasesError, match="folder"):
+        load_cases(path)
 
 
 def test_missing_steps_raises(tmp_path):
-    path = _write(tmp_path, '[cases.a]\nfolder = "a"\n')
+    path = _write(tmp_path, '[cases.a]\n')
     with pytest.raises(CasesError, match="steps"):
         load_cases(path)
 
 
 def test_unknown_key_raises(tmp_path):
-    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [1]\ntypo_field = 1\n')
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\ntypo_field = 1\n')
     with pytest.raises(CasesError, match="typo_field"):
         load_cases(path)
 
@@ -362,7 +354,7 @@ def test_malformed_toml_raises(tmp_path):
 
 def test_phi_start_defaults_to_zero(tmp_path):
     """The legacy diagnostic hardcoded phi_start = 0 (poinc_diag.py:119)."""
-    path = _write(tmp_path, '[cases.a]\nfolder = "a"\nsteps = [200]\n')
+    path = _write(tmp_path, '[cases.a]\nsteps = [200]\n')
     assert load_cases(path)["a"].phi_start == 0.0
 
 
@@ -370,6 +362,101 @@ def test_phi_start_is_settable(tmp_path):
     path = _write(
         tmp_path,
         '[defaults]\nphi_start = 0.7853981634\n\n'
-        '[cases.a]\nfolder = "a"\nsteps = [200]\n',
+        '[cases.a]\nsteps = [200]\n',
     )
     assert load_cases(path)["a"].phi_start == pytest.approx(0.7853981634)
+
+
+# --- tor_mode: normalised to a list, validated against the known set -------------
+
+
+def test_tor_mode_defaults_to_midplane_list(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    assert load_cases(path)["a"].tor_mode == ["midplane"]
+
+
+def test_tor_mode_bare_string_is_normalised_to_a_list(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\ntor_mode = "average"\n')
+    assert load_cases(path)["a"].tor_mode == ["average"]
+
+
+def test_tor_mode_list_of_several_modes_passes_through(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\n'
+        'tor_mode = ["midplane outer", "average"]\n',
+    )
+    assert load_cases(path)["a"].tor_mode == ["midplane outer", "average"]
+
+
+def test_tor_mode_rejects_unknown_mode(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\ntor_mode = "sideways"\n')
+    with pytest.raises(CasesError, match="unknown tor_mode"):
+        load_cases(path)
+
+
+def test_tor_mode_rejects_unknown_mode_in_a_list(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\ntor_mode = ["midplane", "bogus"]\n',
+    )
+    with pytest.raises(CasesError, match="unknown tor_mode"):
+        load_cases(path)
+
+
+# --- profile_* knobs: average-only field-line-tracing overrides -----------------
+
+
+def test_profile_knobs_default_to_jorek_own_defaults(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.profile_surfaces == 100
+    assert case.profile_rad_range == [0.001, 0.999]
+    assert case.profile_nmaxsteps == 2500
+    assert case.profile_deltaphi == pytest.approx(0.3)
+
+
+def test_profile_knobs_are_settable(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [1]
+        profile_surfaces = 250
+        profile_rad_range = [0.01, 0.85]
+        profile_nmaxsteps = 10000
+        profile_deltaphi = 0.05
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.profile_surfaces == 250
+    assert case.profile_rad_range == [0.01, 0.85]
+    assert case.profile_nmaxsteps == 10000
+    assert case.profile_deltaphi == pytest.approx(0.05)
+
+
+def test_profile_rad_range_rejects_non_pair(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\nprofile_rad_range = [0.5]\n',
+    )
+    with pytest.raises(CasesError, match="\\[min, max\\]"):
+        load_cases(path)
+
+
+def test_profile_rad_range_rejects_min_not_less_than_max(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\nprofile_rad_range = [0.9, 0.1]\n',
+    )
+    with pytest.raises(CasesError, match="0 <= min < max <= 1"):
+        load_cases(path)
+
+
+def test_profile_rad_range_rejects_out_of_unit_range(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\nprofile_rad_range = [-0.1, 0.9]\n',
+    )
+    with pytest.raises(CasesError, match="0 <= min < max <= 1"):
+        load_cases(path)
