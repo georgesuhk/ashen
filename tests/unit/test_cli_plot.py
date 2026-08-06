@@ -1397,6 +1397,91 @@ def test_compare_wetted_fraction_cli_flag_overrides_case_config(
     assert captured == [pytest.approx(0.05), pytest.approx(0.05)]
 
 
+# --- comparison-level overrides: uniform analysis params across every member -----
+
+
+def _add_x_values_with_comparison_overrides(comparison_campaign, *, x_values):
+    """Members set their own (different) theta_target_psi/theta_bins/
+    theta_wetted_threshold; the comparison's own settings must win over all
+    of them uniformly."""
+    cases_toml = comparison_campaign / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\n'
+        'theta_target_psi = 1.0\n'
+        'theta_bins = 20\n'
+        'theta_wetted_threshold = 0.01\n'
+        '[cases."qa2.1_g2.3/eta1e-4_RE"]\n'
+        'steps = [100]\n'
+        'theta_target_psi = 1.02\n'
+        'theta_bins = 50\n'
+        'theta_wetted_threshold = 0.02\n'
+        '[comparisons.eta_scan]\n'
+        'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
+        'labels = ["1e-3", "1e-4"]\n'
+        f'x_values = {x_values}\n'
+        'theta_target_psi = 1.0\n'
+        'theta_bins = 20\n'
+        'theta_wetted_threshold = 0.04\n',
+        encoding="utf-8",
+    )
+
+
+def test_compare_wetted_fraction_comparison_config_overrides_case_config(
+    comparison_campaign, monkeypatch
+):
+    _add_x_values_with_comparison_overrides(comparison_campaign, x_values=[1e-3, 1e-4])
+    captured = []
+    original = plot_cli.wetted_fraction
+
+    def spy(counts, **kwargs):
+        captured.append(kwargs.get("threshold"))
+        return original(counts, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "wetted_fraction", spy)
+
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    # Both members get the comparison's 0.04, not their own 0.01/0.02.
+    assert captured == [pytest.approx(0.04), pytest.approx(0.04)]
+
+
+def test_compare_wetted_fraction_cli_flag_outranks_comparison_config(
+    comparison_campaign, monkeypatch
+):
+    _add_x_values_with_comparison_overrides(comparison_campaign, x_values=[1e-3, 1e-4])
+    captured = []
+    original = plot_cli.wetted_fraction
+
+    def spy(counts, **kwargs):
+        captured.append(kwargs.get("threshold"))
+        return original(counts, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "wetted_fraction", spy)
+
+    assert plot_cli.main(
+        ["--compare", "eta_scan", "--diag", "wetted_fraction", "--wetted-threshold", "0.09"]
+    ) == 0
+    assert captured == [pytest.approx(0.09), pytest.approx(0.09)]
+
+
+def test_compare_theta_hist_comparison_target_psi_overrides_case_target_psi(
+    comparison_campaign, monkeypatch
+):
+    _add_x_values_with_comparison_overrides(comparison_campaign, x_values=[1e-3, 1e-4])
+    captured = []
+    original = plot_cli.pooled_crossing_angles
+
+    def spy(records_by_step, steps, **kwargs):
+        captured.append(kwargs.get("target_psi"))
+        return original(records_by_step, steps, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "pooled_crossing_angles", spy)
+
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "theta_hist"]) == 0
+    # Both members get the comparison's 1.0, not their own 1.0/1.02.
+    assert captured == [pytest.approx(1.0), pytest.approx(1.0)]
+
+
 def test_wetted_fraction_diag_is_comparison_only_per_case(theta_campaign, capsys):
     assert plot_cli.main(
         ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "wetted_fraction"]

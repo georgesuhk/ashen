@@ -387,50 +387,56 @@ Asking for a diag without a comparison renderer (e.g. `--compare eta_scan
 `--diag wetted_fraction` is **comparison-only** -- there is no single-run
 version of "plot Y against eta", so it needs `--compare` and errors out
 (reported, not crashed) under the plain per-case `--case` mode. For each
-member case it pools the same theta-crossing histogram `theta_hist` would
-(same `theta_target_psi`/`theta_bins`/`theta_psi_n_range`), then reduces it
-to one scalar: the fraction of bins whose count exceeds a threshold, so
-"wetted" means "above what uniform spreading over theta would give". That
-one number per case is plotted against `x_values`, an explicit numeric value
-per member -- **not** inferred from the run folder's own name (e.g. parsing
-`"eta1e-3"` out of `"eta1e-3_RE"`): `CLAUDE.md` flags CASTOR3D's
-directory-name parsing as exactly the kind of hazard this project exists to
-not repeat, so a folder rename must never silently change what gets plotted.
+member case it pools the same theta-crossing histogram `theta_hist` would,
+then reduces it to one scalar: the fraction of bins whose count exceeds a
+threshold, so "wetted" means "above what uniform spreading over theta would
+give". That one number per case is plotted against `x_values`, an explicit
+numeric value per member -- **not** inferred from the run folder's own name
+(e.g. parsing `"eta1e-3"` out of `"eta1e-3_RE"`): `CLAUDE.md` flags
+CASTOR3D's directory-name parsing as exactly the kind of hazard this project
+exists to not repeat, so a folder rename must never silently change what
+gets plotted.
 
-The threshold is `case.theta_wetted_threshold` if set, else `1/theta_bins` --
-the value a perfectly uniform distribution would put in every bin. Set it
-per case in `cases.toml` (each member can use a different value, or share one
-via `[defaults]`):
+**Set the analysis parameters on the comparison itself**, not per case: a
+scan is only a fair comparison if every point was computed with the same
+`theta_target_psi`/`theta_bins`/`theta_psi_n_range`/threshold, so
+`[comparisons.*]` accepts all four and applies them to every member
+uniformly, instead of each `[cases.*]` entry needing a matching copy (or
+every case in the file sharing one `[defaults]`, which would also affect
+anything else those cases are used for). The threshold itself is
+`theta_wetted_threshold`; unset, it falls back to `1/theta_bins` -- the value
+a perfectly uniform distribution would put in every bin.
 
 ```toml
-[defaults]
-theta_wetted_threshold = 0.002
-
-[cases."qa2.1_g2.3/eta1e-3_RE"]
-theta_target_psi = 1.05
-theta_bins       = 500
-
-[cases."qa2.1_g2.3/eta1e-4_RE"]
-theta_target_psi = 1.05
-theta_bins       = 500
-
 [comparisons.eta_scan]
-cases    = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE", "qa2.1_g2.3/eta1e-5_RE"]
-x_values = [1e-3, 1e-4, 1e-5]
-x_label  = "$\\eta$ [$\\Omega \\cdot$ m]"
+cases                  = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE", "qa2.1_g2.3/eta1e-5_RE"]
+x_values               = [1e-3, 1e-4, 1e-5]
+x_label                = "$\\eta$ [$\\Omega \\cdot$ m]"
+theta_target_psi       = 1.05
+theta_bins             = 500
+theta_wetted_threshold = 0.002
 ```
 
 ```bash
 python ~/ashen/bin/plot --compare eta_scan --diag wetted_fraction
 ```
 
-`--wetted-threshold FLOAT` on the command line overrides every case's
-`theta_wetted_threshold` for one invocation, the same precedence
-`--theta-target-psi` has over `theta_target_psi`:
+Precedence, most specific wins: a CLI flag (`--theta-target-psi`,
+`--theta-bins`, `--theta-psi-range`, `--wetted-threshold`) overrides this
+comparison's own setting, which overrides the member case's own setting,
+which falls back to the diagnostic's built-in default. A member case can
+still set these individually for when it's plotted **outside** this
+comparison (e.g. its own `theta_hist` figure via `--case`) -- the comparison
+tier only wins while `--compare eta_scan` is the one being drawn:
 
 ```bash
 python ~/ashen/bin/plot --compare eta_scan --diag wetted_fraction --wetted-threshold 0.01
 ```
+
+`theta_hist` under `--compare` respects the same comparison-level
+`theta_target_psi`/`theta_bins`/`theta_psi_n_range` (just not
+`theta_wetted_threshold`, which only `wetted_fraction` uses) -- so one
+`[comparisons.eta_scan]` table keeps both figures computed identically.
 
 Written to `figures/<comparison-name>_wetted_fraction.png`; the CLI also
 prints each case's fraction. `x_values` is required for this diag --

@@ -16,6 +16,17 @@ only supplies which cases to pool and how to label them, reusing
 A comparison can also carry an explicit ``x_values`` (parallel to ``cases``)
 for plotting a derived scalar against a scan parameter across its members --
 e.g. wetted fraction vs. eta (:mod:`ashen.plotting.wetted_fraction`).
+
+A comparison can also override the analysis parameters that produce that
+scalar (``theta_target_psi``, ``theta_bins``, ``theta_psi_n_range``,
+``theta_wetted_threshold``) for every member **uniformly**, rather than each
+member case needing its own matching copy (or all cases sharing one
+``[defaults]``, which would apply to non-comparison uses of those cases too).
+A scan is only an apples-to-apples comparison if every point was computed
+the same way, so these belong to the comparison, not scattered across its
+members. Precedence, most specific wins: CLI flag (e.g.
+``--theta-target-psi``) > this comparison's own setting > the member case's
+own setting > the diagnostic's built-in default.
 """
 
 from __future__ import annotations
@@ -49,6 +60,13 @@ class Comparison:
     x_values: list[float] | None = None
     #: Axis label for `x_values`, e.g. "$\\eta$ [$\\Omega \\cdot$ m]".
     x_label: str = ""
+    #: Uniform overrides applied to every member case -- see the module
+    #: docstring for why these live on the comparison rather than each case.
+    #: None (default) falls through to each case's own setting.
+    theta_target_psi: float | None = None
+    theta_bins: int | None = None
+    theta_psi_n_range: list[float] | None = None
+    theta_wetted_threshold: float | None = None
 
     def labelled_cases(self) -> list[tuple[str, str]]:
         """``[(label, case_name), ...]`` in panel order -- what a renderer
@@ -82,7 +100,11 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
     comparisons: dict[str, Comparison] = {}
     for name, raw in raw_comparisons.items():
         unknown = sorted(
-            set(raw) - {"cases", "labels", "note", "n_cols", "x_values", "x_label"}
+            set(raw) - {
+                "cases", "labels", "note", "n_cols", "x_values", "x_label",
+                "theta_target_psi", "theta_bins", "theta_psi_n_range",
+                "theta_wetted_threshold",
+            }
         )
         if unknown:
             raise CasesError(
@@ -118,6 +140,39 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
                     f"for {len(members)} cases; x_values must match cases 1:1"
                 )
 
+        theta_target_psi = None
+        if "theta_target_psi" in raw:
+            theta_target_psi = float(raw["theta_target_psi"])
+
+        theta_bins = None
+        if "theta_bins" in raw:
+            theta_bins = int(raw["theta_bins"])
+
+        theta_psi_n_range = None
+        if "theta_psi_n_range" in raw:
+            spec = raw["theta_psi_n_range"]
+            if not (isinstance(spec, list) and len(spec) == 2):
+                raise CasesError(
+                    f"{path}: comparison {name!r} theta_psi_n_range must be "
+                    f"[min, max], got {spec!r}"
+                )
+            lo, hi = float(spec[0]), float(spec[1])
+            if not lo < hi:
+                raise CasesError(
+                    f"{path}: comparison {name!r} theta_psi_n_range must "
+                    f"satisfy min < max, got [{lo}, {hi}]"
+                )
+            theta_psi_n_range = [lo, hi]
+
+        theta_wetted_threshold = None
+        if "theta_wetted_threshold" in raw:
+            theta_wetted_threshold = float(raw["theta_wetted_threshold"])
+            if theta_wetted_threshold <= 0:
+                raise CasesError(
+                    f"{path}: comparison {name!r} theta_wetted_threshold "
+                    f"must be positive, got {theta_wetted_threshold}"
+                )
+
         comparisons[name] = Comparison(
             name=name,
             cases=members,
@@ -126,6 +181,10 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
             n_cols=int(raw.get("n_cols", 4)),
             x_values=x_values,
             x_label=str(raw.get("x_label", "")),
+            theta_target_psi=theta_target_psi,
+            theta_bins=theta_bins,
+            theta_psi_n_range=theta_psi_n_range,
+            theta_wetted_threshold=theta_wetted_threshold,
         )
 
     return comparisons

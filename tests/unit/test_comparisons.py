@@ -178,3 +178,69 @@ def test_x_values_length_mismatch_raises(tmp_path):
     cases = load_cases(path)
     with pytest.raises(CasesError, match="x_values"):
         load_comparisons(path, cases)
+
+
+# --- comparison-level analysis-parameter overrides -------------------------------
+
+
+def test_theta_overrides_default_to_none(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a"]\n',
+    )
+    cases = load_cases(path)
+    comparison = load_comparisons(path, cases)["scan"]
+    assert comparison.theta_target_psi is None
+    assert comparison.theta_bins is None
+    assert comparison.theta_psi_n_range is None
+    assert comparison.theta_wetted_threshold is None
+
+
+def test_theta_overrides_are_parsed(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + 'cases                  = ["a", "b"]\n'
+        + 'theta_target_psi       = 1.1\n'
+        + 'theta_bins             = 200\n'
+        + 'theta_psi_n_range      = [0.3, 0.7]\n'
+        + 'theta_wetted_threshold = 0.005\n',
+    )
+    cases = load_cases(path)
+    comparison = load_comparisons(path, cases)["scan"]
+    assert comparison.theta_target_psi == pytest.approx(1.1)
+    assert comparison.theta_bins == 200
+    assert comparison.theta_psi_n_range == [0.3, 0.7]
+    assert comparison.theta_wetted_threshold == pytest.approx(0.005)
+
+
+def test_theta_psi_n_range_override_rejects_non_pair(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a"]\ntheta_psi_n_range = [0.5]\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="\\[min, max\\]"):
+        load_comparisons(path, cases)
+
+
+def test_theta_psi_n_range_override_rejects_min_not_less_than_max(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\ncases = ["a"]\ntheta_psi_n_range = [0.8, 0.2]\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="min < max"):
+        load_comparisons(path, cases)
+
+
+def test_theta_wetted_threshold_override_rejects_non_positive(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a"]\ntheta_wetted_threshold = 0\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="must be positive"):
+        load_comparisons(path, cases)

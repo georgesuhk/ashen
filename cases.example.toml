@@ -206,3 +206,16 @@ note  = "internal kink investigation"
 # then silently change what gets plotted.
 # x_values = [1e-3, 1e-4, 1e-5]
 # x_label  = "$\\eta$ [$\\Omega \\cdot$ m]"
+#
+# theta_target_psi/theta_bins/theta_psi_n_range/theta_wetted_threshold can
+# also be set here, on the comparison itself, applying to every member
+# uniformly -- rather than each [cases.*] entry needing its own matching
+# copy. A scan is only a fair comparison if every point used the same
+# target/bins/threshold, so this is the natural place for them to live, not
+# scattered across the member cases. Precedence, most specific wins: a CLI
+# flag (e.g. --theta-target-psi) > this comparison's own setting > the
+# member case's own setting > the diagnostic's built-in default.
+# theta_target_psi       = 1.05
+# theta_bins              = 500
+# theta_psi_n_range       = [0.2, 0.9]
+# theta_wetted_threshold  = 0.002

@@ -606,6 +606,25 @@ def _plot_theta_hist(
     print(f"  {out}")
 
 
+def _first_not_none(*values):
+    """The first non-``None`` value -- the shared shape of every "CLI flag >
+    comparison setting > case setting > built-in default" precedence chain
+    used under ``--compare``."""
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+def _resolve_theta_range(
+    cli_range: tuple[float, float] | None,
+    comparison_range: list[float] | None,
+    case_range: list[float] | None,
+) -> tuple[float, float] | None:
+    chosen = _first_not_none(cli_range, comparison_range, case_range)
+    return tuple(chosen) if chosen is not None else None
+
+
 def _compare_theta_hist(
     comparison: Comparison,
     cases: dict[str, Case],
@@ -618,7 +637,14 @@ def _compare_theta_hist(
     steps: list[int] | None,
 ) -> None:
     """One panel per member case, each pooling that case's own theta_hist
-    steps (or `--step`, if given, applied uniformly across every member)."""
+    steps (or `--step`, if given, applied uniformly across every member).
+
+    `target_psi`/`bins`/`psi_range` are already the CLI's values (or None);
+    each resolves through `comparison`'s own setting, then the member case's,
+    before falling back to a default -- see `Comparison`'s docstring for why
+    the comparison tier exists (a scan is only apples-to-apples if every
+    point was computed the same way).
+    """
     panels = []
     for label, case_name in comparison.labelled_cases():
         case = cases[case_name]
@@ -629,13 +655,12 @@ def _compare_theta_hist(
         paths = RunPaths.detect(run_dir)
         real_psi_edge = read_float(paths.real_psi_edge)
 
-        target = target_psi if target_psi is not None else case.theta_target_psi
-        if psi_range is not None:
-            theta_range = psi_range
-        elif case.theta_psi_n_range is not None:
-            theta_range = tuple(case.theta_psi_n_range)
-        else:
-            theta_range = None
+        target = _first_not_none(
+            target_psi, comparison.theta_target_psi, case.theta_target_psi
+        )
+        theta_range = _resolve_theta_range(
+            psi_range, comparison.theta_psi_n_range, case.theta_psi_n_range
+        )
 
         case_steps = steps or case.steps_for("theta_hist")
         records_by_step = {step: read_step(paths, step) for step in case_steps}
@@ -649,7 +674,7 @@ def _compare_theta_hist(
     if not panels:
         return
 
-    n_bins = bins if bins is not None else 500
+    n_bins = _first_not_none(bins, comparison.theta_bins) or 500
     out_dir = Path.cwd() / "figures"
     kwargs = {} if dpi is None else {"dpi": dpi}
     out = plot_theta_histogram_grid(
@@ -671,10 +696,17 @@ def _compare_wetted_fraction(
     steps: list[int] | None,
 ) -> None:
     """One point per member case: the fraction of that case's (pooled)
-    theta_hist bins exceeding `threshold`, plotted against `comparison.
+    theta_hist bins exceeding a threshold, plotted against `comparison.
     x_values` -- e.g. wetted fraction vs. eta. Needs `x_values` configured;
     unlike theta_hist there is no meaningful figure without a numeric x-axis,
     so this is reported and skipped rather than falling back to case names.
+
+    `target_psi`/`bins`/`psi_range`/`threshold` are the CLI's values (or
+    None); each resolves through `comparison`'s own setting, then the member
+    case's, before falling back to a default -- see `Comparison`'s docstring.
+    A scan is only a meaningful comparison if every point was computed with
+    the same target/bins/threshold, which is exactly what the comparison
+    tier is for.
     """
     if comparison.x_values is None:
         print(
@@ -695,14 +727,13 @@ def _compare_wetted_fraction(
         paths = RunPaths.detect(run_dir)
         real_psi_edge = read_float(paths.real_psi_edge)
 
-        target = target_psi if target_psi is not None else case.theta_target_psi
-        n_bins = bins if bins is not None else case.theta_bins
-        if psi_range is not None:
-            theta_range = psi_range
-        elif case.theta_psi_n_range is not None:
-            theta_range = tuple(case.theta_psi_n_range)
-        else:
-            theta_range = None
+        target = _first_not_none(
+            target_psi, comparison.theta_target_psi, case.theta_target_psi
+        )
+        n_bins = _first_not_none(bins, comparison.theta_bins, case.theta_bins)
+        theta_range = _resolve_theta_range(
+            psi_range, comparison.theta_psi_n_range, case.theta_psi_n_range
+        )
 
         case_steps = steps or case.steps_for("theta_hist")
         records_by_step = {step: read_step(paths, step) for step in case_steps}
@@ -711,11 +742,10 @@ def _compare_wetted_fraction(
             target_psi=target, real_psi_edge=real_psi_edge, psi_n_range=theta_range,
         )
         counts, _ = theta_histogram(result.angles, bins=n_bins)
-        if threshold is not None:
-            case_threshold = threshold
-        elif case.theta_wetted_threshold is not None:
-            case_threshold = case.theta_wetted_threshold
-        else:
+        case_threshold = _first_not_none(
+            threshold, comparison.theta_wetted_threshold, case.theta_wetted_threshold,
+        )
+        if case_threshold is None:
             case_threshold = 1.0 / n_bins
         fraction = wetted_fraction(counts, threshold=case_threshold)
         print(f"  {case_name}: wetted fraction = {fraction:.3g}")
