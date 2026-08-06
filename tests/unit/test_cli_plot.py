@@ -641,6 +641,153 @@ def test_delta_b_over_b_alongside_explicit_psi_keeps_both(campaign, monkeypatch)
     assert (campaign / "four_dir" / "delta_b_over_b_modes_step.png").is_file()
 
 
+# --- delta_b: derived from Psi, only needs R_axis (no F0) --------------------------
+
+
+def test_delta_b_writes_a_figure_and_uses_it_over_raw_psi(campaign, monkeypatch):
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b"]\n',
+        encoding="utf-8",
+    )
+    captured_calls = []
+    original = plot_cli.plot_mode_amplitudes
+
+    def spy(x, series, variable, out_path, **kwargs):
+        captured_calls.append(series)
+        return original(x, series, variable, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_mode_amplitudes", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert (campaign / "four_dir" / "delta_b_modes_step.png").is_file()
+    assert not (campaign / "four_dir" / "Psi_modes_step.png").exists()
+
+    # scale = m / r_axis**2 = 2 / 4 = 0.5 -- no F0/B_axis needed.
+    assert captured_calls
+    np.testing.assert_allclose(captured_calls[0][("delta_b", 1, 2)], [2.0, 4.0])
+
+
+def test_delta_b_and_delta_b_over_b_both_requested_write_both_figures(campaign):
+    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b", "delta_b_over_b"]\n',
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert (campaign / "four_dir" / "delta_b_modes_step.png").is_file()
+    assert (campaign / "four_dir" / "delta_b_over_b_modes_step.png").is_file()
+    assert not (campaign / "four_dir" / "Psi_modes_step.png").exists()
+
+
+def test_delta_b_missing_r_axis_skips_both_derived_vars_with_one_message(campaign, capsys):
+    (campaign / "log").write_text("no axis info here\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b", "delta_b_over_b"]\n',
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    out = capsys.readouterr().out
+    assert "skipping delta_b, delta_b_over_b" in out
+    assert not (campaign / "four_dir" / "delta_b_modes_step.png").exists()
+    assert not (campaign / "four_dir" / "delta_b_over_b_modes_step.png").exists()
+
+
+def test_delta_b_survives_missing_f0_while_delta_b_over_b_is_skipped(campaign, capsys):
+    # log has R_axis (from the campaign fixture) but no F0.
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b", "delta_b_over_b"]\n',
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert "skipping delta_b_over_b" in capsys.readouterr().out
+    assert (campaign / "four_dir" / "delta_b_modes_step.png").is_file()
+    assert not (campaign / "four_dir" / "delta_b_over_b_modes_step.png").exists()
+
+
+def test_delta_b_caption_reports_the_peak_across_steps_and_modes(campaign, monkeypatch):
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_four_cache(
+        campaign, 100,
+        records=[_four_record("Psi", 1, 2, real_peak=4.0), _four_record("Psi", 1, 3, real_peak=1.0)],
+    )
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b"]\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    # peak = m=3 * real_peak=1.0 / r_axis**2 = 3/4 = 0.75; m=2*8/4=4.0 is the true max.
+    for kwargs in captured:
+        assert kwargs.get("caption") == "max \N{GREEK SMALL LETTER DELTA}B = 4 T"
+
+
+def test_delta_b_over_b_caption_uses_the_normalised_label(campaign, monkeypatch):
+    (campaign / "log").write_text("R_axis = 2.0\nF0 = 4.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b_over_b"]\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    # b0 = F0/R_axis = 2; scale = m/(r_axis**2*b0) = 2/(4*2) = 0.25; peak = 8*0.25 = 2.
+    for kwargs in captured:
+        assert kwargs.get("caption") == "max \N{GREEK SMALL LETTER DELTA}B/B = 2"
+
+
+def test_raw_variables_get_no_caption(campaign, monkeypatch):
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    for kwargs in captured:
+        assert kwargs.get("caption") is None
+
+
 # --- per-diag steps override: default -> case -> case+diag tree -------------------
 
 

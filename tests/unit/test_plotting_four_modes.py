@@ -230,3 +230,28 @@ def test_label_suffix_comes_before_the_growth_rate_suffix(series):
     labels = {line.get_label() for line in ax.lines}
     assert "n=0, m=1 @ rational surface (\N{GREEK SMALL LETTER GAMMA}=1 /s)" in labels
     plt.close(fig)
+
+
+# --- caption -------------------------------------------------------------------------
+
+
+def test_caption_adds_one_text_annotation(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", caption="max δB = 1.2 T")
+    assert len(ax.texts) == 1
+    assert ax.texts[0].get_text() == "max δB = 1.2 T"
+    plt.close(fig)
+
+
+def test_no_caption_by_default(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi")
+    assert len(ax.texts) == 0
+    plt.close(fig)
+
+
+def test_plot_mode_amplitudes_accepts_caption(series, tmp_path):
+    out = plot_mode_amplitudes(
+        [100, 200, 300], series, "Psi", tmp_path / "Psi_modes.png", caption="max δB/B = 0.5",
+    )
+    assert out.is_file()

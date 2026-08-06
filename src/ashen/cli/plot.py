@@ -26,12 +26,16 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
 
+import numpy as np
+
 from ashen.cases import Case, CasesError, load_cases
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
 from ashen.diagnostics.four_modes import (
+    DELTA_B,
     DELTA_B_OVER_B,
     delta_b_over_b_series,
+    delta_b_series,
     format_growth_rates,
     growth_rate_series,
     max_amplitude_series,
@@ -49,6 +53,10 @@ from ashen.plotting.profiles import plot_profile_comparison
 from ashen.postproc import read_zeroD
 
 DIAG_CHOICES = ("poincare", "connection_length", "four", "profiles")
+
+#: four_vars entries that are derived from "Psi" at plot time rather than
+#: read directly from the jorek2_four cache -- see _plot_four_modes.
+PSI_DERIVED = {DELTA_B, DELTA_B_OVER_B}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -258,22 +266,36 @@ def _read_true_times(paths: RunPaths, steps: list[int]) -> list[float] | None:
     return true_times
 
 
+def _peak_of_variable(series: dict, variable: str) -> float | None:
+    """The largest finite value across every mode of ``variable`` in
+    ``series`` -- ``None`` if there isn't one (all-nan or no matching key).
+    Used to caption a figure with its peak delta-B/delta-B-over-B, a single
+    figure-level number that isn't tied to any one mode's legend entry.
+    """
+    arrays = [np.asarray(v, dtype=float) for (var, _, _), v in series.items() if var == variable]
+    if not arrays:
+        return None
+    values = np.concatenate(arrays)
+    finite = values[np.isfinite(values)]
+    return float(np.max(finite)) if finite.size else None
+
+
 def _plot_four_modes(
     case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None
 ) -> None:
     want_max = "max" in case.four_quantities
     want_rational = "rational_surface" in case.four_quantities
 
-    # delta_b_over_b is derived from the "Psi" cache variable, not a raw
-    # jorek2_four output -- only computed when explicitly requested (never
-    # picked up by an unrestricted four_vars = [] "plot everything"). "Psi"
-    # is added to the cache fetch if the caller didn't already ask for it,
-    # then stripped back out below so it doesn't appear as its own panel.
+    # delta_b/delta_b_over_b are derived from the "Psi" cache variable, not a
+    # raw jorek2_four output -- only computed when explicitly requested
+    # (never picked up by an unrestricted four_vars = [] "plot everything").
+    # "Psi" is added to the cache fetch if the caller didn't already ask for
+    # it, then stripped back out below so it doesn't appear as its own panel.
     requested_vars = list(case.four_vars) if case.four_vars else None
-    want_delta_b = requested_vars is not None and DELTA_B_OVER_B in requested_vars
+    requested_derived = set(requested_vars or []) & PSI_DERIVED
     fetch_vars = requested_vars
-    if want_delta_b:
-        fetch_vars = [v for v in requested_vars if v != DELTA_B_OVER_B]
+    if requested_derived:
+        fetch_vars = [v for v in requested_vars if v not in PSI_DERIVED]
         if "Psi" not in fetch_vars:
             fetch_vars.append("Psi")
 
@@ -307,23 +329,39 @@ def _plot_four_modes(
                 paths, steps, sorted(rational_modes), variables=fetch_vars
             )
 
-    if want_delta_b:
+    if requested_derived:
+        remaining = set(requested_derived)
         try:
             r0 = r_axis(paths.log)
-            b0 = b_axis(paths.log)
         except LogfileError as exc:
-            print(f"  skipping {DELTA_B_OVER_B}: {exc}")
-            want_delta_b = False
-        else:
+            print(f"  skipping {', '.join(sorted(remaining))}: {exc}")
+            remaining = set()
+
+        b0 = None
+        if DELTA_B_OVER_B in remaining:
+            try:
+                b0 = b_axis(paths.log)
+            except LogfileError as exc:
+                print(f"  skipping {DELTA_B_OVER_B}: {exc}")
+                remaining.discard(DELTA_B_OVER_B)
+
+        if remaining:
             psi_keys = {k for k in series if k[0] == "Psi"}
-            series.update(delta_b_over_b_series(
-                {k: series[k] for k in psi_keys}, r_axis=r0, b_axis=b0
-            ))
+            psi_only = {k: series[k] for k in psi_keys}
+            if DELTA_B in remaining:
+                series.update(delta_b_series(psi_only, r_axis=r0))
+            if DELTA_B_OVER_B in remaining:
+                series.update(delta_b_over_b_series(psi_only, r_axis=r0, b_axis=b0))
             if rational:
                 psi_rational_keys = {k for k in rational if k[0] == "Psi"}
-                rational.update(delta_b_over_b_series(
-                    {k: rational[k] for k in psi_rational_keys}, r_axis=r0, b_axis=b0
-                ))
+                psi_rational_only = {k: rational[k] for k in psi_rational_keys}
+                if DELTA_B in remaining:
+                    rational.update(delta_b_series(psi_rational_only, r_axis=r0))
+                if DELTA_B_OVER_B in remaining:
+                    rational.update(
+                        delta_b_over_b_series(psi_rational_only, r_axis=r0, b_axis=b0)
+                    )
+
         # Drop the raw Psi keys unless Psi itself was explicitly requested --
         # they were only fetched as the input to the conversion above.
         if requested_vars is not None and "Psi" not in requested_vars:
@@ -385,14 +423,23 @@ def _plot_four_modes(
     for suffix, x, xlabel in variants:
         for variable in sorted({var for var, _, _ in primary_series}):
             out = paths.four_dir / f"{variable}_modes_{suffix}.png"
+            caption = None
             if variable == DELTA_B_OVER_B:
                 ylabel = f"\N{GREEK SMALL LETTER DELTA}B/B{ylabel_suffix or ''}"
+                peak = _peak_of_variable(primary_series, variable)
+                if peak is not None:
+                    caption = f"max \N{GREEK SMALL LETTER DELTA}B/B = {peak:.3g}"
+            elif variable == DELTA_B:
+                ylabel = f"\N{GREEK SMALL LETTER DELTA}B [T]{ylabel_suffix or ''}"
+                peak = _peak_of_variable(primary_series, variable)
+                if peak is not None:
+                    caption = f"max \N{GREEK SMALL LETTER DELTA}B = {peak:.3g} T"
             else:
                 ylabel = f"|{variable}|{ylabel_suffix}" if ylabel_suffix else None
             plot_mode_amplitudes(
                 x, primary_series, variable, out, rational_series=overlay_series or None,
                 growth_fits=growth_fits or None, log=log, xlabel=xlabel,
-                ylabel=ylabel, label_suffix=label_suffix, **kwargs,
+                ylabel=ylabel, label_suffix=label_suffix, caption=caption, **kwargs,
             )
             print(f"  {out}")
 

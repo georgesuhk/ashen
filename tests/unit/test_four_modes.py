@@ -8,8 +8,10 @@ import pytest
 
 from ashen.diagnostics import four_cache as fc
 from ashen.diagnostics.four_modes import (
+    DELTA_B,
     DELTA_B_OVER_B,
     delta_b_over_b_series,
+    delta_b_series,
     fit_growth_rate,
     format_growth_rates,
     growth_rate_series,
@@ -225,6 +227,36 @@ def test_delta_b_over_b_drops_m_zero_modes():
 
 def test_delta_b_over_b_ignores_non_psi_keys():
     out = delta_b_over_b_series({("T", 1, 2): np.array([4.0])}, r_axis=2.0, b_axis=1.0)
+    assert out == {}
+
+
+# --- delta_b_series -----------------------------------------------------------------
+
+
+def test_delta_b_scales_psi_amplitude_by_m_over_r_squared_only():
+    psi_series = {("Psi", 1, 2): np.array([4.0, 8.0])}
+    out = delta_b_series(psi_series, r_axis=2.0)
+    # m=2, r_axis=2 -> scale = 2 / 2**2 = 0.5, no b_axis division.
+    assert out[("delta_b", 1, 2)] == pytest.approx([2.0, 4.0])
+
+
+def test_delta_b_key_is_renamed_from_psi():
+    out = delta_b_series({("Psi", 3, 1): np.array([1.0])}, r_axis=1.0)
+    assert set(out) == {(DELTA_B, 3, 1)}
+
+
+def test_delta_b_uses_abs_of_m():
+    out = delta_b_series({("Psi", 1, -2): np.array([4.0])}, r_axis=2.0)
+    assert out[("delta_b", 1, -2)] == pytest.approx([2.0])
+
+
+def test_delta_b_drops_m_zero_modes():
+    out = delta_b_series({("Psi", 1, 0): np.array([4.0])}, r_axis=2.0)
+    assert out == {}
+
+
+def test_delta_b_ignores_non_psi_keys():
+    out = delta_b_series({("T", 1, 2): np.array([4.0])}, r_axis=2.0)
     assert out == {}
 
 

@@ -433,9 +433,24 @@ four_vars = ["delta_b_over_b"]              # only the derived quantity
 four_vars = ["Psi", "delta_b_over_b"]       # raw flux amplitude alongside it
 ```
 
-A run whose log is missing `F0` or `R_axis` prints `skipping
-delta_b_over_b: ...` and falls back to whatever else was requested, rather
-than erroring the whole `--diag four` plot.
+**`delta_b`** is the same quantity un-normalised -- `(m / R_axis^2) *
+|Psi_mn|`, in Tesla, with no division by `B_axis`. It only needs `R_axis`
+from the log, not `F0`, so it still works on a run whose log doesn't carry
+`F0`; `delta_b_over_b` does not. The two can be requested together
+(`four_vars = ["delta_b", "delta_b_over_b"]`) and are computed independently,
+so a missing `F0` skips only `delta_b_over_b`.
+
+A run whose log is missing `R_axis` prints one `skipping delta_b,
+delta_b_over_b: ...` message and drops both (neither can be computed without
+it); missing only `F0` prints `skipping delta_b_over_b: ...` and `delta_b`
+is still drawn. Either way the rest of the requested `--diag four` plot is
+unaffected, not an error.
+
+Either figure also gets a small boxed caption in the lower-right corner
+giving the peak value actually drawn -- `max δB = 1.2 T` or `max δB/B =
+0.03` -- the largest finite value across every mode and step in that
+figure, so a reader doesn't have to eyeball the plot to answer "how big does
+this get." No other `four_vars` variable gets a caption.
 
 Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see

@@ -96,7 +96,10 @@ n_points        = 100
 # carries |Psi_mn| on a psi_n grid, not real-space geometry. Only computed
 # when explicitly requested (an empty/unset four_vars never picks it up);
 # add "Psi" alongside it in four_vars to also see the raw flux amplitude.
+# "delta_b" is the same quantity un-normalised, in Tesla (no B_axis/F0
+# needed -- only R_axis) -- useful if F0 isn't logged for a given run.
 # four_vars = ["delta_b_over_b"]
+# four_vars = ["delta_b"]
 
 # Colour the field lines nearest chosen rational surfaces in `plot --diag
 # poincare`, everything else dimmed grey -- needs the qprofile cache

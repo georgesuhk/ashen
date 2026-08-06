@@ -35,6 +35,7 @@ def draw_mode_amplitudes(
     xlabel: str = "",
     ylabel: str | None = None,
     label_suffix: str = "",
+    caption: str | None = None,
 ) -> None:
     """Draw every ``(n, m)`` mode of ``variable`` present in ``series`` onto
     ``ax``, each a differently-coloured line.
@@ -63,6 +64,11 @@ def draw_mode_amplitudes(
     growth-rate suffix) -- same use: a primary series that's the
     rational-surface value, not the domain-wide max, wants its own label
     without needing an overlay.
+
+    ``caption``, if given, is drawn as a small boxed annotation in the
+    lower-right corner (axes fraction, so it holds its position regardless
+    of scale) -- for a figure-level summary number (e.g. peak delta-B) that
+    isn't tied to any one mode's line/legend entry.
     """
     modes = sorted((n, m) for (var, n, m) in series if var == variable)
 
@@ -90,6 +96,12 @@ def draw_mode_amplitudes(
         ax.legend()
     ax.set_title(variable)
 
+    if caption:
+        ax.text(
+            0.98, 0.02, caption, transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=9, bbox=dict(boxstyle="round", facecolor="white", alpha=0.75, edgecolor="0.7"),
+        )
+
 
 def plot_mode_amplitudes(
     x: Sequence[float],
@@ -103,6 +115,7 @@ def plot_mode_amplitudes(
     xlabel: str = "",
     ylabel: str | None = None,
     label_suffix: str = "",
+    caption: str | None = None,
     figsize: tuple[float, float] = (7, 5),
     dpi: int = 150,
 ) -> Path:
@@ -117,7 +130,7 @@ def plot_mode_amplitudes(
         draw_mode_amplitudes(
             ax, x, series, variable=variable, rational_series=rational_series,
             growth_fits=growth_fits, log=log, xlabel=xlabel, ylabel=ylabel,
-            label_suffix=label_suffix,
+            label_suffix=label_suffix, caption=caption,
         )
         fig.tight_layout()
         fig.savefig(out_path, dpi=dpi)
