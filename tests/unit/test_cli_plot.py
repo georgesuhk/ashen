@@ -267,6 +267,80 @@ def test_default_diags_run_both(campaign):
     assert list((campaign / "poinc_dir").glob("LC_*.png"))
 
 
+# --- zeroD auto-gathered on demand for a missing true-time axis -------------------------
+
+
+def _fake_run_zero_d_writes_cache(run, step, paths, **kwargs):
+    """Stands in for a real jorek2_postproc call: just writes the cache file
+    a successful gather would have produced."""
+    path = paths.zero_d(step)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"Time Energy\n{step * 1e-6} 1.0\n", encoding="utf-8")
+    return path
+
+
+def test_missing_zerod_is_reported_then_gathered(campaign, monkeypatch, capsys):
+    (campaign / "postproc" / "zeroD_quantities_s000200.dat").unlink()
+    monkeypatch.setattr(plot_cli, "run_zero_d", _fake_run_zero_d_writes_cache)
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "zerod: missing for step(s) [200], gathering" in out
+    assert "zerod: step 200 done" in out
+
+
+def test_gathered_zerod_lets_the_true_time_figure_succeed(campaign, monkeypatch):
+    """The whole point: a figure that used to be skipped for a missing
+    zeroD cache is now actually drawn, using the freshly gathered value."""
+    (campaign / "postproc" / "zeroD_quantities_s000200.dat").unlink()
+    monkeypatch.setattr(plot_cli, "run_zero_d", _fake_run_zero_d_writes_cache)
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]
+    ) == 0
+    assert list((campaign / "poinc_dir").glob("LCTT_*.png"))
+
+
+def test_zerod_gather_failure_is_reported_and_skipped_not_crashed(
+    campaign, monkeypatch, capsys
+):
+    """jorek2_postproc failing to gather one step (no executable symlinked,
+    a genuinely missing restart, etc.) must not crash the whole plot
+    invocation -- same tolerance as analyse's own zerod gathering."""
+    (campaign / "postproc" / "zeroD_quantities_s000200.dat").unlink()
+
+    def fake_run_zero_d(run, step, paths, **kwargs):
+        raise FileNotFoundError("jorek2_postproc not found")
+
+    monkeypatch.setattr(plot_cli, "run_zero_d", fake_run_zero_d)
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "zerod: step 200 skipped (jorek2_postproc not found)" in out
+    assert "skipping LCTT: no zeroD cache" in out
+    assert not list((campaign / "poinc_dir").glob("LCTT_*.png"))
+
+
+def test_no_zerod_gathering_when_cache_already_complete(campaign, monkeypatch, capsys):
+    """Every requested step already has a zeroD cache (the campaign fixture
+    writes both) -- run_zero_d must never be called, and nothing about
+    gathering is printed."""
+    called = []
+    monkeypatch.setattr(
+        plot_cli, "run_zero_d", lambda *a, **k: called.append(a) or None
+    )
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]
+    ) == 0
+    assert called == []
+    assert "zerod:" not in capsys.readouterr().out
+
+
 # --- psi range restriction for connection_length ----------------------------------------
 
 

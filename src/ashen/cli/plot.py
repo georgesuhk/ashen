@@ -7,9 +7,18 @@ means re-plotting never risks touching the gathering path, and this CLI can
 carry flags (``--dpi``, ``--log``/``--linear``, ``--smooth``) that would only
 clutter ``analyse``.
 
-Reads the same ``cases.toml`` as ``analyse`` (:mod:`ashen.cases`), and never
-runs a ``jorek2_*`` tool itself -- only :mod:`ashen.diagnostics.poincare_cache`
-and :mod:`ashen.postproc.read_zeroD` are read.
+Reads the same ``cases.toml`` as ``analyse`` (:mod:`ashen.cases`), and mostly
+just reads what ``analyse`` already gathered -- :mod:`ashen.diagnostics.
+poincare_cache` and :mod:`ashen.postproc.read_zeroD`. Two things are
+deliberately gathered here anyway, cheaply and on demand, rather than
+requiring a separate ``analyse`` pass first: :func:`ashen.diagnostics.
+profiles.ensure_edge_toroidal_field`'s Btor reference profile (one
+``jorek2_postproc`` call, needed only by ``delta_b_over_b``), and
+:func:`_ensure_zero_d`'s per-step zeroD cache (used for every true-time
+x-axis this module draws). Both are single-valued/cheap enough that
+gathering on demand doesn't blur the slow-batch/fast-iterative split the
+rest of this module's docstring argues for -- a whole diagnostic (Poincare,
+jorek2_four) is never auto-gathered here.
 
 **In scope this pass**: Poincare puncture plots and the LC/LCTT
 connection-length maps -- the two that consume the field-line cache built in
@@ -55,7 +64,7 @@ from ashen.diagnostics.theta_histogram import (
     theta_histogram,
     wetted_fraction,
 )
-from ashen.jorek2 import Jorek2Error, Jorek2Run
+from ashen.jorek2 import Jorek2Error, Jorek2Run, run_zero_d
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.connection_length import plot_connection_length_map
@@ -297,7 +306,7 @@ def _plot_connection_length(
         records_by_step, steps, psi_n_targets, real_psi_edge=real_psi_edge, R0=R0
     )
 
-    true_times = _read_true_times(paths, steps)
+    true_times = _read_true_times(case, paths, steps)
 
     kwargs = {} if dpi is None else {"dpi": dpi}
     for plot_true_times in (True, False):
@@ -312,10 +321,55 @@ def _plot_connection_length(
         print(f"  {out}")
 
 
-def _read_true_times(paths: RunPaths, steps: list[int]) -> list[float] | None:
-    """Each step's true time (seconds) from the zeroD cache, or ``None`` if
-    any requested step's cache is missing -- a partial time axis is worse
-    than none, so this is all-or-nothing rather than dropping steps."""
+def _ensure_zero_d(case: Case, paths: RunPaths, steps: list[int]) -> None:
+    """Gather the zeroD cache for whichever of ``steps`` don't have one yet.
+
+    Every true-time x-axis this module draws goes through
+    :func:`_read_true_times`, which used to just report "no zeroD cache for
+    one or more steps" and skip -- meaning a true-time figure needed a
+    separate ``analyse --diag zerod`` pass first. zeroD is cheap (one
+    ``jorek2_postproc`` call per step, no field-line tracing), so it is
+    gathered here on demand instead, the same precedent as
+    :func:`~ashen.diagnostics.profiles.ensure_edge_toroidal_field`'s Btor
+    profile -- printed concisely: which steps were missing, then one line per
+    step as it's gathered.
+
+    A step whose restart file doesn't exist (:class:`MissingRestartError`,
+    a :class:`FileNotFoundError` subclass -- the same tolerance ``analyse``'s
+    own zerod gathering has for a run still in progress) or whose
+    ``jorek2_postproc`` call fails for another reason (:class:`Jorek2Error`,
+    or a bare :class:`FileNotFoundError` if the executable itself isn't
+    symlinked into this run folder) is reported and skipped, not raised --
+    same catch as :func:`ensure_edge_toroidal_field`'s call site below, so
+    one step's gathering failure only leaves that step out of the eventual
+    true-time axis rather than aborting every other diag this invocation
+    was also asked to draw.
+    """
+    missing = [step for step in steps if not paths.zero_d(step).is_file()]
+    if not missing:
+        return
+
+    print(f"  zerod: missing for step(s) {missing}, gathering")
+    jrun = Jorek2Run(
+        run_dir=paths.run_dir, exe_dir=paths.run_dir,
+        namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
+    )
+    for step in missing:
+        try:
+            run_zero_d(jrun, step, paths)
+        except (FileNotFoundError, Jorek2Error) as exc:
+            print(f"  zerod: step {step} skipped ({exc})")
+        else:
+            print(f"  zerod: step {step} done")
+
+
+def _read_true_times(case: Case, paths: RunPaths, steps: list[int]) -> list[float] | None:
+    """Each step's true time (seconds) from the zeroD cache, gathering
+    whichever steps are missing one first (:func:`_ensure_zero_d`). Still
+    returns ``None`` if any requested step's cache is missing after that --
+    a step whose restart genuinely doesn't exist can't be gathered, and a
+    partial time axis is worse than none, so this stays all-or-nothing."""
+    _ensure_zero_d(case, paths, steps)
     true_times = []
     for step in steps:
         try:
@@ -464,7 +518,7 @@ def _plot_four_modes(
     # rather than picking one): "step" always works, "time" only if the
     # zeroD cache covers every requested step.
     variants = [("step", list(steps), "Time step")]
-    true_times = _read_true_times(paths, steps)
+    true_times = _read_true_times(case, paths, steps)
     if true_times is not None:
         variants.append(("time", [t * 1e6 for t in true_times], r"t [$\mu s$]"))
     else:
@@ -532,7 +586,7 @@ def _plot_profiles(case: Case, paths: RunPaths, steps: list[int], *, dpi: int | 
         print("  no vars configured for this case; nothing to plot")
         return
 
-    true_times = _read_true_times(paths, steps)
+    true_times = _read_true_times(case, paths, steps)
     if true_times is not None:
         color_by = {step: t * 1e6 for step, t in zip(steps, true_times)}
         color_label = r"t [$\mu s$]"

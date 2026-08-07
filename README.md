@@ -100,6 +100,23 @@ LCTT figure reads each step's true time from the zeroD cache, so a
 poincare-only gather would otherwise leave it with nothing to read. Cache-gated
 per step, so this costs nothing once zerod has already run.
 
+`bin/plot` itself also backfills a missing zeroD step on demand, for any
+figure that needs true time (LCTT, `four`'s time-axis/growth-rate, `profiles`'
+colour-by-time) -- it's cheap (one `jorek2_postproc` call, no tracing), so a
+separate `analyse --diag zerod` pass isn't required first. Reported
+concisely, one line per step:
+
+```
+  zerod: missing for step(s) [3000, 3200], gathering
+  zerod: step 3000 done
+  zerod: step 3200 done
+```
+
+A step whose restart genuinely doesn't exist (or whose `jorek2_postproc`
+call fails for another reason) is reported and skipped the same way, and the
+figure falls back to its existing "no zeroD cache" behaviour for that step
+rather than crashing the whole `plot` invocation.
+
 ### Poincaré scans are incremental
 
 The Poincaré cache stores **one field line per starting point**
