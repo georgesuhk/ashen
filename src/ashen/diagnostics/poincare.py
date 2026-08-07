@@ -410,7 +410,10 @@ def run_poincare_step(
     if force and cache_path.exists():
         cache_path.unlink()
 
-    cached = pc.read_cache(cache_path)
+    # Metadata only -- avoids gzip-decompressing every already-cached line's
+    # full trajectory just to find out this step needs no new work, the
+    # common case when rerunning a scan that only added a few new steps.
+    cached = pc.read_cache_summary(cache_path)
     # psi_n values whose full sample set is already cached need no flux
     # surface -- the cache records the sampled positions, which was the only
     # reason to keep the surface around.
@@ -445,7 +448,10 @@ def run_poincare_step(
     # equal as LineKey objects.
     keys = list(dict.fromkeys(keys))
 
-    new, extensions = pc.plan_work(cached, keys, n_turns)
+    new, extensions = pc.plan_work(
+        cached, keys, n_turns,
+        last_point=lambda key, _summary: pc.read_line_tail(cache_path, key),
+    )
     report = StepReport(
         step=step,
         cache=cache_path,

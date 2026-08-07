@@ -45,7 +45,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 import numpy as np
 
@@ -54,8 +54,11 @@ __all__ = [
     "PoincareCacheError",
     "LineKey",
     "LineRecord",
+    "LineSummary",
     "LineWork",
     "read_cache",
+    "read_cache_summary",
+    "read_line_tail",
     "read_legacy_cache",
     "read_step",
     "open_cache",
@@ -185,6 +188,25 @@ class LineRecord:
 
 
 @dataclass(frozen=True)
+class LineSummary:
+    """A cached line's metadata, without its ``R``/``Z``/``rho``/``theta``
+    arrays -- everything :func:`plan_work` needs to decide new/extend/skip,
+    from attrs alone. See :func:`read_cache_summary`."""
+
+    key: LineKey
+    n_turns: int
+    terminated: bool
+    n_points: int
+
+    @property
+    def extendable(self) -> bool:
+        """Same rule as :attr:`LineRecord.extendable`."""
+        return not self.terminated and not any(
+            math.isnan(v) for v in (self.key.R, self.key.Z, self.key.phi)
+        )
+
+
+@dataclass(frozen=True)
 class LineWork:
     """One line's pending work, as handed to the tracer.
 
@@ -245,6 +267,60 @@ def read_cache(path: Path | str) -> dict[LineKey, LineRecord]:
                 **{a: np.asarray(group[a][:]) for a in _ARRAYS},
             )
     return records
+
+
+def read_cache_summary(path: Path | str) -> dict[LineKey, LineSummary]:
+    """Like :func:`read_cache`, but reads only each line's attrs, never its
+    ``R``/``Z``/``rho``/``theta`` arrays -- attrs are plain HDF5 attributes,
+    not gzip-chunked data, so this skips decompressing every already-cached
+    line's full trajectory just to check whether it needs more work. That
+    check (:func:`plan_work`) is the common case on every rerun of a scan
+    that only adds a few new steps: every untouched step still opened its
+    cache before this existed, and paid to decompress lines it was about to
+    decide needed nothing.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return {}
+
+    h5py = _h5py()
+    summaries: dict[LineKey, LineSummary] = {}
+    with h5py.File(path, "r") as f:
+        schema = int(f.attrs.get("schema", -1))
+        if schema != SCHEMA_VERSION:
+            raise PoincareCacheError(
+                f"{path}: schema {schema}, expected {SCHEMA_VERSION}"
+            )
+        for name, group in f.get("lines", {}).items():
+            key = LineKey(
+                psi_n=float(group.attrs["psi_n_start"]),
+                R=float(group.attrs["R_start"]),
+                Z=float(group.attrs["Z_start"]),
+                phi=float(group.attrs["phi_start"]),
+            ).quantised()
+            missing = [a for a in _ARRAYS if a not in group]
+            if missing:
+                raise PoincareCacheError(
+                    f"{path}: line {name!r} is missing {', '.join(missing)}"
+                )
+            summaries[key] = LineSummary(
+                key=key,
+                n_turns=int(group.attrs["n_turns"]),
+                terminated=bool(group.attrs["terminated"]),
+                n_points=int(group["R"].shape[0]),
+            )
+    return summaries
+
+
+def read_line_tail(path: Path | str, key: LineKey) -> tuple[float, float]:
+    """One cached line's last ``(R, Z)`` puncture -- the one array read
+    :func:`plan_work` can't avoid for a line it decides to extend, deferred
+    here so it's paid only for that line, not every cached line."""
+    key = key.quantised()
+    h5py = _h5py()
+    with h5py.File(Path(path), "r") as f:
+        group = f["lines"][key.group_name]
+        return float(group["R"][-1]), float(group["Z"][-1])
 
 
 def read_step(paths, step: int | float) -> dict[LineKey, LineRecord]:
@@ -419,9 +495,11 @@ def _check_arrays(arrays: Mapping[str, np.ndarray]) -> None:
 
 
 def plan_work(
-    cached: Mapping[LineKey, LineRecord],
+    cached: Mapping[LineKey, LineRecord] | Mapping[LineKey, LineSummary],
     requested: Iterable[LineKey],
     n_turns: int,
+    *,
+    last_point: Callable[[LineKey, LineRecord], tuple[float, float]] | None = None,
 ) -> tuple[list[LineWork], list[LineWork]]:
     """Split a request into ``(new, extensions)``.
 
@@ -430,7 +508,17 @@ def plan_work(
     :attr:`~LineRecord.extendable`. A line already at or beyond ``n_turns``,
     or one that left the mesh, produces no work at all -- which is what makes
     widening ``psi_n_in`` or raising ``n_turns`` cost only the increment.
+
+    ``cached`` normally maps to :class:`LineRecord` (full arrays already in
+    memory); ``last_point`` then defaults to reading ``record.R[-1]``/
+    ``record.Z[-1]`` directly. Pass :class:`LineSummary` values instead (from
+    :func:`read_cache_summary`) with a ``last_point`` that fetches the tail on
+    demand (e.g. :func:`read_line_tail`) to plan a step's work without ever
+    loading a line's full trajectory unless it's actually being extended.
     """
+    if last_point is None:
+        last_point = lambda key, record: (float(record.R[-1]), float(record.Z[-1]))  # noqa: E731
+
     new: list[LineWork] = []
     extensions: list[LineWork] = []
     for key in requested:
@@ -454,7 +542,7 @@ def plan_work(
             LineWork(
                 key=key,
                 n_turns=int(n_turns) - record.n_turns,
-                resume_from=(float(record.R[-1]), float(record.Z[-1])),
+                resume_from=last_point(key, record),
             )
         )
     return new, extensions

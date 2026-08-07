@@ -266,6 +266,69 @@ def test_new_work_starts_from_the_key_position():
     assert new[0].start == (1.83, 0.11)
 
 
+# --- planning from a lightweight summary, not full arrays ------------------------
+
+
+def test_read_cache_summary_matches_read_cache_metadata(cache_path):
+    k, data = key(), arrays(50)
+    with pc.open_cache(cache_path, step=200, pad_width=6) as h:
+        pc.append_line(h, k, data, n_turns=50, terminated=False)
+
+    record = pc.read_cache(cache_path)[k]
+    summary = pc.read_cache_summary(cache_path)[k]
+    assert summary.key == record.key
+    assert summary.n_turns == record.n_turns
+    assert summary.terminated == record.terminated
+    assert summary.n_points == record.n_points
+    assert summary.extendable == record.extendable
+
+
+def test_read_cache_summary_of_a_missing_file_is_empty(tmp_path):
+    assert pc.read_cache_summary(tmp_path / "nope.h5") == {}
+
+
+def test_read_line_tail_matches_the_full_record(cache_path):
+    k, data = key(), arrays(50, seed=3)
+    with pc.open_cache(cache_path, step=200, pad_width=6) as h:
+        pc.append_line(h, k, data, n_turns=50, terminated=False)
+
+    record = pc.read_cache(cache_path)[k]
+    tail = pc.read_line_tail(cache_path, k)
+    assert tail == pytest.approx((float(record.R[-1]), float(record.Z[-1])))
+
+
+def test_plan_work_from_a_summary_defers_the_last_point_lookup(cache_path):
+    """The whole point: nothing to extend -> read_cache_summary never even
+    triggers a call to the last_point resolver."""
+    k, data = key(), arrays(1000)
+    with pc.open_cache(cache_path, step=200, pad_width=6) as h:
+        pc.append_line(h, k, data, n_turns=1000, terminated=False)
+
+    summary = pc.read_cache_summary(cache_path)
+
+    def boom(key, record):
+        raise AssertionError("last_point should not be called for satisfied work")
+
+    new, ext = pc.plan_work(summary, [k], 1000, last_point=boom)
+    assert (new, ext) == ([], [])
+
+
+def test_plan_work_from_a_summary_extends_via_the_resolver(cache_path):
+    k, data = key(), arrays(1000)
+    with pc.open_cache(cache_path, step=200, pad_width=6) as h:
+        pc.append_line(h, k, data, n_turns=1000, terminated=False)
+
+    summary = pc.read_cache_summary(cache_path)
+    new, ext = pc.plan_work(
+        summary, [k], 2000, last_point=lambda key, _s: pc.read_line_tail(cache_path, key),
+    )
+    assert new == []
+    assert len(ext) == 1
+    assert ext[0].resume_from == pytest.approx(
+        (float(data["R"][-1]), float(data["Z"][-1]))
+    )
+
+
 # --- legacy caches ------------------------------------------------------------------
 
 

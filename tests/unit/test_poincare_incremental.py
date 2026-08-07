@@ -182,6 +182,22 @@ def test_an_unchanged_request_traces_nothing(scan):
     assert report.cached == 4
 
 
+def test_an_unchanged_request_never_loads_full_line_arrays(scan, monkeypatch):
+    """The other half of "costs nothing": planning a step whose cache already
+    satisfies the request must not gzip-decompress every cached line's full
+    trajectory (pc.read_cache) just to discover that -- it only needs
+    read_cache_summary's attrs-only view. Catches a regression back to the
+    eager pc.read_cache path this was optimised away from."""
+    step_once(scan, [0.2, 0.3], 50)
+
+    def boom(path):
+        raise AssertionError("read_cache (full arrays) should not be called here")
+
+    monkeypatch.setattr(pc, "read_cache", boom)
+    report = step_once(scan, [0.2, 0.3], 50)
+    assert (report.traced, report.extended) == (0, 0)
+
+
 def test_force_discards_and_retraces(scan):
     _, _, log = scan
     step_once(scan, [0.2], 50)
