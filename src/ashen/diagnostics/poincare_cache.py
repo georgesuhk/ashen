@@ -123,9 +123,25 @@ class LineKey:
     @property
     def group_name(self) -> str:
         """Readable and stable -- deliberately not a hash, so ``h5ls -r`` on a
-        cache tells you what is in it."""
+        cache tells you what is in it.
+
+        10 decimal places -- one full order of magnitude finer than
+        :data:`_KEY_QUANT`'s 1e-9 grid. This is not cosmetic: it used to be
+        ``.6f``, and two field lines whose *quantised* keys are genuinely
+        distinct (correctly kept as two separate ``LineWork`` items by
+        ``plan_work``/``dict.fromkeys``, since ``LineKey`` equality compares
+        the full quantised float) could still format down to an *identical*
+        6-decimal-place string -- e.g. quantised values 1e-9 apart both
+        round to the same ``"1.262517"``. :func:`append_line` keys its
+        already-cached check off this string, not off ``LineKey`` equality,
+        so that collision let the second, legitimately-new line's write
+        raise ``"already cached -- use extend_line"`` even though it had
+        never actually been written. 10 decimal places puts a full decade of
+        margin between the quantisation grid and where formatting could
+        round two distinct values together.
+        """
         return (
-            f"psi{self.psi_n:.6f}_R{self.R:.6f}_Z{self.Z:.6f}_phi{self.phi:.6f}"
+            f"psi{self.psi_n:.10f}_R{self.R:.10f}_Z{self.Z:.10f}_phi{self.phi:.10f}"
         )
 
 

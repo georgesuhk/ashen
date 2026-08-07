@@ -113,6 +113,30 @@ def test_appending_a_duplicate_is_refused(cache_path):
             pc.append_line(h, key(), arrays(10), n_turns=10, terminated=False)
 
 
+def test_distinct_keys_a_few_grid_steps_apart_do_not_collide(cache_path):
+    """Regression: two field lines whose quantised keys are genuinely
+    distinct (only ~3 * _KEY_QUANT apart, i.e. plan_work/dict.fromkeys
+    correctly keep them as two separate lines) used to still format down to
+    an *identical* group_name at the old 6-decimal-place precision --
+    e.g. R=1.2625170000 and R=1.2625170030 both printed "1.262517". Since
+    append_line keys its already-cached check off group_name, not LineKey
+    equality, the second (legitimately new) line's write raised "already
+    cached" even though nothing had actually been written for it yet.
+    Seen in production as jorek2_poincare's whole scan aborting on a line
+    that was never actually a duplicate."""
+    first = pc.LineKey(psi_n=0.166646, R=1.26251700, Z=0.049873, phi=0.0).quantised()
+    second = pc.LineKey(psi_n=0.166646, R=1.26251700 + 3e-9, Z=0.049873, phi=0.0).quantised()
+    assert first != second  # genuinely distinct quantised keys
+    assert first.group_name != second.group_name  # the actual regression
+
+    with pc.open_cache(cache_path, step=200, pad_width=6) as h:
+        pc.append_line(h, first, arrays(10, seed=1), n_turns=10, terminated=False)
+        pc.append_line(h, second, arrays(10, seed=2), n_turns=10, terminated=False)
+
+    records = pc.read_cache(cache_path)
+    assert set(records) == {first, second}
+
+
 def test_replace_overwrites_instead_of_raising(cache_path):
     k = key()
     with pc.open_cache(cache_path, step=200, pad_width=6) as h:

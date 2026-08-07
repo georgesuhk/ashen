@@ -431,12 +431,18 @@ def run_poincare_step(
         if key.psi_n in known:
             keys.append(key)
 
-    # A duplicate psi_n in psi_n_list (or two values that quantise to the same
-    # (R, Z, phi)) would otherwise reach plan_work as two identical requests;
-    # since neither is in `cached` yet, both get classified as "new" and the
-    # second append_line for that key fails -- it was created by the first
-    # within this same run, not in the pre-existing cache that gates
-    # append_line's replace=True.
+    # A duplicate psi_n in psi_n_list would otherwise reach plan_work as two
+    # identical requests; since neither is in `cached` yet, both get
+    # classified as "new" and the second append_line for that key fails --
+    # it was created by the first within this same run, not in the
+    # pre-existing cache that gates append_line's replace=True. Every key
+    # here is already quantised (resolve_start_points and read_cache both
+    # call LineKey.quantised() before a key ever reaches this list), so
+    # dict.fromkeys already dedupes on the same identity plan_work/
+    # append_line use -- see LineKey.group_name for the other half of this:
+    # two *distinct* quantised keys can still collide once formatted down
+    # to a group name, which this dedup cannot catch because they are not
+    # equal as LineKey objects.
     keys = list(dict.fromkeys(keys))
 
     new, extensions = pc.plan_work(cached, keys, n_turns)
