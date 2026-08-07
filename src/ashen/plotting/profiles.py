@@ -25,7 +25,7 @@ interesting comparison is where one stops having curves at all (see
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping
 
 import numpy as np
 

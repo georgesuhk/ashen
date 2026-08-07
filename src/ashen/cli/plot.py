@@ -88,6 +88,14 @@ COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction")
 #: under the plain per-case loop rather than attempting something meaningless.
 COMPARISON_ONLY_DIAGS = ("wetted_fraction",)
 
+
+def _dpi_kwargs(dpi: int | None) -> dict:
+    """``{"dpi": dpi}`` if the CLI overrode it, else ``{}`` so the plotting
+    function's own default applies -- repeated across every per-diag
+    renderer below."""
+    return {} if dpi is None else {"dpi": dpi}
+
+
 #: four_vars entries that are derived from "Psi" at plot time rather than
 #: read directly from the jorek2_four cache -- see _plot_four_modes.
 PSI_DERIVED = {DELTA_B, DELTA_B_OVER_B}
@@ -247,7 +255,7 @@ def _rational_highlight_for_step(
 def _plot_poincare(
     case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1
 ) -> None:
-    kwargs = {} if dpi is None else {"dpi": dpi}
+    kwargs = _dpi_kwargs(dpi)
 
     to_render: list[tuple[int, dict, dict[float, str] | None]] = []
     for step in steps:
@@ -313,7 +321,7 @@ def _plot_connection_length(
 
     true_times = _read_true_times(case, paths, steps)
 
-    kwargs = {} if dpi is None else {"dpi": dpi}
+    kwargs = _dpi_kwargs(dpi)
     for plot_true_times in (True, False):
         if plot_true_times and true_times is None:
             print("  skipping LCTT: no zeroD cache for one or more steps (run analyse --diag zerod)")
@@ -553,7 +561,7 @@ def _plot_four_modes(
                 print("  no growth-rate fit possible (need >=2 positive-amplitude "
                       "points per mode in the fit window)")
 
-    kwargs = {} if dpi is None else {"dpi": dpi}
+    kwargs = _dpi_kwargs(dpi)
     for suffix, x, xlabel in variants:
         for variable in sorted({var for var, _, _ in primary_series}):
             out = paths.four_dir / f"{variable}_modes_{suffix}.png"
@@ -601,7 +609,7 @@ def _plot_profiles(case: Case, paths: RunPaths, steps: list[int], *, dpi: int | 
         print("  no zeroD cache for one or more steps (run analyse --diag zerod); "
               "colouring profiles by step index")
 
-    kwargs = {} if dpi is None else {"dpi": dpi}
+    kwargs = _dpi_kwargs(dpi)
     for var in variables:
         series_by_mode = {
             mode: read_profile_series(paths, steps, case.coords_var, var, mode)
@@ -658,7 +666,7 @@ def _plot_theta_hist(
     if not panels:
         return
 
-    kwargs = {} if dpi is None else {"dpi": dpi}
+    kwargs = _dpi_kwargs(dpi)
     out = plot_theta_histogram_grid(
         panels, paths.figures_dir / "theta_hist.png",
         bins=n_bins, n_cols=n_cols or 4, **kwargs,
@@ -791,7 +799,7 @@ def _compare_theta_hist(
 
     n_bins = _first_not_none(bins, comparison.theta_bins) or 500
     out_dir = Path.cwd() / "figures"
-    kwargs = {} if dpi is None else {"dpi": dpi}
+    kwargs = _dpi_kwargs(dpi)
     out = plot_theta_histogram_grid(
         panels, out_dir / f"{comparison.name}_theta_hist.png",
         bins=n_bins, n_cols=n_cols or comparison.n_cols, **kwargs,
@@ -900,7 +908,7 @@ def _compare_wetted_fraction(
     (`plot_wetted_fraction_vs_x`).
     """
     out_dir = Path.cwd() / "figures"
-    kwargs = {} if dpi is None else {"dpi": dpi}
+    kwargs = _dpi_kwargs(dpi)
 
     if comparison.datasets:
         chosen = comparison.datasets
