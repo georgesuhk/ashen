@@ -16,13 +16,16 @@ across steps -- which the legacy code did strictly serially.
 ``jorek2_poincare`` has no MPI at all; see :class:`ashen.config.Diagnostics`.
 
 **Demultiplexing.** All lines share one ``poinc_R-Z.dat`` / one
-``poinc_rho-theta.dat``, separated by double blank lines (``.f90:457-460``).
-The writes happen inside ``!$omp critical`` in **thread-completion order, not
-line order** (``.f90:450-455``), so a block's position does *not* identify its
-line. The same critical section prints ``=> Line{i:6d}:{ip:6d} points``
-(``.f90:449``), and :func:`_demux_blocks` uses that to assign blocks, refusing
-to guess if the two disagree. Assigning traces to the wrong starting positions
-would be an near-invisible corruption, so every mismatch raises.
+``poinc_rho-theta.dat``, separated by double blank lines (``.f90:457-460``,
+``write(21,*)`` called twice unconditionally -- see :func:`_split_blocks` for
+why "double", not "single", matters: a 0-point line writes no data but still
+gets its blank-blank pair). The writes happen inside ``!$omp critical`` in
+**thread-completion order, not line order** (``.f90:450-455``), so a block's
+position does *not* identify its line. The same critical section prints
+``=> Line{i:6d}:{ip:6d} points`` (``.f90:449``), and :func:`_demux_blocks`
+uses that to assign blocks, refusing to guess if the two disagree. Assigning
+traces to the wrong starting positions would be an near-invisible corruption,
+so every mismatch raises.
 
 **Incremental caching.** Work is planned per line against the existing cache
 (:mod:`ashen.diagnostics.poincare_cache`), so widening ``psi_n_in`` traces only
@@ -241,24 +244,44 @@ def _stpts(work: list[pc.LineWork]) -> str:
 def _split_blocks(path: Path) -> list[np.ndarray]:
     """Split one of jorek2_poincare's two output files into per-line blocks.
 
-    Blocks are separated by blank lines (``.f90:457-460``); ``#`` comment
-    lines head the file (``.f90:190-196``).
+    A block boundary is exactly **two** consecutive blank lines, not one.
+    Every traced line's write is unconditionally followed by ``write(21,*)``
+    called twice (``.f90:457-460``) regardless of how many points it
+    produced -- including zero: a line that leaves the mesh before
+    completing a single toroidal period is still reported on stdout
+    (``=> Line N: 0 points``, ``.f90:450``) but writes no data rows, only its
+    trailing blank-blank pair. Treating a single blank line as a boundary
+    (as an earlier version of this function did) silently swallows such a
+    line's block entirely -- nothing was ever accumulated to flush -- which
+    undercounts blocks by one relative to what ``stdout`` reported and trips
+    :func:`_demux_blocks`'s count-mismatch check with a confusing "reported N
+    but wrote N-1" error that looks like tool/output corruption but is a
+    parsing bug on this side.
+
+    ``#`` comment lines head the file (``.f90:190-196``) and are dropped.
     """
     blocks: list[np.ndarray] = []
     current: list[tuple[float, float]] = []
+    blank_run = 0
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
         if not line:
-            if current:
-                blocks.append(np.asarray(current, dtype=float))
+            blank_run += 1
+            if blank_run == 2:
+                blocks.append(np.asarray(current, dtype=float).reshape(-1, 2))
                 current = []
+                blank_run = 0
             continue
+        blank_run = 0
         if line.startswith("#"):
             continue
         parts = line.split()
         current.append((float(parts[0]), float(parts[1])))
     if current:
-        blocks.append(np.asarray(current, dtype=float))
+        # Data with no trailing blank-blank pair -- truncated output. Still
+        # surfaced (not silently dropped) so a downstream count mismatch
+        # reports it rather than losing it quietly.
+        blocks.append(np.asarray(current, dtype=float).reshape(-1, 2))
     return blocks
 
 

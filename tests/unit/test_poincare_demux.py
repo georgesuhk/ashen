@@ -23,14 +23,30 @@ def msg(line_no: int, n_points: int) -> str:
     return f" => Line{line_no:6d}:{n_points:6d} points"
 
 
-def block(value: float, n: int) -> str:
-    return "\n".join(f"  {value:18.8e}  {value + 1:18.8e}" for _ in range(n))
+def block(value: float, n: int) -> list[str]:
+    """``n`` data rows for one traced line -- ``[]`` (via ``EMPTY``, below)
+    represents a line that produced zero points."""
+    return [f"  {value:18.8e}  {value + 1:18.8e}" for _ in range(n)]
 
 
-def output_file(tmp_path, blocks: list[str], name="poinc_R-Z.dat"):
+#: A 0-point line's block: no data rows, just its blank-blank trailer.
+EMPTY: list[str] = []
+
+
+def output_file(tmp_path, blocks: list[list[str]], name="poinc_R-Z.dat"):
+    """Mirrors jorek2_poincare.f90's actual write pattern (``.f90:449-460``)
+    exactly: for each traced line, zero or more data rows followed
+    unconditionally by *two* blank output records -- including for a
+    0-point line, which contributes only its trailing blank pair with no
+    data rows at all. ``blocks`` is a list of per-line row-lists, in file
+    order (not necessarily line order -- see the module docstring on
+    thread-completion order)."""
+    lines = [" #  R                 Z"]
+    for rows in blocks:
+        lines.extend(rows)
+        lines.extend(["", ""])
     path = tmp_path / name
-    body = " #  R                 Z\n" + "\n\n\n".join(blocks) + "\n\n\n"
-    path.write_text(body, encoding="utf-8")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
@@ -46,6 +62,50 @@ def test_splits_on_blank_lines_and_skips_comments(tmp_path):
 
 def test_a_single_line_still_splits(tmp_path):
     assert [len(b) for b in _split_blocks(output_file(tmp_path, [block(1.0, 7)]))] == [7]
+
+
+# --- zero-point lines: the actual bug (block undercount vs. stdout reports) -------
+
+
+def test_a_zero_point_line_still_produces_a_block(tmp_path):
+    """A line that leaves the mesh before completing one toroidal period
+    writes no data rows -- only its unconditional blank-blank trailer
+    (.f90:457-460) -- but jorek2_poincare still reports it on stdout. If
+    _split_blocks treated a single blank line as the boundary, that empty
+    trailer would be swallowed with nothing to flush, undercounting blocks
+    by one relative to stdout's report count."""
+    path = output_file(tmp_path, [block(1.0, 3), EMPTY, block(2.0, 4)])
+    blocks = _split_blocks(path)
+    assert [len(b) for b in blocks] == [3, 0, 4]
+    assert blocks[1].shape == (0, 2)  # not (0,) -- must stay indexable as [:, 0]/[:, 1]
+
+
+def test_a_zero_point_line_as_the_only_line(tmp_path):
+    path = output_file(tmp_path, [EMPTY])
+    blocks = _split_blocks(path)
+    assert len(blocks) == 1
+    assert blocks[0].shape == (0, 2)
+
+
+def test_consecutive_zero_point_lines_each_get_their_own_block(tmp_path):
+    """Two 0-point lines back to back write four blank lines in a row with
+    no data between them -- must still split into two separate (empty)
+    blocks, not collapse into one or zero."""
+    path = output_file(tmp_path, [block(1.0, 2), EMPTY, EMPTY, block(2.0, 3)])
+    blocks = _split_blocks(path)
+    assert [len(b) for b in blocks] == [2, 0, 0, 3]
+
+
+def test_zero_point_line_demuxes_to_an_empty_array_not_a_missing_key(tmp_path):
+    """The regression this was actually caught by: jorek2_poincare reporting
+    N traced lines but _split_blocks producing N-1 blocks, tripping
+    _demux_blocks's count-mismatch check even though nothing was actually
+    wrong with the tool's output."""
+    blocks = _split_blocks(output_file(tmp_path, [block(1.0, 3), EMPTY, block(2.0, 4)]))
+    stdout = "\n".join([msg(1, 3), msg(2, 0), msg(3, 4)])
+    got = _demux_blocks(stdout, blocks, 3, "R-Z")
+    assert len(got) == 3
+    assert got[2].shape == (0, 2)
 
 
 # --- demuxing -----------------------------------------------------------------------
