@@ -25,13 +25,10 @@ A comparison names its members one of two ways, never both:
 * ``datasets`` (nested ``[comparisons.NAME.datasets.DATASET]`` tables) -- more
   than one *related* scan sharing the same x-axis, e.g. a resistivity scan
   repeated under two different profile assumptions ("normal" vs "rho19").
-  Each dataset is its own group of cases with its own points; the
-  wetted_fraction plot overlays them on one axes, one colour and legend
-  entry per dataset (:func:`ashen.plotting.wetted_fraction.
-  plot_wetted_fraction_datasets`). A dataset's own ``x_values``/``labels``
-  fall back to the comparison's own, since the whole point of grouping scans
-  this way is that they usually share one scan parameter -- set them on a
-  dataset only when that one scan's points genuinely differ.
+  Each dataset is its own group of cases; the wetted_fraction plot overlays
+  them on one axes, one colour and legend entry per dataset
+  (:func:`ashen.plotting.wetted_fraction.plot_wetted_fraction_datasets`).
+  See :class:`Dataset` for its fields.
 
 A comparison can also override the analysis parameters that produce that
 scalar (``theta_target_psi``, ``theta_bins``, ``theta_psi_n_range``,
@@ -67,21 +64,28 @@ class Dataset:
     name: str
     #: Member case names, in point order.
     cases: list[str]
-    #: Parallel to `cases`; defaults to the case names themselves if omitted.
-    labels: list[str] = field(default_factory=list)
-    #: Parallel to `cases`. Falls back to the parent comparison's `x_values`
-    #: if not set here -- see the module docstring.
+    #: Per-case labels, parallel to `cases`. Not the legend text -- see
+    #: `dataset_label`.
+    x_tick_labels: list[str] = field(default_factory=list)
+    #: Parallel to `cases`; falls back to the comparison's own `x_values`.
     x_values: list[float] | None = None
-    #: Explicit legend colour for this dataset's series. `None` (default)
-    #: means the renderer assigns one from `ashen.plotting.colors.
-    #: DISCRETE_PALETTE`, cycling by this dataset's position among its
-    #: siblings.
+    #: Legend colour. `None` assigns one from `ashen.plotting.colors.
+    #: DISCRETE_PALETTE` by position among sibling datasets.
     color: str | None = None
+    #: This series' legend text; falls back to `name` (the TOML table key)
+    #: when empty. See `series_label`.
+    dataset_label: str = ""
 
     def labelled_cases(self) -> list[tuple[str, str]]:
-        """``[(label, case_name), ...]`` in point order."""
-        labels = self.labels or self.cases
+        """``[(x_tick_label, case_name), ...]`` in point order."""
+        labels = self.x_tick_labels or self.cases
         return list(zip(labels, self.cases))
+
+    @property
+    def series_label(self) -> str:
+        """What a renderer puts in the legend for this dataset's series --
+        `dataset_label` if set, else `name`."""
+        return self.dataset_label or self.name
 
 
 @dataclass(frozen=True)
@@ -90,22 +94,20 @@ class Comparison:
     #: Member case names, in panel order. Empty when `datasets` is used
     #: instead -- exactly one of the two is ever set, never both.
     cases: list[str] = field(default_factory=list)
-    #: Parallel to `cases`; defaults to the case names themselves if omitted.
-    labels: list[str] = field(default_factory=list)
+    #: Per-case labels, parallel to `cases` -- e.g. panel titles in the
+    #: theta_hist grid. Defaults to the case names themselves if omitted.
+    x_tick_labels: list[str] = field(default_factory=list)
     #: Named sub-scans sharing this comparison's x-axis -- see the module
     #: docstring. Empty when the comparison uses flat `cases` instead.
     datasets: dict[str, Dataset] = field(default_factory=dict)
     note: str = ""
     n_cols: int = 4
-    #: Parallel to `cases` (flat mode), or the shared default every dataset
-    #: falls back to (datasets mode): an explicit numeric value per member
-    #: (e.g. each case's resistivity), for a "derived scalar vs. scan
-    #: parameter" plot (ashen.plotting.wetted_fraction). Deliberately not
-    #: inferred from run folder names (e.g. parsing "eta1e-3" out of
-    #: "eta1e-3_RE") -- CLAUDE.md flags CASTOR3D's directory-name parsing as
-    #: a hazard this project exists to not repeat; a folder rename must not
-    #: silently change a plotted x-value. None (default) if the comparison
-    #: isn't used for this kind of plot.
+    #: An explicit numeric value per member (e.g. each case's resistivity),
+    #: for a "scalar vs. scan parameter" plot (ashen.plotting.
+    #: wetted_fraction). Deliberately not inferred from run folder names
+    #: (e.g. parsing "eta1e-3" out of "eta1e-3_RE") -- CLAUDE.md flags
+    #: CASTOR3D's directory-name parsing as a hazard this project exists to
+    #: not repeat.
     x_values: list[float] | None = None
     #: Axis label for `x_values`, e.g. "$\\eta$ [$\\Omega \\cdot$ m]".
     x_label: str = ""
@@ -118,11 +120,11 @@ class Comparison:
     theta_wetted_threshold: float | None = None
 
     def labelled_cases(self) -> list[tuple[str, str]]:
-        """``[(label, case_name), ...]`` in panel order -- what a renderer
-        iterates to build panels. Flat-mode (`cases`) only; a `datasets`
-        comparison has no single flat panel order -- iterate `datasets`
-        instead."""
-        labels = self.labels or self.cases
+        """``[(x_tick_label, case_name), ...]`` in panel order -- what a
+        renderer iterates to build panels. Flat-mode (`cases`) only; a
+        `datasets` comparison has no single flat panel order -- iterate
+        `datasets` instead."""
+        labels = self.x_tick_labels or self.cases
         return list(zip(labels, self.cases))
 
 
@@ -152,7 +154,7 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
     for name, raw in raw_comparisons.items():
         unknown = sorted(
             set(raw) - {
-                "cases", "labels", "datasets", "note", "n_cols", "x_values", "x_label",
+                "cases", "x_tick_labels", "datasets", "note", "n_cols", "x_values", "x_label",
                 "theta_target_psi", "theta_bins", "theta_psi_n_range",
                 "theta_wetted_threshold",
             }
@@ -195,11 +197,12 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
                     f"{path}: comparison {name!r} names undefined case(s) {missing}"
                 )
 
-            labels = [str(l) for l in raw.get("labels", [])]
+            labels = [str(l) for l in raw.get("x_tick_labels", [])]
             if labels and len(labels) != len(members):
                 raise CasesError(
-                    f"{path}: comparison {name!r} has {len(labels)} labels for "
-                    f"{len(members)} cases; labels must be omitted or match cases 1:1"
+                    f"{path}: comparison {name!r} has {len(labels)} x_tick_labels "
+                    f"for {len(members)} cases; x_tick_labels must be omitted or "
+                    "match cases 1:1"
                 )
 
             if x_values is not None and len(x_values) != len(members):
@@ -208,10 +211,10 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
                     f"for {len(members)} cases; x_values must match cases 1:1"
                 )
         else:
-            if "labels" in raw:
+            if "x_tick_labels" in raw:
                 raise CasesError(
-                    f"{path}: comparison {name!r} sets 'labels' but uses "
-                    "'datasets' -- put labels on each dataset instead"
+                    f"{path}: comparison {name!r} sets 'x_tick_labels' but uses "
+                    "'datasets' -- put x_tick_labels on each dataset instead"
                 )
             for ds_name, raw_ds in raw["datasets"].items():
                 datasets[ds_name] = _parse_dataset(
@@ -254,7 +257,7 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
         comparisons[name] = Comparison(
             name=name,
             cases=members,
-            labels=labels,
+            x_tick_labels=labels,
             datasets=datasets,
             note=str(raw.get("note", "")),
             n_cols=int(raw.get("n_cols", 4)),
@@ -279,7 +282,9 @@ def _parse_dataset(
     default_x_values: list[float] | None,
 ) -> Dataset:
     """One ``[comparisons.NAME.datasets.DATASET]`` table."""
-    unknown = sorted(set(raw) - {"cases", "labels", "x_values", "color"})
+    unknown = sorted(
+        set(raw) - {"cases", "x_tick_labels", "x_values", "color", "dataset_label"}
+    )
     if unknown:
         raise CasesError(
             f"{path}: dataset {dataset_name!r} of comparison {comparison_name!r} "
@@ -301,12 +306,12 @@ def _parse_dataset(
             f"names undefined case(s) {missing}"
         )
 
-    labels = [str(l) for l in raw.get("labels", [])]
+    labels = [str(l) for l in raw.get("x_tick_labels", [])]
     if labels and len(labels) != len(members):
         raise CasesError(
             f"{path}: dataset {dataset_name!r} of comparison {comparison_name!r} "
-            f"has {len(labels)} labels for {len(members)} cases; labels must "
-            "be omitted or match cases 1:1"
+            f"has {len(labels)} x_tick_labels for {len(members)} cases; "
+            "x_tick_labels must be omitted or match cases 1:1"
         )
 
     if "x_values" in raw:
@@ -326,6 +331,9 @@ def _parse_dataset(
     if color is not None:
         color = str(color)
 
+    dataset_label = str(raw.get("dataset_label", ""))
+
     return Dataset(
-        name=dataset_name, cases=members, labels=labels, x_values=x_values, color=color,
+        name=dataset_name, cases=members, x_tick_labels=labels, x_values=x_values,
+        color=color, dataset_label=dataset_label,
     )

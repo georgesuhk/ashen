@@ -29,14 +29,14 @@ def test_no_comparisons_section_returns_empty_dict(tmp_path):
     assert load_comparisons(path, cases) == {}
 
 
-def test_comparison_with_explicit_labels(tmp_path):
+def test_comparison_with_explicit_x_tick_labels(tmp_path):
     path = _write(
         tmp_path,
         _cases_block() + """
         [comparisons.scan]
         note = "eta scan"
         cases = ["a", "b", "c"]
-        labels = ["1e-3", "1e-4", "1e-5"]
+        x_tick_labels = ["1e-3", "1e-4", "1e-5"]
         n_cols = 5
         """,
     )
@@ -46,21 +46,21 @@ def test_comparison_with_explicit_labels(tmp_path):
     assert comparison.name == "scan"
     assert comparison.note == "eta scan"
     assert comparison.cases == ["a", "b", "c"]
-    assert comparison.labels == ["1e-3", "1e-4", "1e-5"]
+    assert comparison.x_tick_labels == ["1e-3", "1e-4", "1e-5"]
     assert comparison.n_cols == 5
     assert comparison.labelled_cases() == [
         ("1e-3", "a"), ("1e-4", "b"), ("1e-5", "c"),
     ]
 
 
-def test_comparison_without_labels_defaults_to_case_names(tmp_path):
+def test_comparison_without_x_tick_labels_defaults_to_case_names(tmp_path):
     path = _write(
         tmp_path,
         _cases_block() + '[comparisons.scan]\ncases = ["a", "b"]\n',
     )
     cases = load_cases(path)
     comparison = load_comparisons(path, cases)["scan"]
-    assert comparison.labels == []
+    assert comparison.x_tick_labels == []
     assert comparison.labelled_cases() == [("a", "a"), ("b", "b")]
 
 
@@ -103,13 +103,13 @@ def test_comparison_missing_cases_key_raises(tmp_path):
         load_comparisons(path, cases)
 
 
-def test_comparison_labels_length_mismatch_raises(tmp_path):
+def test_comparison_x_tick_labels_length_mismatch_raises(tmp_path):
     path = _write(
         tmp_path,
-        _cases_block() + '[comparisons.scan]\ncases = ["a", "b"]\nlabels = ["only-one"]\n',
+        _cases_block() + '[comparisons.scan]\ncases = ["a", "b"]\nx_tick_labels = ["only-one"]\n',
     )
     cases = load_cases(path)
-    with pytest.raises(CasesError, match="labels"):
+    with pytest.raises(CasesError, match="x_tick_labels"):
         load_comparisons(path, cases)
 
 
@@ -281,11 +281,25 @@ def test_dataset_labelled_cases_defaults_to_case_names():
     assert ds.labelled_cases() == [("a", "a"), ("b", "b")]
 
 
-def test_dataset_labelled_cases_uses_its_own_labels():
+def test_dataset_labelled_cases_uses_its_own_x_tick_labels():
     from ashen.comparisons import Dataset
 
-    ds = Dataset(name="normal", cases=["a", "b"], labels=["1e-3", "1e-4"])
+    ds = Dataset(name="normal", cases=["a", "b"], x_tick_labels=["1e-3", "1e-4"])
     assert ds.labelled_cases() == [("1e-3", "a"), ("1e-4", "b")]
+
+
+def test_dataset_series_label_defaults_to_name():
+    from ashen.comparisons import Dataset
+
+    ds = Dataset(name="rho19", cases=["a"])
+    assert ds.series_label == "rho19"
+
+
+def test_dataset_series_label_uses_dataset_label_when_set():
+    from ashen.comparisons import Dataset
+
+    ds = Dataset(name="rho19", cases=["a"], dataset_label=r"$\rho^* = 19$")
+    assert ds.series_label == r"$\rho^* = 19$"
 
 
 def test_dataset_inherits_comparisons_x_values_by_default(tmp_path):
@@ -357,17 +371,17 @@ def test_setting_neither_cases_nor_datasets_raises(tmp_path):
         load_comparisons(path, cases)
 
 
-def test_top_level_labels_with_datasets_raises(tmp_path):
+def test_top_level_x_tick_labels_with_datasets_raises(tmp_path):
     path = _write(
         tmp_path,
         _cases_block()
         + '[comparisons.scan]\n'
-        + 'labels = ["x"]\n'
+        + 'x_tick_labels = ["x"]\n'
         + '[comparisons.scan.datasets.normal]\n'
         + 'cases = ["a"]\n',
     )
     cases = load_cases(path)
-    with pytest.raises(CasesError, match="labels.*datasets"):
+    with pytest.raises(CasesError, match="x_tick_labels.*datasets"):
         load_comparisons(path, cases)
 
 
@@ -397,18 +411,33 @@ def test_dataset_with_empty_cases_raises(tmp_path):
         load_comparisons(path, cases)
 
 
-def test_dataset_labels_length_mismatch_raises(tmp_path):
+def test_dataset_x_tick_labels_length_mismatch_raises(tmp_path):
     path = _write(
         tmp_path,
         _cases_block()
         + '[comparisons.scan]\n'
         + '[comparisons.scan.datasets.normal]\n'
         + 'cases = ["a", "b"]\n'
-        + 'labels = ["only-one"]\n',
+        + 'x_tick_labels = ["only-one"]\n',
     )
     cases = load_cases(path)
-    with pytest.raises(CasesError, match="labels"):
+    with pytest.raises(CasesError, match="x_tick_labels"):
         load_comparisons(path, cases)
+
+
+def test_dataset_label_field_is_parsed(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + '[comparisons.scan.datasets.normal]\n'
+        + 'cases = ["a"]\n'
+        + "dataset_label = '$\\rho^* = 19$'\n",  # TOML literal string: no escaping
+    )
+    cases = load_cases(path)
+    ds = load_comparisons(path, cases)["scan"].datasets["normal"]
+    assert ds.dataset_label == r"$\rho^* = 19$"
+    assert ds.series_label == r"$\rho^* = 19$"
 
 
 def test_dataset_x_values_length_mismatch_raises(tmp_path):

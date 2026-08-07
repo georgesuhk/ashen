@@ -179,60 +179,56 @@ note  = "internal kink investigation"
 
 # [comparisons.*]: group already-defined cases into one cross-run figure,
 # e.g. an eta scan's theta_hist distributions, one panel per run instead of
-# per step. `cases` names existing [cases.*] entries (every name must already
-# be defined above); `labels` is parallel to `cases` and defaults to the case
-# names themselves if omitted. `bin/plot --compare eta_scan --diag theta_hist`
-# draws it; `--list-comparisons` shows what's defined. Each member case's own
+# per step. `cases` names existing [cases.*] entries; `x_tick_labels` is
+# parallel to `cases`, defaulting to the case names. Each member case's own
 # per-diag steps override still supplies that run's pooled time window --
-# e.g. [cases."qa2.1_g2.3/eta1e-4_RE".theta_hist] steps = [2400, 2600, 2800]
-# picks which steps that one run's panel pools, same mechanism as any other
-# [cases.NAME.<diag>] override.
+# e.g. [cases."qa2.1_g2.3/eta1e-4_RE".theta_hist] steps = [2400, 2600, 2800].
 # [comparisons.eta_scan]
-# note   = "resistivity scan, theta dispersion at the q=1 crossing"
-# cases  = [
+# note          = "resistivity scan, theta dispersion at the q=1 crossing"
+# cases         = [
 #   "qa2.1_g2.3/eta1e-3_RE",
 #   "qa2.1_g2.3/eta1e-4_RE",
 #   "qa2.1_g2.3/eta1e-5_RE",
 # ]
-# labels = ["$\\eta = 10^{-3}$", "$\\eta = 10^{-4}$", "$\\eta = 10^{-5}$"]
-# n_cols = 5
+# x_tick_labels = ["$\\eta = 10^{-3}$", "$\\eta = 10^{-4}$", "$\\eta = 10^{-5}$"]
+# n_cols        = 5
+#
+# `bin/plot --compare eta_scan --diag theta_hist` draws it; `--list-comparisons`
+# shows what's defined.
 #
 # x_values/x_label turn the same comparison into a "scalar vs. scan
-# parameter" plot instead -- `bin/plot --compare eta_scan --diag
-# wetted_fraction` needs these (x_values is required for that diag, unlike
-# theta_hist which ignores them). x_values is parallel to `cases`, an
-# explicit numeric value per member -- deliberately NOT inferred by parsing
+# parameter" plot instead -- `--diag wetted_fraction` needs these
+# (theta_hist ignores them). x_values is parallel to `cases`, an explicit
+# numeric value per member -- deliberately NOT inferred by parsing
 # "eta1e-3" out of the run folder's own name, since a folder rename would
 # then silently change what gets plotted.
 # x_values = [1e-3, 1e-4, 1e-5]
 # x_label  = "$\\eta$ [$\\Omega \\cdot$ m]"
 #
 # theta_target_psi/theta_bins/theta_psi_n_range/theta_wetted_threshold can
-# also be set here, on the comparison itself, applying to every member
-# uniformly -- rather than each [cases.*] entry needing its own matching
-# copy. A scan is only a fair comparison if every point used the same
-# target/bins/threshold, so this is the natural place for them to live, not
-# scattered across the member cases. Precedence, most specific wins: a CLI
-# flag (e.g. --theta_target_psi) > this comparison's own setting > the
-# member case's own setting > the diagnostic's built-in default.
+# also be set here, applying to every member uniformly rather than each
+# [cases.*] entry needing its own matching copy. Precedence, most specific
+# wins: a CLI flag (e.g. --theta_target_psi) > this comparison's own
+# setting > the member case's own setting > the diagnostic's built-in
+# default.
 # theta_target_psi       = 1.05
 # theta_bins              = 500
 # theta_psi_n_range       = [0.2, 0.9]
 # theta_wetted_threshold  = 0.002
 
 # A comparison names its members one of two ways, never both: flat `cases`
-# (above -- one series/panel per member) or nested `datasets` (below --
-# several *related* scans overlaid on one axes, e.g. the same resistivity
-# scan repeated under two different profile assumptions). Only
-# `wetted_fraction` draws `datasets`; `theta_hist` needs flat `cases`.
+# (above) or nested `datasets` (below) -- several *related* scans overlaid on
+# one axes, e.g. the same resistivity scan under two profile assumptions.
+# Only `wetted_fraction` draws `datasets`; `theta_hist` needs flat `cases`.
 #
-# Each [comparisons.NAME.datasets.DATASET] table is its own group of cases,
-# with its own `cases`/`labels`, drawn as one coloured, legend-labelled
-# series. A dataset's `x_values` falls back to the comparison's own (set
-# once, below, since these scans usually share one scan parameter) --
-# give a dataset its own `x_values` only if that one scan's points
-# genuinely differ. `color` is optional; omitted, each dataset gets one
-# from ashen.plotting.colors.DISCRETE_PALETTE by position.
+# Each [comparisons.NAME.datasets.DATASET] table is its own group of cases.
+# `x_values`/`x_tick_labels` fall back to the comparison's own (set once,
+# below) -- give a dataset its own only if that one scan's points genuinely
+# differ. `color` is optional; omitted, each dataset gets one from
+# ashen.plotting.colors.DISCRETE_PALETTE by position. `dataset_label` is the
+# series' legend text, defaulting to the dataset's own table name (e.g.
+# "rho19"). `--dataset NAME` (repeatable, on `bin/plot`) restricts a draw to
+# only the named dataset(s).
 # [comparisons.wetted_vs_eta]
 # note     = "wetted fraction vs. eta, normal profile vs. rho19"
 # x_values = [1e-3, 1e-4, 1e-5]
@@ -251,4 +247,5 @@ note  = "internal kink investigation"
 #   "qa2.1_g2.3_rho19/eta1e-4_RE",
 #   "qa2.1_g2.3_rho19/eta1e-5_RE",
 # ]
-# color = "tab:red"
+# color         = "tab:red"
+# dataset_label = "$\\rho^* = 19$"

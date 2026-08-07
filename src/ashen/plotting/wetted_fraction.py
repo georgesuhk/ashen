@@ -106,17 +106,11 @@ def plot_wetted_fraction_datasets(
     scan repeated under two profile assumptions ("normal" vs "rho19") -- with
     a legend distinguishing them.
 
-    ``series`` is ``[(dataset_label, x, y), ...]``, one entry per dataset,
-    drawn via :func:`draw_wetted_fraction_vs_x` in order. ``colors`` is
-    parallel to ``series``; a ``None`` entry (or ``colors`` omitted entirely)
-    assigns from :data:`ashen.plotting.colors.DISCRETE_PALETTE`, cycling by
-    that series' position -- the same discrete categorical palette used
-    elsewhere in this package, so a dataset's colour is at least consistent
-    with the rest of a figure set even without an explicit choice.
-
-    The single-series :func:`plot_wetted_fraction_vs_x` is unchanged and
-    still the right call for a plain (non-dataset) comparison -- this is the
-    ``datasets``-mode counterpart, not a replacement.
+    ``series`` is ``[(label, x, y), ...]``, one entry per dataset, drawn via
+    :func:`draw_wetted_fraction_vs_x` in order. ``colors`` is parallel to
+    ``series``; a ``None`` entry (or ``colors`` omitted entirely) assigns
+    from :data:`ashen.plotting.colors.DISCRETE_PALETTE`, cycling by
+    position.
     """
     import matplotlib.pyplot as plt
 

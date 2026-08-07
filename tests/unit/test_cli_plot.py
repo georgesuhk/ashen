@@ -1265,7 +1265,7 @@ def comparison_campaign(tmp_path, monkeypatch):
         '[comparisons.eta_scan]\n'
         'note = "resistivity scan"\n'
         'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
-        'labels = ["1e-3", "1e-4"]\n',
+        'x_tick_labels = ["1e-3", "1e-4"]\n',
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -1341,7 +1341,7 @@ def _add_x_values(comparison_campaign, *, x_values):
         '[comparisons.eta_scan]\n'
         'note = "resistivity scan"\n'
         'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
-        'labels = ["1e-3", "1e-4"]\n'
+        'x_tick_labels = ["1e-3", "1e-4"]\n'
         f'x_values = {x_values}\n'
         'x_label = "$\\\\eta$"\n',
         encoding="utf-8",
@@ -1363,7 +1363,7 @@ def _add_x_values_with_case_threshold(comparison_campaign, *, x_values, threshol
         f'theta_wetted_threshold = {threshold}\n'
         '[comparisons.eta_scan]\n'
         'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
-        'labels = ["1e-3", "1e-4"]\n'
+        'x_tick_labels = ["1e-3", "1e-4"]\n'
         f'x_values = {x_values}\n',
         encoding="utf-8",
     )
@@ -1492,7 +1492,7 @@ def _add_x_values_with_comparison_overrides(comparison_campaign, *, x_values):
         'theta_wetted_threshold = 0.02\n'
         '[comparisons.eta_scan]\n'
         'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
-        'labels = ["1e-3", "1e-4"]\n'
+        'x_tick_labels = ["1e-3", "1e-4"]\n'
         f'x_values = {x_values}\n'
         'theta_target_psi = 1.0\n'
         'theta_bins = 20\n'
@@ -1603,7 +1603,7 @@ def test_compare_wetted_fraction_no_warning_when_case_uses_the_default(
         'steps = [100]\n'
         '[comparisons.eta_scan]\n'
         'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
-        'labels = ["1e-3", "1e-4"]\n'
+        'x_tick_labels = ["1e-3", "1e-4"]\n'
         'x_values = [1e-3, 1e-4]\n'
         'theta_target_psi = 1.0\n'
         'theta_bins = 20\n',
@@ -1741,6 +1741,28 @@ def test_list_comparisons_reports_dataset_count(dataset_comparison_campaign, cap
     assert plot_cli.main(["--list-comparisons"]) == 0
     out = capsys.readouterr().out
     assert "2 datasets, 4 cases" in out
+
+
+def test_compare_wetted_fraction_dataset_flag_restricts_to_selected(
+    dataset_comparison_campaign, capsys
+):
+    assert plot_cli.main([
+        "--compare", "eta_scan", "--diag", "wetted_fraction", "--dataset", "normal",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "qa2.1_g2.3/eta1e-3_RE" in out
+    assert "qa2.1_g2.3_rho19/eta1e-3_RE" not in out
+
+
+def test_compare_wetted_fraction_dataset_flag_unknown_name_is_reported(
+    dataset_comparison_campaign, capsys
+):
+    assert plot_cli.main([
+        "--compare", "eta_scan", "--diag", "wetted_fraction", "--dataset", "ghost",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "no dataset(s) ['ghost']" in out
+    assert not (dataset_comparison_campaign / "figures").exists()
 
 
 def test_profiles_diag_falls_back_to_step_index_without_zerod(campaign, capsys):

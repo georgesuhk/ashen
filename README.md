@@ -380,10 +380,10 @@ run rather than per step:
 
 ```toml
 [comparisons.eta_scan]
-note   = "resistivity scan, theta dispersion at the q=1 crossing"
-cases  = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE", "qa2.1_g2.3/eta1e-5_RE"]
-labels = ["$\\eta = 10^{-3}$", "$\\eta = 10^{-4}$", "$\\eta = 10^{-5}$"]
-n_cols = 5
+note          = "resistivity scan, theta dispersion at the q=1 crossing"
+cases         = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE", "qa2.1_g2.3/eta1e-5_RE"]
+x_tick_labels = ["$\\eta = 10^{-3}$", "$\\eta = 10^{-4}$", "$\\eta = 10^{-5}$"]
+n_cols        = 5
 ```
 
 ```bash
@@ -502,16 +502,19 @@ color = "tab:red"
 
 ```bash
 python ~/ashen/bin/plot --compare wetted_vs_eta --diag wetted_fraction
+python ~/ashen/bin/plot --compare wetted_vs_eta --diag wetted_fraction --dataset rho19
 ```
 
-Each dataset is drawn as its own coloured, legend-labelled series on one
-axes (`ashen.plotting.wetted_fraction.plot_wetted_fraction_datasets`). A
-dataset's own `x_values`/`labels` fall back to the comparison's, since these
-scans usually share one scan parameter -- set them on a dataset only when
-that one scan's points genuinely differ. `color` is optional; omitted, each
-dataset gets one from `ashen.plotting.colors.DISCRETE_PALETTE` by position.
+Each dataset is drawn as its own coloured, legend-labelled series on one axes
+(`ashen.plotting.wetted_fraction.plot_wetted_fraction_datasets`). A dataset's
+own `x_values`/`x_tick_labels` fall back to the comparison's -- set them on a
+dataset only when that one scan's points genuinely differ. `color` is
+optional; omitted, each dataset gets one from
+`ashen.plotting.colors.DISCRETE_PALETTE` by position. The legend text itself
+is `dataset_label` if set, else the dataset's TOML key (`rho19` above).
+`--dataset NAME` (repeatable) restricts a draw to only the named dataset(s).
 `theta_target_psi`/`theta_bins`/`theta_psi_n_range`/`theta_wetted_threshold`
-still work exactly as above, applying uniformly across every dataset's cases.
+apply uniformly across every dataset's cases, same as flat-mode comparisons.
 
 ### Radial profiles
 

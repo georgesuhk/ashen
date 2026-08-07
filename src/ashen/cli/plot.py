@@ -174,6 +174,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--list-comparisons", action="store_true",
         help="list defined comparisons and exit",
     )
+    parser.add_argument(
+        "--dataset", action="append", dest="datasets_selected",
+        help="wetted_fraction: which dataset(s) to draw from a datasets-style "
+        "comparison (repeatable; default: every dataset)",
+    )
     parser.add_argument("--site", type=Path, default=None, help="explicit site.toml")
     parser.add_argument(
         "--show-config", action="store_true",
@@ -736,12 +741,8 @@ def _compare_theta_hist(
     the comparison tier exists (a scan is only apples-to-apples if every
     point was computed the same way).
 
-    `datasets`-style comparisons aren't supported here -- there's no obvious
-    single grid to draw for "several related scans" the way
-    `plot_wetted_fraction_datasets` can just overlay lines with a legend, so
-    this reports and skips rather than silently drawing nothing (a
-    `datasets` comparison has no flat `cases`, so `labelled_cases()` would
-    otherwise return an empty list here).
+    `datasets`-style comparisons aren't supported here -- reported and
+    skipped rather than silently drawing an empty grid.
     """
     if comparison.datasets:
         print(
@@ -886,27 +887,36 @@ def _compare_wetted_fraction(
     threshold: float | None,
     dpi: int | None,
     steps: list[int] | None,
+    dataset_names: list[str] | None = None,
 ) -> None:
     """The fraction of each case's (pooled) theta_hist bins exceeding a
     threshold, plotted against a numeric x-axis -- e.g. wetted fraction vs.
-    eta. Needs `x_values` configured somewhere (flat comparison, or each
-    dataset/its shared default); unlike theta_hist there is no meaningful
-    figure without a numeric x-axis, so a series missing one is reported and
-    skipped rather than falling back to case names.
+    eta. Needs `x_values` configured somewhere; unlike theta_hist there is no
+    meaningful figure without one, so a series missing it is skipped.
 
-    A `datasets`-style comparison (`comparison.datasets` non-empty) draws
-    one overlaid series per dataset with a legend
-    (:func:`ashen.plotting.wetted_fraction.plot_wetted_fraction_datasets`);
-    a flat comparison draws its one series as before
-    (:func:`ashen.plotting.wetted_fraction.plot_wetted_fraction_vs_x`).
+    A `datasets` comparison draws one overlaid, legend-labelled series per
+    dataset (`plot_wetted_fraction_datasets`), optionally restricted to
+    `dataset_names`; a flat comparison draws its one series as before
+    (`plot_wetted_fraction_vs_x`).
     """
     out_dir = Path.cwd() / "figures"
     kwargs = {} if dpi is None else {"dpi": dpi}
 
     if comparison.datasets:
+        chosen = comparison.datasets
+        if dataset_names is not None:
+            unknown = [n for n in dataset_names if n not in comparison.datasets]
+            if unknown:
+                print(
+                    f"  comparison {comparison.name!r} has no dataset(s) {unknown}; "
+                    f"known: {list(comparison.datasets)}"
+                )
+                return
+            chosen = {n: comparison.datasets[n] for n in dataset_names}
+
         series: list[tuple[str, list[float], list[float]]] = []
         colors: list[str | None] = []
-        for ds_name, ds in comparison.datasets.items():
+        for ds_name, ds in chosen.items():
             if ds.x_values is None:
                 print(
                     f"  dataset {ds_name!r} of comparison {comparison.name!r} has no "
@@ -922,7 +932,7 @@ def _compare_wetted_fraction(
             )
             if not xs:
                 continue
-            series.append((ds_name, xs, ys))
+            series.append((ds.series_label, xs, ys))
             colors.append(ds.color)
 
         if not series:
@@ -1043,6 +1053,7 @@ def _run_comparisons(
     theta_psi_range: tuple[float, float] | None,
     n_cols: int | None,
     wetted_threshold: float | None,
+    dataset_names: list[str] | None,
 ) -> int:
     unknown = [name for name in names if name not in comparisons]
     if unknown:
@@ -1070,6 +1081,7 @@ def _run_comparisons(
                 comparison, cases,
                 target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
                 threshold=wetted_threshold, dpi=dpi, steps=steps,
+                dataset_names=dataset_names,
             )
     return 0
 
@@ -1131,6 +1143,7 @@ def main(argv: list[str] | None = None) -> int:
             theta_target_psi=theta_target_psi, theta_bins=theta_bins,
             theta_psi_range=theta_psi_range, n_cols=n_cols,
             wetted_threshold=args.theta_wetted_threshold,
+            dataset_names=args.datasets_selected,
         )
 
     selected = args.selected or list(cases)
