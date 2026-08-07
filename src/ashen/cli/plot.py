@@ -72,7 +72,7 @@ from ashen.plotting.four_modes import plot_mode_amplitudes
 from ashen.plotting.poincare import plot_poincare_step
 from ashen.plotting.profiles import plot_profile_comparison
 from ashen.plotting.theta_histogram import plot_theta_histogram_grid
-from ashen.plotting.wetted_fraction import plot_wetted_fraction_vs_x
+from ashen.plotting.wetted_fraction import plot_wetted_fraction_datasets, plot_wetted_fraction_vs_x
 from ashen.postproc import read_zeroD
 
 DIAG_CHOICES = (
@@ -735,7 +735,22 @@ def _compare_theta_hist(
     before falling back to a default -- see `Comparison`'s docstring for why
     the comparison tier exists (a scan is only apples-to-apples if every
     point was computed the same way).
+
+    `datasets`-style comparisons aren't supported here -- there's no obvious
+    single grid to draw for "several related scans" the way
+    `plot_wetted_fraction_datasets` can just overlay lines with a legend, so
+    this reports and skips rather than silently drawing nothing (a
+    `datasets` comparison has no flat `cases`, so `labelled_cases()` would
+    otherwise return an empty list here).
     """
+    if comparison.datasets:
+        print(
+            f"  comparison {comparison.name!r} uses 'datasets'; theta_hist "
+            "doesn't support grouped datasets, use a flat 'cases' comparison "
+            "instead, skipped"
+        )
+        return
+
     panels = []
     for label, case_name in comparison.labelled_cases():
         case = cases[case_name]
@@ -783,41 +798,32 @@ def _compare_theta_hist(
     print(f"  {out}")
 
 
-def _compare_wetted_fraction(
-    comparison: Comparison,
+def _wetted_fraction_xy(
+    labelled_cases: list[tuple[str, str]],
+    x_by_case: dict[str, float],
     cases: dict[str, Case],
+    comparison: Comparison,
     *,
     target_psi: float | None,
     bins: int | None,
     psi_range: tuple[float, float] | None,
     threshold: float | None,
-    dpi: int | None,
     steps: list[int] | None,
-) -> None:
-    """One point per member case: the fraction of that case's (pooled)
-    theta_hist bins exceeding a threshold, plotted against `comparison.
-    x_values` -- e.g. wetted fraction vs. eta. Needs `x_values` configured;
-    unlike theta_hist there is no meaningful figure without a numeric x-axis,
-    so this is reported and skipped rather than falling back to case names.
+) -> tuple[list[float], list[float]]:
+    """One (x, wetted fraction) point per case in `labelled_cases` -- the
+    per-case computation shared by both a flat comparison's single series
+    and each dataset's series within a `datasets`-style comparison.
 
     `target_psi`/`bins`/`psi_range`/`threshold` are the CLI's values (or
     None); each resolves through `comparison`'s own setting, then the member
-    case's, before falling back to a default -- see `Comparison`'s docstring.
-    A scan is only a meaningful comparison if every point was computed with
-    the same target/bins/threshold, which is exactly what the comparison
-    tier is for.
+    case's, before falling back to a default -- see `Comparison`'s
+    docstring. A scan is only a meaningful comparison if every point was
+    computed with the same target/bins/threshold, which is exactly what the
+    comparison tier is for.
     """
-    if comparison.x_values is None:
-        print(
-            f"  comparison {comparison.name!r} has no x_values configured; "
-            "wetted_fraction needs one numeric value per case, skipped"
-        )
-        return
-
-    x_by_case = dict(zip(comparison.cases, comparison.x_values))
     xs: list[float] = []
     ys: list[float] = []
-    for _, case_name in comparison.labelled_cases():
+    for _, case_name in labelled_cases:
         case = cases[case_name]
         run_dir = Path.cwd() / case.name
         if not run_dir.is_dir():
@@ -867,11 +873,83 @@ def _compare_wetted_fraction(
         xs.append(x_by_case[case_name])
         ys.append(fraction)
 
+    return xs, ys
+
+
+def _compare_wetted_fraction(
+    comparison: Comparison,
+    cases: dict[str, Case],
+    *,
+    target_psi: float | None,
+    bins: int | None,
+    psi_range: tuple[float, float] | None,
+    threshold: float | None,
+    dpi: int | None,
+    steps: list[int] | None,
+) -> None:
+    """The fraction of each case's (pooled) theta_hist bins exceeding a
+    threshold, plotted against a numeric x-axis -- e.g. wetted fraction vs.
+    eta. Needs `x_values` configured somewhere (flat comparison, or each
+    dataset/its shared default); unlike theta_hist there is no meaningful
+    figure without a numeric x-axis, so a series missing one is reported and
+    skipped rather than falling back to case names.
+
+    A `datasets`-style comparison (`comparison.datasets` non-empty) draws
+    one overlaid series per dataset with a legend
+    (:func:`ashen.plotting.wetted_fraction.plot_wetted_fraction_datasets`);
+    a flat comparison draws its one series as before
+    (:func:`ashen.plotting.wetted_fraction.plot_wetted_fraction_vs_x`).
+    """
+    out_dir = Path.cwd() / "figures"
+    kwargs = {} if dpi is None else {"dpi": dpi}
+
+    if comparison.datasets:
+        series: list[tuple[str, list[float], list[float]]] = []
+        colors: list[str | None] = []
+        for ds_name, ds in comparison.datasets.items():
+            if ds.x_values is None:
+                print(
+                    f"  dataset {ds_name!r} of comparison {comparison.name!r} has no "
+                    "x_values (and the comparison sets none to fall back on); "
+                    "wetted_fraction needs one numeric value per case, skipped"
+                )
+                continue
+            x_by_case = dict(zip(ds.cases, ds.x_values))
+            xs, ys = _wetted_fraction_xy(
+                ds.labelled_cases(), x_by_case, cases, comparison,
+                target_psi=target_psi, bins=bins, psi_range=psi_range,
+                threshold=threshold, steps=steps,
+            )
+            if not xs:
+                continue
+            series.append((ds_name, xs, ys))
+            colors.append(ds.color)
+
+        if not series:
+            return
+        out = plot_wetted_fraction_datasets(
+            series, out_dir / f"{comparison.name}_wetted_fraction.png",
+            xlabel=comparison.x_label, colors=colors, **kwargs,
+        )
+        print(f"  {out}")
+        return
+
+    if comparison.x_values is None:
+        print(
+            f"  comparison {comparison.name!r} has no x_values configured; "
+            "wetted_fraction needs one numeric value per case, skipped"
+        )
+        return
+
+    x_by_case = dict(zip(comparison.cases, comparison.x_values))
+    xs, ys = _wetted_fraction_xy(
+        comparison.labelled_cases(), x_by_case, cases, comparison,
+        target_psi=target_psi, bins=bins, psi_range=psi_range,
+        threshold=threshold, steps=steps,
+    )
     if not xs:
         return
 
-    out_dir = Path.cwd() / "figures"
-    kwargs = {} if dpi is None else {"dpi": dpi}
     out = plot_wetted_fraction_vs_x(
         xs, ys, out_dir / f"{comparison.name}_wetted_fraction.png",
         xlabel=comparison.x_label, **kwargs,
@@ -1029,7 +1107,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_comparisons:
         for name, comparison in comparisons.items():
             note = f" -- {comparison.note}" if comparison.note else ""
-            print(f"{name} ({len(comparison.cases)} cases){note}")
+            if comparison.datasets:
+                n_cases = sum(len(ds.cases) for ds in comparison.datasets.values())
+                size = f"{len(comparison.datasets)} datasets, {n_cases} cases"
+            else:
+                size = f"{len(comparison.cases)} cases"
+            print(f"{name} ({size}){note}")
         return 0
 
     diags = args.diags or list(DIAG_CHOICES)

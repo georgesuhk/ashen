@@ -219,3 +219,36 @@ note  = "internal kink investigation"
 # theta_bins              = 500
 # theta_psi_n_range       = [0.2, 0.9]
 # theta_wetted_threshold  = 0.002
+
+# A comparison names its members one of two ways, never both: flat `cases`
+# (above -- one series/panel per member) or nested `datasets` (below --
+# several *related* scans overlaid on one axes, e.g. the same resistivity
+# scan repeated under two different profile assumptions). Only
+# `wetted_fraction` draws `datasets`; `theta_hist` needs flat `cases`.
+#
+# Each [comparisons.NAME.datasets.DATASET] table is its own group of cases,
+# with its own `cases`/`labels`, drawn as one coloured, legend-labelled
+# series. A dataset's `x_values` falls back to the comparison's own (set
+# once, below, since these scans usually share one scan parameter) --
+# give a dataset its own `x_values` only if that one scan's points
+# genuinely differ. `color` is optional; omitted, each dataset gets one
+# from ashen.plotting.colors.DISCRETE_PALETTE by position.
+# [comparisons.wetted_vs_eta]
+# note     = "wetted fraction vs. eta, normal profile vs. rho19"
+# x_values = [1e-3, 1e-4, 1e-5]
+# x_label  = "$\\eta$ [$\\Omega \\cdot$ m]"
+#
+# [comparisons.wetted_vs_eta.datasets.normal]
+# cases = [
+#   "qa2.1_g2.3/eta1e-3_RE",
+#   "qa2.1_g2.3/eta1e-4_RE",
+#   "qa2.1_g2.3/eta1e-5_RE",
+# ]
+#
+# [comparisons.wetted_vs_eta.datasets.rho19]
+# cases = [
+#   "qa2.1_g2.3_rho19/eta1e-3_RE",
+#   "qa2.1_g2.3_rho19/eta1e-4_RE",
+#   "qa2.1_g2.3_rho19/eta1e-5_RE",
+# ]
+# color = "tab:red"

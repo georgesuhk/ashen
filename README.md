@@ -477,6 +477,42 @@ generalised over what the plotted scalar is -- `ashen.plotting.
 wetted_fraction` takes any `(x, y)` pair, not only wetted fraction, for
 whatever the next "scalar vs. scan parameter" plot turns out to need.
 
+#### Overlaying several related scans: `datasets`
+
+A comparison names its members one of two ways, never both: flat `cases`
+(above), or nested `[comparisons.NAME.datasets.DATASET]` tables -- for more
+than one *related* scan sharing the same x-axis, e.g. a resistivity scan
+repeated under two different profile assumptions. Only `wetted_fraction`
+draws `datasets`; `theta_hist` needs flat `cases` and reports/skips a
+`datasets`-only comparison rather than silently drawing nothing.
+
+```toml
+[comparisons.wetted_vs_eta]
+note     = "wetted fraction vs. eta, normal profile vs. rho19"
+x_values = [1e-3, 1e-4, 1e-5]
+x_label  = "$\\eta$ [$\\Omega \\cdot$ m]"
+
+[comparisons.wetted_vs_eta.datasets.normal]
+cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE", "qa2.1_g2.3/eta1e-5_RE"]
+
+[comparisons.wetted_vs_eta.datasets.rho19]
+cases = ["qa2.1_g2.3_rho19/eta1e-3_RE", "qa2.1_g2.3_rho19/eta1e-4_RE", "qa2.1_g2.3_rho19/eta1e-5_RE"]
+color = "tab:red"
+```
+
+```bash
+python ~/ashen/bin/plot --compare wetted_vs_eta --diag wetted_fraction
+```
+
+Each dataset is drawn as its own coloured, legend-labelled series on one
+axes (`ashen.plotting.wetted_fraction.plot_wetted_fraction_datasets`). A
+dataset's own `x_values`/`labels` fall back to the comparison's, since these
+scans usually share one scan parameter -- set them on a dataset only when
+that one scan's points genuinely differ. `color` is optional; omitted, each
+dataset gets one from `ashen.plotting.colors.DISCRETE_PALETTE` by position.
+`theta_target_psi`/`theta_bins`/`theta_psi_n_range`/`theta_wetted_threshold`
+still work exactly as above, applying uniformly across every dataset's cases.
+
 ### Radial profiles
 
 `--diag profiles` draws one figure per `(coords_var, var)` gathered by

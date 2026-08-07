@@ -1651,6 +1651,98 @@ def test_wetted_fraction_diag_is_comparison_only_per_case(theta_campaign, capsys
     assert not (theta_campaign / "figures").exists()
 
 
+# --- wetted_fraction with datasets: overlaying several related scans -------------
+
+
+@pytest.fixture
+def dataset_comparison_campaign(tmp_path, monkeypatch):
+    """Two independent scans ("normal" and "rho19"), each two runs, grouped
+    into one datasets-style comparison sharing a resistivity x-axis."""
+    for group in ("qa2.1_g2.3", "qa2.1_g2.3_rho19"):
+        for name in ("eta1e-3_RE", "eta1e-4_RE"):
+            run_dir = tmp_path / group / name
+            run_dir.mkdir(parents=True)
+            write_float(run_dir / "real_psi_edge.dat", 1.0)
+            (run_dir / "jorek000100.h5").write_bytes(b"")
+            _write_crossing_cache(run_dir, 100)
+
+    cases_toml = tmp_path / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\ntheta_target_psi = 1.0\ntheta_bins = 20\n'
+        '[cases."qa2.1_g2.3/eta1e-4_RE"]\n'
+        'steps = [100]\ntheta_target_psi = 1.0\ntheta_bins = 20\n'
+        '[cases."qa2.1_g2.3_rho19/eta1e-3_RE"]\n'
+        'steps = [100]\ntheta_target_psi = 1.0\ntheta_bins = 20\n'
+        '[cases."qa2.1_g2.3_rho19/eta1e-4_RE"]\n'
+        'steps = [100]\ntheta_target_psi = 1.0\ntheta_bins = 20\n'
+        '[comparisons.eta_scan]\n'
+        'note = "resistivity scan, normal vs. rho19"\n'
+        'x_values = [1e-3, 1e-4]\n'
+        'x_label = "$\\\\eta$"\n'
+        '[comparisons.eta_scan.datasets.normal]\n'
+        'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
+        '[comparisons.eta_scan.datasets.rho19]\n'
+        'cases = ["qa2.1_g2.3_rho19/eta1e-3_RE", "qa2.1_g2.3_rho19/eta1e-4_RE"]\n'
+        'color = "tab:red"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def test_compare_wetted_fraction_datasets_writes_one_file(dataset_comparison_campaign):
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    assert (dataset_comparison_campaign / "figures" / "eta_scan_wetted_fraction.png").is_file()
+
+
+def test_compare_wetted_fraction_datasets_reports_every_case(
+    dataset_comparison_campaign, capsys
+):
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    out = capsys.readouterr().out
+    assert "qa2.1_g2.3/eta1e-3_RE: wetted fraction" in out
+    assert "qa2.1_g2.3_rho19/eta1e-3_RE: wetted fraction" in out
+
+
+def test_compare_wetted_fraction_dataset_without_x_values_is_reported_and_skipped(
+    tmp_path, monkeypatch, capsys
+):
+    run_dir = tmp_path / "qa2.1_g2.3" / "eta1e-3_RE"
+    run_dir.mkdir(parents=True)
+    write_float(run_dir / "real_psi_edge.dat", 1.0)
+    (run_dir / "jorek000100.h5").write_bytes(b"")
+    _write_crossing_cache(run_dir, 100)
+    (tmp_path / "cases.toml").write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\ntheta_target_psi = 1.0\ntheta_bins = 20\n'
+        '[comparisons.eta_scan]\n'
+        '[comparisons.eta_scan.datasets.normal]\n'
+        'cases = ["qa2.1_g2.3/eta1e-3_RE"]\n',  # no x_values anywhere
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "wetted_fraction"]) == 0
+    out = capsys.readouterr().out
+    assert "no x_values" in out
+    assert not (tmp_path / "figures").exists()
+
+
+def test_compare_theta_hist_on_a_datasets_comparison_is_reported_and_skipped(
+    dataset_comparison_campaign, capsys
+):
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "theta_hist"]) == 0
+    out = capsys.readouterr().out
+    assert "uses 'datasets'" in out
+    assert not (dataset_comparison_campaign / "figures").exists()
+
+
+def test_list_comparisons_reports_dataset_count(dataset_comparison_campaign, capsys):
+    assert plot_cli.main(["--list-comparisons"]) == 0
+    out = capsys.readouterr().out
+    assert "2 datasets, 4 cases" in out
+
+
 def test_profiles_diag_falls_back_to_step_index_without_zerod(campaign, capsys):
     (campaign / "postproc" / "zeroD_quantities_s000100.dat").unlink()
     (campaign / "postproc" / "zeroD_quantities_s000200.dat").unlink()
