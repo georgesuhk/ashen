@@ -334,8 +334,28 @@ def _plot_connection_length(
         print(f"  {out}")
 
 
+def _zero_d_is_usable(path: Path) -> bool:
+    """Whether this step's zeroD cache exists *and* actually parses.
+
+    An existence check alone isn't enough: an interrupted ``jorek2_postproc``
+    leaves an empty or header-only file behind, which then blocks its own
+    re-gathering forever -- the file is there, so nothing regenerates it, and
+    every true-time figure for the run silently loses its x-axis (or, before
+    :func:`~ashen.postproc.read_zeroD` learned to raise, crashed on it).
+    Treating an unparseable cache as absent makes that self-healing.
+    """
+    if not path.is_file():
+        return False
+    try:
+        read_zeroD(path)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _ensure_zero_d(case: Case, paths: RunPaths, steps: list[int]) -> None:
-    """Gather the zeroD cache for whichever of ``steps`` don't have one yet.
+    """Gather the zeroD cache for whichever of ``steps`` don't have a usable
+    one yet -- absent, or present but unparseable (:func:`_zero_d_is_usable`).
 
     Every true-time x-axis this module draws goes through
     :func:`_read_true_times`, which used to just report "no zeroD cache for
@@ -358,11 +378,11 @@ def _ensure_zero_d(case: Case, paths: RunPaths, steps: list[int]) -> None:
     true-time axis rather than aborting every other diag this invocation
     was also asked to draw.
     """
-    missing = [step for step in steps if not paths.zero_d(step).is_file()]
+    missing = [step for step in steps if not _zero_d_is_usable(paths.zero_d(step))]
     if not missing:
         return
 
-    print(f"  zerod: missing for step(s) {missing}, gathering")
+    print(f"  zerod: missing or unreadable for step(s) {missing}, gathering")
     jrun = Jorek2Run(
         run_dir=paths.run_dir, exe_dir=paths.run_dir,
         namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
@@ -379,15 +399,23 @@ def _ensure_zero_d(case: Case, paths: RunPaths, steps: list[int]) -> None:
 def _read_true_times(case: Case, paths: RunPaths, steps: list[int]) -> list[float] | None:
     """Each step's true time (seconds) from the zeroD cache, gathering
     whichever steps are missing one first (:func:`_ensure_zero_d`). Still
-    returns ``None`` if any requested step's cache is missing after that --
-    a step whose restart genuinely doesn't exist can't be gathered, and a
-    partial time axis is worse than none, so this stays all-or-nothing."""
+    returns ``None`` if any requested step's cache is missing or unreadable
+    after that -- a step whose restart genuinely doesn't exist can't be
+    gathered, and a partial time axis is worse than none, so this stays
+    all-or-nothing.
+
+    ``ValueError`` covers a cache that exists but is empty/truncated, or
+    carries a value that won't parse (:func:`~ashen.postproc.read_zeroD`) --
+    the same "present but unusable" case :func:`_zero_d_is_usable` already
+    tried to re-gather, kept here so a failed re-gather degrades to skipping
+    the time axis rather than aborting every other diag.
+    """
     _ensure_zero_d(case, paths, steps)
     true_times = []
     for step in steps:
         try:
             true_times.append(read_zeroD(paths.zero_d(step))["Time"])
-        except (FileNotFoundError, KeyError):
+        except (OSError, KeyError, ValueError):
             return None
     return true_times
 

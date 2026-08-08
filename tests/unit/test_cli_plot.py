@@ -287,7 +287,7 @@ def test_missing_zerod_is_reported_then_gathered(campaign, monkeypatch, capsys):
         ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]
     ) == 0
     out = capsys.readouterr().out
-    assert "zerod: missing for step(s) [200], gathering" in out
+    assert "zerod: missing or unreadable for step(s) [200], gathering" in out
     assert "zerod: step 200 done" in out
 
 
@@ -339,6 +339,44 @@ def test_no_zerod_gathering_when_cache_already_complete(campaign, monkeypatch, c
     ) == 0
     assert called == []
     assert "zerod:" not in capsys.readouterr().out
+
+
+def test_truncated_zerod_cache_is_regathered_not_crashed(campaign, monkeypatch, capsys):
+    """A header-only zeroD file (interrupted jorek2_postproc) must be treated
+    as missing and re-gathered. Regression: an existence check alone let the
+    bad file block its own repair, and reading it raised IndexError out of
+    read_zeroD, aborting the whole plot invocation."""
+    (campaign / "postproc" / "zeroD_quantities_s000200.dat").write_text(
+        "Time Energy\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(plot_cli, "run_zero_d", _fake_run_zero_d_writes_cache)
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "zerod: missing or unreadable for step(s) [200]" in out
+    assert list((campaign / "poinc_dir").glob("LCTT_*.png"))
+
+
+def test_unrepairable_truncated_zerod_skips_instead_of_crashing(campaign, monkeypatch, capsys):
+    """Same bad file, but re-gathering fails too (no jorek2_postproc). The
+    time-axis figure is skipped with a note -- not an IndexError traceback."""
+    (campaign / "postproc" / "zeroD_quantities_s000200.dat").write_text(
+        "Time Energy\n", encoding="utf-8"
+    )
+
+    def fail(run, step, paths, **kwargs):
+        raise FileNotFoundError("jorek2_postproc not found")
+
+    monkeypatch.setattr(plot_cli, "run_zero_d", fail)
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "connection_length"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "skipping LCTT: no zeroD cache" in out
+    assert not list((campaign / "poinc_dir").glob("LCTT_*.png"))
 
 
 # --- psi range restriction for connection_length ----------------------------------------

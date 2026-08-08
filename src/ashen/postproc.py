@@ -172,8 +172,25 @@ def zero_d_script(namelist: str, step: int | str, *, si_units: bool = True) -> s
 
 
 def read_zeroD(path: Path | str) -> dict[str, float]:
-    """Ports ``io.py:7`` ``read_zeroD``."""
-    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    """Ports ``io.py:7`` ``read_zeroD``.
+
+    Raises :class:`ValueError` if the file doesn't carry both a header line
+    and a data row. ``jorek2_postproc`` leaves an empty or header-only file
+    behind when it's interrupted, or when it produces no output for a step --
+    and such a file is indistinguishable from a good one by existence alone,
+    so callers that probe with ``is_file()`` need this to fail loudly and
+    catchably rather than with a bare ``IndexError`` from ``lines[1]``.
+
+    Blank lines are ignored rather than counted, so a trailing newline or a
+    blank line between the header and the data doesn't look like data.
+    """
+    path = Path(path)
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if len(lines) < 2:
+        raise ValueError(
+            f"{path}: expected a header line and a data row, found "
+            f"{len(lines)} non-blank line(s) -- empty or truncated zeroD cache"
+        )
     keys = lines[0].split()
     values = [_parse_fortran_float(v) for v in lines[1].split()]
     return dict(zip(keys, values))

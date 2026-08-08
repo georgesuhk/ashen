@@ -142,6 +142,30 @@ def test_read_zeroD_two_digit_dropped_exponent(tmp_path):
     assert read_zeroD(path)["Time"] == pytest.approx(1.5e-99)
 
 
+def test_read_zeroD_header_only_file_raises_value_error(tmp_path):
+    """An interrupted jorek2_postproc leaves the header but no data row.
+    Regression: this used to escape as a bare IndexError from `lines[1]`,
+    crashing `plot --diag four` instead of being caught as an unusable
+    cache."""
+    path = tmp_path / "zeroD_quantities_s000100.dat"
+    path.write_text("Time Energy\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="truncated"):
+        read_zeroD(path)
+
+
+def test_read_zeroD_empty_file_raises_value_error(tmp_path):
+    path = tmp_path / "zeroD_quantities_s000100.dat"
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="truncated"):
+        read_zeroD(path)
+
+
+def test_read_zeroD_ignores_a_blank_line_between_header_and_data(tmp_path):
+    path = tmp_path / "zeroD_quantities_s000100.dat"
+    path.write_text("Time Energy\n\n1.5e-3 2.0e6\n", encoding="utf-8")
+    assert read_zeroD(path) == {"Time": 1.5e-3, "Energy": 2.0e6}
+
+
 def test_read_zeroD_genuinely_malformed_value_still_raises(tmp_path):
     path = tmp_path / "zeroD_quantities_s000100.dat"
     path.write_text("Time\nnotanumber\n", encoding="utf-8")
