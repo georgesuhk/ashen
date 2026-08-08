@@ -673,11 +673,17 @@ it); missing only the step-0 `Btor` profile prints `skipping
 delta_b_over_b: ...` and `delta_b` is still drawn. Either way the rest of
 the requested `--diag four` plot is unaffected, not an error.
 
-Either figure also gets a small boxed caption in the lower-right corner
-giving the peak value actually drawn -- `max δB = 1.2 T` or `max δB/B =
-0.03` -- the largest finite value across every mode and step in that
-figure, so a reader doesn't have to eyeball the plot to answer "how big does
-this get." No other `four_vars` variable gets a caption.
+`four_max_delta_b = true` (case field, plot-time only, default off) adds a
+small boxed caption in the lower-right corner of either figure giving the
+peak value actually drawn -- `max δB = 1.2 T` or `max δB/B = 0.03` -- the
+largest finite value across every mode and step in that figure, so a reader
+doesn't have to eyeball the plot to answer "how big does this get." No other
+`four_vars` variable gets a caption, with or without the flag.
+
+```toml
+four_vars        = ["delta_b_over_b"]
+four_max_delta_b = true
+```
 
 Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see

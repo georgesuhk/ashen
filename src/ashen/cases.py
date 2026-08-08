@@ -24,6 +24,7 @@ _CASE_KEYS = (
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
     "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
+    "four_max_delta_b",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
@@ -96,6 +97,12 @@ class Case:
     #: visually-linear region of the log-amplitude curve, since points near
     #: the noise floor or past saturation bias a whole-range fit.
     four_growth_steps: list[int] | None = None
+    #: Annotate the delta_b / delta_b_over_b figures with their peak value
+    #: ("max dB/B = ..." in the lower-right corner) -- plot-time only, and
+    #: only meaningful for those two derived variables. Default off, same as
+    #: four_growth_rate: it's a figure-level number, useful when quoting a
+    #: single stochasticity figure but noise on a plot read for its shape.
+    four_max_delta_b: bool = False
     #: Field-line-tracing knobs for the `average` tor_mode only; the midplane
     #: family uses n_points instead. Defaults match jorek2_postproc's own
     #: (jorek2_postproc.f90:44-51). Deliberately separate from the

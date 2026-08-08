@@ -255,3 +255,38 @@ def test_plot_mode_amplitudes_accepts_caption(series, tmp_path):
         [100, 200, 300], series, "Psi", tmp_path / "Psi_modes.png", caption="max δB/B = 0.5",
     )
     assert out.is_file()
+
+
+# --- title and grid ------------------------------------------------------------------
+
+
+def test_no_title_by_default(series):
+    """The y-label already names the quantity, so the title is redundant --
+    and unlike a y-label it can't be overridden away by a caller who is
+    composing these onto a shared grid."""
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi")
+    assert ax.get_title() == ""
+    plt.close(fig)
+
+
+def test_title_is_drawn_when_given(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", title="Psi")
+    assert ax.get_title() == "Psi"
+    plt.close(fig)
+
+
+def test_grid_is_on_by_default(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi")
+    assert any(line.get_visible() for line in ax.get_xgridlines())
+    assert any(line.get_visible() for line in ax.get_ygridlines())
+    plt.close(fig)
+
+
+def test_grid_can_be_turned_off(series):
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", grid=False)
+    assert not any(line.get_visible() for line in ax.get_xgridlines())
+    plt.close(fig)

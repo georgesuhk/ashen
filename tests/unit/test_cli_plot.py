@@ -914,7 +914,8 @@ def test_delta_b_caption_reports_the_peak_across_steps_and_modes(campaign, monke
     cases_toml.write_text(
         '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
-        'four_vars = ["delta_b"]\n',
+        'four_vars = ["delta_b"]\n'
+        'four_max_delta_b = true\n',
         encoding="utf-8",
     )
     captured = _spy_on_plot_mode_amplitudes(monkeypatch)
@@ -924,6 +925,28 @@ def test_delta_b_caption_reports_the_peak_across_steps_and_modes(campaign, monke
     # peak = m=3 * real_peak=1.0 / r_axis**2 = 3/4 = 0.75; m=2*8/4=4.0 is the true max.
     for kwargs in captured:
         assert kwargs.get("caption") == "max \N{GREEK SMALL LETTER DELTA}B = 4 T"
+
+
+def test_delta_b_caption_is_off_unless_four_max_delta_b_is_set(campaign, monkeypatch):
+    """The peak annotation is opt-in (like four_growth_rate), so a case that
+    only asks for delta_b gets the curves without the figure-level number."""
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b"]\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    for kwargs in captured:
+        assert kwargs.get("caption") is None
 
 
 def test_delta_b_over_b_caption_uses_the_normalised_label(campaign, monkeypatch):
@@ -936,7 +959,8 @@ def test_delta_b_over_b_caption_uses_the_normalised_label(campaign, monkeypatch)
     cases_toml.write_text(
         '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
-        'four_vars = ["delta_b_over_b"]\n',
+        'four_vars = ["delta_b_over_b"]\n'
+        'four_max_delta_b = true\n',
         encoding="utf-8",
     )
     captured = _spy_on_plot_mode_amplitudes(monkeypatch)

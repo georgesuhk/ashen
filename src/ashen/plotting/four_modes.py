@@ -36,6 +36,8 @@ def draw_mode_amplitudes(
     ylabel: str | None = None,
     label_suffix: str = "",
     caption: str | None = None,
+    title: str = "",
+    grid: bool = True,
 ) -> None:
     """Draw every ``(n, m)`` mode of ``variable`` present in ``series`` onto
     ``ax``, each a differently-coloured line.
@@ -69,6 +71,11 @@ def draw_mode_amplitudes(
     lower-right corner (axes fraction, so it holds its position regardless
     of scale) -- for a figure-level summary number (e.g. peak delta-B) that
     isn't tied to any one mode's line/legend entry.
+
+    ``title`` is empty by default: the y-label already names the quantity, so
+    a title repeating it is redundant chrome on a figure that's usually
+    embedded next to its own caption. Pass one explicitly to restore it --
+    same convention as :func:`ashen.plotting.poincare.draw_poincare`.
     """
     modes = sorted((n, m) for (var, n, m) in series if var == variable)
 
@@ -94,7 +101,12 @@ def draw_mode_amplitudes(
         ax.set_xlabel(xlabel)
     if modes:
         ax.legend()
-    ax.set_title(variable)
+    if title:
+        ax.set_title(title)
+    if grid:
+        # Same weight as ashen.plotting.wetted_fraction's -- readable against
+        # a log y-axis's minor ticks without competing with the data lines.
+        ax.grid(True, linestyle=":", alpha=0.4)
 
     if caption:
         ax.text(
@@ -116,6 +128,8 @@ def plot_mode_amplitudes(
     ylabel: str | None = None,
     label_suffix: str = "",
     caption: str | None = None,
+    title: str = "",
+    grid: bool = True,
     figsize: tuple[float, float] = (7, 5),
     dpi: int = 150,
 ) -> Path:
@@ -130,7 +144,7 @@ def plot_mode_amplitudes(
         draw_mode_amplitudes(
             ax, x, series, variable=variable, rational_series=rational_series,
             growth_fits=growth_fits, log=log, xlabel=xlabel, ylabel=ylabel,
-            label_suffix=label_suffix, caption=caption,
+            label_suffix=label_suffix, caption=caption, title=title, grid=grid,
         )
         fig.tight_layout()
         fig.savefig(out_path, dpi=dpi)

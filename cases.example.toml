@@ -81,6 +81,10 @@ n_points        = 100
 # picking the visually-linear part of a growth curve.
 # four_growth_rate  = true
 # four_growth_steps = [1000, 3000]
+# Annotate the delta_b / delta_b_over_b figures with their peak value
+# ("max dB/B = ..." boxed in the lower-right). Off by default; no other
+# four_vars variable is captioned either way.
+# four_max_delta_b = true
 # Which amplitude quantity(ies) `plot --diag four` draws. "max" (default) is
 # the whole-domain max |amplitude|; "rational_surface" is the value pinned
 # to each mode's q=m/n resonant surface (needs the qprofile cache, gathered

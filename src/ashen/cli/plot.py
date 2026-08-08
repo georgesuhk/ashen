@@ -569,12 +569,12 @@ def _plot_four_modes(
             if variable == DELTA_B_OVER_B:
                 ylabel = f"\N{GREEK SMALL LETTER DELTA}B/B{ylabel_suffix or ''}"
                 peak = _peak_of_variable(primary_series, variable)
-                if peak is not None:
+                if case.four_max_delta_b and peak is not None:
                     caption = f"max \N{GREEK SMALL LETTER DELTA}B/B = {peak:.3g}"
             elif variable == DELTA_B:
                 ylabel = f"\N{GREEK SMALL LETTER DELTA}B [T]{ylabel_suffix or ''}"
                 peak = _peak_of_variable(primary_series, variable)
-                if peak is not None:
+                if case.four_max_delta_b and peak is not None:
                     caption = f"max \N{GREEK SMALL LETTER DELTA}B = {peak:.3g} T"
             else:
                 ylabel = f"|{variable}|{ylabel_suffix}" if ylabel_suffix else None
