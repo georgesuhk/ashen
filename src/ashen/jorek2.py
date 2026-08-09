@@ -58,10 +58,27 @@ class ToolResult:
     ``jorek2_poincare``, whose per-line progress messages are the only way to
     tell which output block belongs to which field line (see
     :mod:`ashen.diagnostics.poincare`).
+
+    ``stderr`` is always captured (it is quoted when a tool exits non-zero)
+    and is kept here on success too: which stream a Fortran ``write(*,...)``
+    lands on is not guaranteed across builds and launchers, so a caller
+    scraping the tool's own log should look at :attr:`log` rather than
+    ``stdout`` alone.
     """
 
     outputs: dict[str, Path]
     stdout: str = ""
+    stderr: str = ""
+
+    @property
+    def log(self) -> str:
+        """Both captured streams, for scraping the tool's progress messages.
+
+        Concatenated rather than interleaved -- the true interleaving is lost
+        once they're two pipes, and every consumer here matches per-line
+        patterns rather than depending on cross-stream ordering.
+        """
+        return self.stdout + ("\n" if self.stdout and self.stderr else "") + self.stderr
 
     # Ergonomics: run_tool used to return the mapping directly, and most
     # callers only ever want that.
@@ -235,7 +252,8 @@ def run_tool(
     stdout = ""
     if capture_stdout and result.stdout is not None:
         stdout = result.stdout.decode(errors="replace")
-    return ToolResult(outputs=collected, stdout=stdout)
+    stderr = result.stderr.decode(errors="replace") if result.stderr is not None else ""
+    return ToolResult(outputs=collected, stdout=stdout, stderr=stderr)
 
 
 def run_zero_d(

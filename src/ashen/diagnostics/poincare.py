@@ -285,6 +285,21 @@ def _split_blocks(path: Path) -> list[np.ndarray]:
     return blocks
 
 
+def _tail(text: str, *, limit: int = 2000) -> str:
+    """The end of a captured log, for quoting in an error.
+
+    The tail, not the head: jorek2_poincare's per-line messages come after
+    however many mesh/setup lines the tool printed first, so the head is the
+    part least likely to show why the scrape found nothing.
+    """
+    if not text.strip():
+        return "  (no output captured on stdout or stderr)"
+    clipped = text[-limit:]
+    prefix = "  ... (earlier output omitted)\n" if len(text) > limit else ""
+    body = "\n".join(f"  {line}" for line in clipped.splitlines())
+    return f"{prefix}{body}"
+
+
 def _demux_blocks(
     stdout: str, blocks: list[np.ndarray], n_lines: int, what: str
 ) -> dict[int, np.ndarray]:
@@ -300,8 +315,12 @@ def _demux_blocks(
     if not reports:
         raise Jorek2Error(
             f"jorek2_poincare produced no '=> Line N: M points' messages, so "
-            f"its {what} output blocks cannot be matched to field lines. "
-            "Was stdout captured?"
+            f"its {what} output blocks cannot be matched to field lines "
+            f"({len(blocks)} block(s) were written). Its captured output "
+            f"follows -- if the messages are visibly there, this build's "
+            f"wording differs from what _LINE_MSG expects; if the output is "
+            f"empty, the tool's log went somewhere neither stdout nor stderr "
+            f"reached.\n{_tail(stdout)}"
         )
     if len(reports) != len(blocks):
         raise Jorek2Error(
@@ -352,11 +371,13 @@ def trace_lines(
         capture_stdout=True,
     )
 
-    rz = _demux_blocks(
-        result.stdout, _split_blocks(result["poinc_R-Z.dat"]), len(work), "R-Z"
-    )
+    # `log`, not `stdout`: the tool's own progress messages are Fortran
+    # `write(*,...)` output, and which stream that lands on varies by build
+    # and by whatever launcher wraps the executable on a given cluster.
+    log = result.log
+    rz = _demux_blocks(log, _split_blocks(result["poinc_R-Z.dat"]), len(work), "R-Z")
     rt = _demux_blocks(
-        result.stdout,
+        log,
         _split_blocks(result["poinc_rho-theta.dat"]),
         len(work),
         "rho-theta",

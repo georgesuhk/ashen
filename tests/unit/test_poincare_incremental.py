@@ -80,7 +80,8 @@ for row in reversed(rows):
 
 open("poinc_R-Z.dat", "w").write(" # R Z\\n" + "\\n\\n\\n".join(rz) + "\\n\\n\\n")
 open("poinc_rho-theta.dat", "w").write(" # rho theta\\n" + "\\n\\n\\n".join(rt) + "\\n\\n\\n")
-sys.stdout.write("\\n".join(msgs))
+stream = sys.stderr if os.environ.get("STUB_LOG_TO_STDERR") else sys.stdout
+stream.write("\\n".join(msgs))
 """
 
 
@@ -133,6 +134,23 @@ def step_once(scan, psi_n_list, n_turns, ang=2, **kw):
         run, paths, 200, psi_n_list,
         ang_sample_freq=ang, n_turns=n_turns, **kw,
     )
+
+
+def test_a_tool_that_logs_to_stderr_still_traces(scan, monkeypatch):
+    """jorek2_poincare's '=> Line N: M points' messages are Fortran
+    write(*,...) output, and which stream that reaches depends on the build
+    and on whatever launcher wraps the executable. Scraping stdout alone made
+    such a build fail with "produced no '=> Line N: M points' messages" even
+    though the tool ran fine and wrote its data files.
+    """
+    monkeypatch.setenv("STUB_LOG_TO_STDERR", "1")
+    report = step_once(scan, [0.2, 0.3], 50)
+    assert report.traced == 4  # 2 psi_n x ang_sample_freq=2
+
+    _, paths, _ = scan
+    cached = pc.read_cache(paths.poincare_cache(200))
+    assert len(cached) == 4
+    assert all(record.R.size == 50 for record in cached.values())
 
 
 # --- batching -----------------------------------------------------------------------

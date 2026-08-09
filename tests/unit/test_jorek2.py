@@ -38,6 +38,7 @@ for name in os.environ.get("STUB_GLOB_FILES", "").split(os.pathsep):
         with open(name, "w") as f:
             f.write("x")
 sys.stdout.write(os.environ.get("STUB_STDOUT", ""))
+sys.stderr.write(os.environ.get("STUB_STDERR", ""))
 sys.exit(int(os.environ.get("STUB_EXIT", "0")))
 """
 
@@ -320,6 +321,37 @@ def test_stdout_is_discarded_unless_requested(stub_run, tmp_path, monkeypatch):
         outputs=["stdin_echo.txt"], stdin_text="x",
     )
     assert result.stdout == ""
+
+
+def test_stderr_is_kept_on_success(stub_run, tmp_path, monkeypatch):
+    """stderr used to be captured but read only on a non-zero exit. A Fortran
+    write(*,...) does not reliably land on stdout across builds/launchers, so
+    a tool whose progress log goes to stderr must not come back empty-handed."""
+    monkeypatch.setenv("STUB_STDERR", "on-stderr")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x", capture_stdout=True,
+    )
+    assert result.stderr == "on-stderr"
+
+
+def test_log_joins_both_streams(stub_run, tmp_path, monkeypatch):
+    monkeypatch.setenv("STUB_STDOUT", "from-stdout")
+    monkeypatch.setenv("STUB_STDERR", "from-stderr")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x", capture_stdout=True,
+    )
+    assert result.log == "from-stdout\nfrom-stderr"
+
+
+def test_log_of_a_single_stream_has_no_stray_separator(stub_run, tmp_path, monkeypatch):
+    monkeypatch.setenv("STUB_STDERR", "only-stderr")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x", capture_stdout=True,
+    )
+    assert result.log == "only-stderr"
 
 
 # --- output_glob, added for jorek2_four's dynamically-named outputs --------------
