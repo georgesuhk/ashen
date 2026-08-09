@@ -332,6 +332,12 @@ already force-includes `zerod`. Because Poincare only traces the discrete
 physical line that is can shift step to step as the q-profile evolves --
 that tracks the real resonance moving, not a bug.
 
+**Puncture size.** `poincare_point_size` (case field, plot-time only, default
+`0.1`) sets each puncture's marker area -- matplotlib's scatter `s`, in
+points². The default is tuned for a dense scan; a short run, or a plot zoomed
+into a small region, usually wants it larger. `plot --point-size N` overrides
+it for one invocation without editing `cases.toml`.
+
 Covered this pass: Poincare puncture plots, the LC/LCTT connection-length
 maps, jorek2_four mode-amplitude time series, radial profiles, and the
 field-line theta-crossing histogram -- see below. Everything else the legacy

@@ -27,6 +27,7 @@ _CASE_KEYS = (
     "four_max_delta_b",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
+    "poincare_point_size",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
     "theta_wetted_threshold",
 )
@@ -126,6 +127,10 @@ class Case:
     #: Parallel to poincare_highlight_modes: poincare_highlight_colors[i] is
     #: the colour drawn for poincare_highlight_modes[i].
     poincare_highlight_colors: list[str] = field(default_factory=list)
+    #: Marker area for each puncture, in points^2 (matplotlib's scatter `s`).
+    #: Plot-time only. The 0.1 default suits a dense scan -- a short one, or
+    #: one zoomed into a small region, usually wants this raised.
+    poincare_point_size: float = 0.1
     #: Which amplitude quantity(ies) `plot --diag four` draws. "max" is the
     #: whole-domain max |amplitude| (today's only option); "rational_surface"
     #: is the value pinned to each mode's q=m/n resonant surface. Both

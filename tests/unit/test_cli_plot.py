@@ -123,6 +123,54 @@ def test_connection_length_diag_writes_lc_and_lctt(campaign):
     assert any(f.name.startswith("LCTT_") for f in files)
 
 
+def _spy_on_point_size(monkeypatch):
+    captured = []
+    real = plot_cli.plot_poincare_step
+
+    def spy(records, out, **kwargs):
+        captured.append(kwargs.get("s"))
+        return real(records, out, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_poincare_step", spy)
+    return captured
+
+
+def test_poincare_point_size_defaults_to_the_case_field(campaign, monkeypatch):
+    captured = _spy_on_point_size(monkeypatch)
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
+    assert captured and all(s == 0.1 for s in captured)
+
+
+def test_poincare_point_size_from_cases_toml(campaign, monkeypatch):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        'poincare_point_size = 2.5\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_point_size(monkeypatch)
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
+    assert captured and all(s == 2.5 for s in captured)
+
+
+def test_point_size_flag_outranks_the_case_field(campaign, monkeypatch):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        'poincare_point_size = 2.5\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_point_size(monkeypatch)
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare", "--point-size", "8"]
+    ) == 0
+    assert captured and all(s == 8.0 for s in captured)
+
+
 def test_step_filter_restricts_poincare_output(campaign):
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare", "--step", "100"]) == 0
     assert (campaign / "poinc_dir" / "100_poincare.png").is_file()

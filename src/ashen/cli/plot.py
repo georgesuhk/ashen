@@ -127,6 +127,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dpi", type=int, default=None, help="override figure DPI")
     parser.add_argument(
+        "--point-size", type=float, default=None,
+        help="override the poincare marker area (matplotlib scatter s, in "
+        "points^2; default: the case's poincare_point_size)",
+    )
+    parser.add_argument(
         "--n-workers", type=int, default=None,
         help="poincare steps rendered concurrently (default: site.toml's "
         "[diagnostics] n_workers)",
@@ -253,9 +258,12 @@ def _rational_highlight_for_step(
 
 
 def _plot_poincare(
-    case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1
+    case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None,
+    n_workers: int = 1, point_size: float | None = None,
 ) -> None:
     kwargs = _dpi_kwargs(dpi)
+    # CLI flag beats the case field, same precedence --dpi already has.
+    kwargs["s"] = case.poincare_point_size if point_size is None else point_size
 
     to_render: list[tuple[int, dict, dict[float, str] | None]] = []
     for step in steps:
@@ -1037,6 +1045,7 @@ def _run_case(
     theta_bins: int | None = None,
     theta_psi_range: tuple[float, float] | None = None,
     n_cols: int | None = None,
+    point_size: float | None = None,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -1049,7 +1058,8 @@ def _run_case(
     # override (a [cases.NAME.<diag>] table) before the case's plain steps.
     if "poincare" in diags:
         _plot_poincare(
-            case, paths, steps or case.steps_for("poincare"), dpi=dpi, n_workers=n_workers
+            case, paths, steps or case.steps_for("poincare"), dpi=dpi,
+            n_workers=n_workers, point_size=point_size,
         )
     if "connection_length" in diags:
         # --psi-range (if given) further bounds-filters whichever list is
@@ -1208,6 +1218,7 @@ def main(argv: list[str] | None = None) -> int:
                 theta_bins=theta_bins,
                 theta_psi_range=theta_psi_range,
                 n_cols=n_cols,
+                point_size=args.point_size,
             )
         except FileNotFoundError as exc:
             print(f"error: {exc}")

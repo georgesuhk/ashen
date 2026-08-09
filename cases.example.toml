@@ -122,6 +122,12 @@ n_points        = 100
 # poincare_highlight_modes  = [[3, 2], [2, 1]]
 # poincare_highlight_colors = ["red", "blue"]
 
+# Marker area per puncture (matplotlib scatter `s`, points^2). Plot-time
+# only. The 0.1 default suits a dense scan; a short one, or a plot zoomed
+# into a small region, usually wants it larger. `plot --point-size N`
+# overrides this for one invocation without editing the file.
+# poincare_point_size = 1.0
+
 # `plot --diag theta_hist`: for each traced field line, find its first
 # puncture past theta_target_psi (a user-facing plasma-fraction psi_n) and
 # histogram the poloidal angle theta there -- a strike-position/loss-angle
