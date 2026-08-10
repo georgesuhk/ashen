@@ -631,9 +631,9 @@ def _plot_four_modes(
     for suffix, x, xlabel in variants:
         vline = None
         if suffix == "step" and case.four_deconfinement_step is not None:
-            vline = (case.four_deconfinement_step, "deconfinement window end")
+            vline = (case.four_deconfinement_step, "deconfinement step")
         elif suffix == "time" and deconfinement_time_us is not None:
-            vline = (deconfinement_time_us, "deconfinement window end")
+            vline = (deconfinement_time_us, "deconfinement time")
         for variable in sorted({var for var, _, _ in primary_series}):
             out = paths.four_dir / f"{variable}_modes_{suffix}.png"
             caption_lines = []
