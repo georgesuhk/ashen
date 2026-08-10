@@ -24,7 +24,7 @@ _CASE_KEYS = (
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
     "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
-    "four_max_delta_b", "four_ylim", "four_deconfinement_step",
+    "four_max_delta_b", "four_ylim", "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
     "poincare_point_size",
@@ -117,6 +117,14 @@ class Case:
     #: cache (gathered on demand if missing, same precedent as
     #: delta_b_over_b's Btor profile). None (default) draws nothing.
     four_deconfinement_step: int | None = None
+    #: Add a "delta_b/delta_b_over_b at deconfinement" line to those figures'
+    #: boxed caption -- opt-in like four_max_delta_b, and independent of it
+    #: (both set draws both lines). Needs four_deconfinement_step, and only
+    #: takes effect when that step exactly matches one of `four`'s own
+    #: gathered steps (no interpolation, same rule as connection_length's
+    #: psi_n matching) -- a mismatch is silent, not an error, same as a
+    #: lc_psi_n_in value never actually traced.
+    four_deconfinement_caption: bool = False
     #: Field-line-tracing knobs for the `average` tor_mode only; the midplane
     #: family uses n_points instead. Defaults match jorek2_postproc's own
     #: (jorek2_postproc.f90:44-51). Deliberately separate from the

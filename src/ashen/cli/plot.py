@@ -642,7 +642,7 @@ def _plot_four_modes(
                 peak = _peak_of_variable(primary_series, variable)
                 if case.four_max_delta_b and peak is not None:
                     caption_lines.append(f"max \N{GREEK SMALL LETTER DELTA}B/B = {peak:.3g}")
-                if case.four_deconfinement_step is not None:
+                if case.four_deconfinement_caption and case.four_deconfinement_step is not None:
                     at_deconf = _value_at_step(
                         primary_series, variable, steps, case.four_deconfinement_step
                     )
@@ -655,7 +655,7 @@ def _plot_four_modes(
                 peak = _peak_of_variable(primary_series, variable)
                 if case.four_max_delta_b and peak is not None:
                     caption_lines.append(f"max \N{GREEK SMALL LETTER DELTA}B = {peak:.3g} T")
-                if case.four_deconfinement_step is not None:
+                if case.four_deconfinement_caption and case.four_deconfinement_step is not None:
                     at_deconf = _value_at_step(
                         primary_series, variable, steps, case.four_deconfinement_step
                     )

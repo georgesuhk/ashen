@@ -718,14 +718,22 @@ nothing:
 four_deconfinement_step = 1200
 ```
 
-On the `delta_b`/`delta_b_over_b` figures specifically, setting
-`four_deconfinement_step` also adds `δB at deconfinement = ... T` /
-`δB/B at deconfinement = ...` to the boxed caption (the domain-wide max
-across modes, exactly at that step -- no interpolation, same rule as
-`connection_length`'s `psi_n` matching: a step not among the case's own
-requested `steps` produces no caption line, silently, rather than a wrong
-number). Independent of `four_max_delta_b` -- with both set, the caption
-gets two lines, `max δB/B = ...` then `δB/B at deconfinement = ...`.
+`four_deconfinement_caption = true` (case field, plot-time only, default
+off, needs `four_deconfinement_step` set) adds `δB at deconfinement = ...
+T` / `δB/B at deconfinement = ...` to the `delta_b`/`delta_b_over_b`
+figures' boxed caption -- the domain-wide max across modes, exactly at that
+step. No interpolation, same rule as `connection_length`'s `psi_n`
+matching: a step not among the case's own requested `steps` produces no
+caption line, silently, rather than a wrong number -- if the line doesn't
+appear, check `four_deconfinement_step` matches one of `steps` (or this
+diag's own `[cases.NAME.four] steps` override) exactly. Independent of
+`four_max_delta_b` -- with both set, the caption gets two lines,
+`max δB/B = ...` then `δB/B at deconfinement = ...`:
+
+```toml
+four_deconfinement_step    = 1200
+four_deconfinement_caption = true
+```
 
 Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see
