@@ -702,17 +702,20 @@ same variable name used in `four_vars` / the output filename (including
 four_ylim = { Psi = [1e-6, 1e-1], T = [1e-4, 1e1] }
 ```
 
-**Deconfinement time.** `four_deconfinement_time` (case field, plot-time
-only, real time in seconds -- same units as the zeroD `Time` field) draws a
-vertical dashed line labelled "deconfinement time" on the four-mode
-figures, at a value determined manually (e.g. from a separate diagnostic)
-rather than computed here. Only drawn on the time-axis (`*_modes_time.png`)
-figures, not the step-index ones -- there's no well-defined step for a
-physical time without interpolation, same reason `four_growth_rate` needs
-the zeroD cache. Unset (default) draws nothing:
+**Deconfinement step.** `four_deconfinement_step` (case field, plot-time
+only, a time step -- e.g. from a separate diagnostic, not computed here)
+draws a vertical dashed line marking it on every four-mode figure. On the
+step-axis (`*_modes_step.png`) figures it's drawn directly at that step; on
+the time-axis (`*_modes_time.png`) figures it's drawn at that step's real
+time, read from the zeroD cache -- gathered on demand if missing, the same
+precedent as `delta_b_over_b`'s `Btor` profile above. The step need not be
+one of the case's own requested `steps`. If its zeroD cache can't be
+gathered (e.g. the restart doesn't exist), the step-axis line still draws
+but the time-axis one is skipped with a printed note. Unset (default) draws
+nothing:
 
 ```toml
-four_deconfinement_time = 0.00234
+four_deconfinement_step = 1200
 ```
 
 Connection lengths use `R0` extracted from the run's log

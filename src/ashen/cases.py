@@ -24,7 +24,7 @@ _CASE_KEYS = (
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
     "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
-    "four_max_delta_b", "four_ylim", "four_deconfinement_time",
+    "four_max_delta_b", "four_ylim", "four_deconfinement_step",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
     "poincare_point_size",
@@ -109,13 +109,14 @@ class Case:
     #: name used for four_vars/the output filename. A variable absent here
     #: keeps matplotlib's own auto-scaling.
     four_ylim: dict[str, list[float]] = field(default_factory=dict)
-    #: Real time (seconds, same units as the zeroD "Time" field) at which to
-    #: draw a vertical dashed line labelled "deconfinement time" on the
-    #: time-axis four-mode figures. None (default) draws nothing. Only drawn
-    #: on the time-axis variant, not the step-index one -- there is no
-    #: well-defined step for a physical time without interpolation, the same
-    #: reason four_growth_rate needs true_times.
-    four_deconfinement_time: float | None = None
+    #: Time step at which to draw a vertical dashed line labelled
+    #: "deconfinement step"/"deconfinement time" on the four-mode figures --
+    #: plot-time only, set manually (e.g. from a separate diagnostic), not
+    #: computed here. Drawn on the step-axis figure at this step directly,
+    #: and on the time-axis figure at this step's real time from the zeroD
+    #: cache (gathered on demand if missing, same precedent as
+    #: delta_b_over_b's Btor profile). None (default) draws nothing.
+    four_deconfinement_step: int | None = None
     #: Field-line-tracing knobs for the `average` tor_mode only; the midplane
     #: family uses n_points instead. Defaults match jorek2_postproc's own
     #: (jorek2_postproc.f90:44-51). Deliberately separate from the
@@ -451,8 +452,8 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                 ylim[var] = [lo, hi]
             merged["four_ylim"] = ylim
 
-        if "four_deconfinement_time" in merged:
-            merged["four_deconfinement_time"] = float(merged["four_deconfinement_time"])
+        if "four_deconfinement_step" in merged:
+            merged["four_deconfinement_step"] = int(merged["four_deconfinement_step"])
 
         if "theta_psi_n_range" in merged:
             spec = merged["theta_psi_n_range"]

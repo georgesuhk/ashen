@@ -597,15 +597,27 @@ def _plot_four_modes(
                 print("  no growth-rate fit possible (need >=2 positive-amplitude "
                       "points per mode in the fit window)")
 
+    # The deconfinement step's real time, gathered on demand (same precedent
+    # as delta_b_over_b's Btor profile above) -- it need not be one of the
+    # requested `steps`, so it's resolved once here rather than threaded
+    # through `variants`. None if unset, or if the step's zeroD cache can't
+    # be gathered (e.g. its restart doesn't exist).
+    deconfinement_time_us = None
+    if case.four_deconfinement_step is not None:
+        step_time = _read_true_times(case, paths, [case.four_deconfinement_step])
+        if step_time is None:
+            print(f"  skipping deconfinement-time marker: no zeroD cache for step "
+                  f"{case.four_deconfinement_step} (run analyse --diag zerod)")
+        else:
+            deconfinement_time_us = step_time[0] * 1e6
+
     kwargs = _dpi_kwargs(dpi)
     for suffix, x, xlabel in variants:
-        # Deconfinement time is a physical time, so it's only meaningful on
-        # the time-axis variant -- there is no well-defined step for it
-        # without interpolation, the same reason four_growth_rate needs
-        # true_times rather than working off step index.
         vline = None
-        if suffix == "time" and case.four_deconfinement_time is not None:
-            vline = (case.four_deconfinement_time * 1e6, "deconfinement time")
+        if suffix == "step" and case.four_deconfinement_step is not None:
+            vline = (case.four_deconfinement_step, "deconfinement step")
+        elif suffix == "time" and deconfinement_time_us is not None:
+            vline = (deconfinement_time_us, "deconfinement time")
         for variable in sorted({var for var, _, _ in primary_series}):
             out = paths.four_dir / f"{variable}_modes_{suffix}.png"
             caption = None

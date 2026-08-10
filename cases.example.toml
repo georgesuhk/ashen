@@ -89,11 +89,12 @@ n_points        = 100
 # here keeps matplotlib's own auto-scaling. Keyed on the same variable name
 # used in four_vars / the output filename.
 # four_ylim = { Psi = [1e-6, 1e-1], T = [1e-4, 1e1] }
-# Real time (seconds, same units as the zeroD "Time" field) at which to draw
-# a vertical dashed line labelled "deconfinement time" on the time-axis
-# four-mode figures. Only drawn on the time-axis variant, not the step-index
-# one. Unset (default) draws nothing.
-# four_deconfinement_time = 0.00234
+# A time step (set manually, e.g. from a separate diagnostic) at which to
+# draw a vertical dashed line on every four-mode figure -- at that step on
+# the step-axis figures, and at that step's real time (from the zeroD
+# cache, gathered on demand) on the time-axis figures. Unset (default) draws
+# nothing.
+# four_deconfinement_step = 1200
 # Which amplitude quantity(ies) `plot --diag four` draws. "max" (default) is
 # the whole-domain max |amplitude|; "rational_surface" is the value pinned
 # to each mode's q=m/n resonant surface (needs the qprofile cache, gathered
