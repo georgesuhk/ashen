@@ -38,6 +38,8 @@ def draw_mode_amplitudes(
     caption: str | None = None,
     title: str = "",
     grid: bool = True,
+    ylim: tuple[float, float] | None = None,
+    vline: tuple[float, str] | None = None,
 ) -> None:
     """Draw every ``(n, m)`` mode of ``variable`` present in ``series`` onto
     ``ax``, each a differently-coloured line.
@@ -76,6 +78,16 @@ def draw_mode_amplitudes(
     a title repeating it is redundant chrome on a figure that's usually
     embedded next to its own caption. Pass one explicitly to restore it --
     same convention as :func:`ashen.plotting.poincare.draw_poincare`.
+
+    ``ylim``, if given, is a ``(min, max)`` pair applied via ``ax.set_ylim``
+    -- for pinning a variable's axis to a fixed range across a comparison of
+    figures, instead of matplotlib auto-scaling each one independently.
+
+    ``vline``, if given, is an ``(x, label)`` pair drawn as a vertical dashed
+    line spanning the axes, with ``label`` in the legend -- e.g. marking a
+    manually-determined deconfinement time. ``x`` must already be in the
+    same units as ``x`` above (seconds vs. microseconds vs. step index is the
+    caller's problem, not this function's).
     """
     modes = sorted((n, m) for (var, n, m) in series if var == variable)
 
@@ -94,12 +106,18 @@ def draw_mode_amplitudes(
                 markersize=4, alpha=0.6, label=f"n={n}, m={m} @ q={m / n:g} surface",
             )
 
+    if vline is not None:
+        vx, vlabel = vline
+        ax.axvline(vx, color="0.3", linestyle="--", linewidth=1.5, label=vlabel)
+
     if log:
         ax.set_yscale("log")
     ax.set_ylabel(ylabel or f"max |{variable}|")
     if xlabel:
         ax.set_xlabel(xlabel)
-    if modes:
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    if modes or vline is not None:
         ax.legend()
     if title:
         ax.set_title(title)
@@ -130,6 +148,8 @@ def plot_mode_amplitudes(
     caption: str | None = None,
     title: str = "",
     grid: bool = True,
+    ylim: tuple[float, float] | None = None,
+    vline: tuple[float, str] | None = None,
     figsize: tuple[float, float] = (7, 5),
     dpi: int = 150,
 ) -> Path:
@@ -145,6 +165,7 @@ def plot_mode_amplitudes(
             ax, x, series, variable=variable, rational_series=rational_series,
             growth_fits=growth_fits, log=log, xlabel=xlabel, ylabel=ylabel,
             label_suffix=label_suffix, caption=caption, title=title, grid=grid,
+            ylim=ylim, vline=vline,
         )
         fig.tight_layout()
         fig.savefig(out_path, dpi=dpi)

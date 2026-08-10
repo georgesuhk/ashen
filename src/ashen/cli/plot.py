@@ -599,6 +599,13 @@ def _plot_four_modes(
 
     kwargs = _dpi_kwargs(dpi)
     for suffix, x, xlabel in variants:
+        # Deconfinement time is a physical time, so it's only meaningful on
+        # the time-axis variant -- there is no well-defined step for it
+        # without interpolation, the same reason four_growth_rate needs
+        # true_times rather than working off step index.
+        vline = None
+        if suffix == "time" and case.four_deconfinement_time is not None:
+            vline = (case.four_deconfinement_time * 1e6, "deconfinement time")
         for variable in sorted({var for var, _, _ in primary_series}):
             out = paths.four_dir / f"{variable}_modes_{suffix}.png"
             caption = None
@@ -614,10 +621,12 @@ def _plot_four_modes(
                     caption = f"max \N{GREEK SMALL LETTER DELTA}B = {peak:.3g} T"
             else:
                 ylabel = f"|{variable}|{ylabel_suffix}" if ylabel_suffix else None
+            ylim = case.four_ylim.get(variable)
             plot_mode_amplitudes(
                 x, primary_series, variable, out, rational_series=overlay_series or None,
                 growth_fits=growth_fits or None, log=log, xlabel=xlabel,
-                ylabel=ylabel, label_suffix=label_suffix, caption=caption, **kwargs,
+                ylabel=ylabel, label_suffix=label_suffix, caption=caption,
+                ylim=(ylim[0], ylim[1]) if ylim else None, vline=vline, **kwargs,
             )
             print(f"  {out}")
 

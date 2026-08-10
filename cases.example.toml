@@ -85,6 +85,15 @@ n_points        = 100
 # ("max dB/B = ..." boxed in the lower-right). Off by default; no other
 # four_vars variable is captioned either way.
 # four_max_delta_b = true
+# Per-variable y-axis bounds for `plot --diag four` -- a variable absent
+# here keeps matplotlib's own auto-scaling. Keyed on the same variable name
+# used in four_vars / the output filename.
+# four_ylim = { Psi = [1e-6, 1e-1], T = [1e-4, 1e1] }
+# Real time (seconds, same units as the zeroD "Time" field) at which to draw
+# a vertical dashed line labelled "deconfinement time" on the time-axis
+# four-mode figures. Only drawn on the time-axis variant, not the step-index
+# one. Unset (default) draws nothing.
+# four_deconfinement_time = 0.00234
 # Which amplitude quantity(ies) `plot --diag four` draws. "max" (default) is
 # the whole-domain max |amplitude|; "rational_surface" is the value pinned
 # to each mode's q=m/n resonant surface (needs the qprofile cache, gathered

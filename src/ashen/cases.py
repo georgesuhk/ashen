@@ -24,7 +24,7 @@ _CASE_KEYS = (
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
     "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
-    "four_max_delta_b",
+    "four_max_delta_b", "four_ylim", "four_deconfinement_time",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
     "poincare_point_size",
@@ -104,6 +104,18 @@ class Case:
     #: four_growth_rate: it's a figure-level number, useful when quoting a
     #: single stochasticity figure but noise on a plot read for its shape.
     four_max_delta_b: bool = False
+    #: Per-variable y-axis bounds for `plot --diag four`, e.g.
+    #: {"Psi" = [1e-6, 1e-1]} -- plot-time only, keyed on the same variable
+    #: name used for four_vars/the output filename. A variable absent here
+    #: keeps matplotlib's own auto-scaling.
+    four_ylim: dict[str, list[float]] = field(default_factory=dict)
+    #: Real time (seconds, same units as the zeroD "Time" field) at which to
+    #: draw a vertical dashed line labelled "deconfinement time" on the
+    #: time-axis four-mode figures. None (default) draws nothing. Only drawn
+    #: on the time-axis variant, not the step-index one -- there is no
+    #: well-defined step for a physical time without interpolation, the same
+    #: reason four_growth_rate needs true_times.
+    four_deconfinement_time: float | None = None
     #: Field-line-tracing knobs for the `average` tor_mode only; the midplane
     #: family uses n_points instead. Defaults match jorek2_postproc's own
     #: (jorek2_postproc.f90:44-51). Deliberately separate from the
@@ -415,6 +427,32 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                     f"{path}: case {name!r} four_quantities must not be empty"
                 )
             merged["four_quantities"] = quantities
+
+        if "four_ylim" in merged:
+            spec = merged["four_ylim"]
+            if not isinstance(spec, dict):
+                raise CasesError(
+                    f"{path}: case {name!r} four_ylim must be a table of "
+                    f"variable -> [min, max], got {spec!r}"
+                )
+            ylim: dict[str, list[float]] = {}
+            for var, bounds in spec.items():
+                if not (isinstance(bounds, list) and len(bounds) == 2):
+                    raise CasesError(
+                        f"{path}: case {name!r} four_ylim[{var!r}] must be "
+                        f"[min, max], got {bounds!r}"
+                    )
+                lo, hi = float(bounds[0]), float(bounds[1])
+                if not lo < hi:
+                    raise CasesError(
+                        f"{path}: case {name!r} four_ylim[{var!r}] must satisfy "
+                        f"min < max, got [{lo}, {hi}]"
+                    )
+                ylim[var] = [lo, hi]
+            merged["four_ylim"] = ylim
+
+        if "four_deconfinement_time" in merged:
+            merged["four_deconfinement_time"] = float(merged["four_deconfinement_time"])
 
         if "theta_psi_n_range" in merged:
             spec = merged["theta_psi_n_range"]

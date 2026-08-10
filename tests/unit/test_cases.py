@@ -367,6 +367,53 @@ def test_four_growth_steps_rejects_start_after_end(tmp_path):
         load_cases(path)
 
 
+# --- four_ylim / four_deconfinement_time -----------------------------------------
+
+
+def test_four_ylim_and_deconfinement_time_default_empty(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.four_ylim == {}
+    assert case.four_deconfinement_time is None
+
+
+def test_four_ylim_and_deconfinement_time_are_settable(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [1]
+        four_ylim = { Psi = [1e-6, 1e-1], T = [1e-4, 1e1] }
+        four_deconfinement_time = 0.00234
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.four_ylim == {"Psi": [1e-6, 1e-1], "T": [1e-4, 1e1]}
+    assert case.four_deconfinement_time == 0.00234
+
+
+def test_four_ylim_rejects_non_table(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\nfour_ylim = [1, 2]\n')
+    with pytest.raises(CasesError, match="must be a table"):
+        load_cases(path)
+
+
+def test_four_ylim_rejects_non_pair(tmp_path):
+    path = _write(
+        tmp_path, '[cases.a]\nsteps = [1]\nfour_ylim = { Psi = [1e-6] }\n'
+    )
+    with pytest.raises(CasesError, match=r"must be \[min, max\]"):
+        load_cases(path)
+
+
+def test_four_ylim_rejects_min_not_less_than_max(tmp_path):
+    path = _write(
+        tmp_path, '[cases.a]\nsteps = [1]\nfour_ylim = { Psi = [1.0, 1.0] }\n'
+    )
+    with pytest.raises(CasesError, match="min < max"):
+        load_cases(path)
+
+
 # --- poincare_highlight ---------------------------------------------------------
 
 

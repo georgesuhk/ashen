@@ -691,6 +691,30 @@ four_vars        = ["delta_b_over_b"]
 four_max_delta_b = true
 ```
 
+**Y-axis bounds.** `four_ylim` (case field, plot-time only) pins a
+variable's y-axis to a fixed `[min, max]` range instead of matplotlib
+auto-scaling each figure independently -- useful for comparing the same
+variable's amplitude across several runs/cases at a glance. Keyed on the
+same variable name used in `four_vars` / the output filename (including
+`delta_b`/`delta_b_over_b`); a variable not listed keeps auto-scaling:
+
+```toml
+four_ylim = { Psi = [1e-6, 1e-1], T = [1e-4, 1e1] }
+```
+
+**Deconfinement time.** `four_deconfinement_time` (case field, plot-time
+only, real time in seconds -- same units as the zeroD `Time` field) draws a
+vertical dashed line labelled "deconfinement time" on the four-mode
+figures, at a value determined manually (e.g. from a separate diagnostic)
+rather than computed here. Only drawn on the time-axis (`*_modes_time.png`)
+figures, not the step-index ones -- there's no well-defined step for a
+physical time without interpolation, same reason `four_growth_rate` needs
+the zeroD cache. Unset (default) draws nothing:
+
+```toml
+four_deconfinement_time = 0.00234
+```
+
 Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see
 `KNOWN_ISSUES.md` #6 and #7 for what changed and what's still an open question.
