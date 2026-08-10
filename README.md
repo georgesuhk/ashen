@@ -719,15 +719,18 @@ four_deconfinement_step = 1200
 ```
 
 Whenever `four_deconfinement_step` is set, the `delta_b`/`delta_b_over_b`
-figures' boxed caption also gets a `δB at deconfinement = ... T` / `δB/B at
-deconfinement = ...` line by default -- the domain-wide max across modes,
-exactly at that step. No interpolation, same rule as `connection_length`'s
-`psi_n` matching: a step not among the case's own requested `steps`
-produces no caption line, silently, rather than a wrong number -- if the
-line doesn't appear, check `four_deconfinement_step` matches one of `steps`
-(or this diag's own `[cases.NAME.four] steps` override) exactly. Independent
-of `four_max_delta_b` -- with both set, the caption gets two lines,
-`max δB/B = ...` then `δB/B at deconfinement = ...`. Set
+figures' boxed caption also gets a `δB at deconfinement = ...% of max` /
+`δB/B at deconfinement = ...% of max` line by default -- the domain-wide
+value at that step (max across modes), expressed as a percentage of that
+same figure's own peak value (also the domain-wide max across modes, but
+over every requested step, not just the deconfinement one). No
+interpolation, same rule as `connection_length`'s `psi_n` matching: a step
+not among the case's own requested `steps` produces no caption line,
+silently, rather than a wrong number -- if the line doesn't appear, check
+`four_deconfinement_step` matches one of `steps` (or this diag's own
+`[cases.NAME.four] steps` override) exactly. Independent of
+`four_max_delta_b` -- with both set, the caption gets two lines,
+`max δB/B = ...` then `δB/B at deconfinement = ...% of max`. Set
 `four_deconfinement_caption = false` to keep the vline but drop just this
 caption line:
 

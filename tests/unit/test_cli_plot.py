@@ -1077,11 +1077,12 @@ def test_delta_b_over_b_caption_adds_value_at_deconfinement_step(campaign, monke
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert captured
-    # scale = m/(r_axis**2*b_ref) = 2/(4*2) = 0.25; step 100's value = 4*0.25 = 1.
+    # scale = m/(r_axis**2*b_ref) = 2/(4*2) = 0.25; step 100's value = 4*0.25 = 1,
+    # step 200's (the peak) = 8*0.25 = 2 -> 1/2 = 50%.
     # four_deconfinement_caption defaults to true, so this needs no explicit setting.
     expected = (
         "max \N{GREEK SMALL LETTER DELTA}B/B = 2\n"
-        "\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = 1"
+        "\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = 50% of max"
     )
     for kwargs in captured:
         assert kwargs.get("caption") == expected
@@ -1105,8 +1106,11 @@ def test_delta_b_over_b_caption_deconfinement_only_without_four_max_delta_b(camp
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert captured
+    # peak is still the domain-wide max across every requested step (2, from
+    # step 200), computed regardless of four_max_delta_b -- only whether its
+    # own "max ..." line is drawn depends on that flag.
     for kwargs in captured:
-        assert kwargs.get("caption") == "\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = 1"
+        assert kwargs.get("caption") == "\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = 50% of max"
 
 
 def test_deconfinement_caption_can_be_turned_off(campaign, monkeypatch):

@@ -96,11 +96,11 @@ n_points        = 100
 # nothing.
 # four_deconfinement_step = 1200
 # Whenever four_deconfinement_step is set, the delta_b/delta_b_over_b
-# figures' boxed caption also gets a "... at deconfinement = ..." line by
-# default, independent of four_max_delta_b (both set draws both lines).
-# Only takes effect when the step exactly matches one of `four`'s own
-# gathered steps (no interpolation) -- a mismatch is silent, not an error.
-# Set to false to keep the vline but drop just this caption line.
+# figures' boxed caption also gets a "... at deconfinement = ...% of max"
+# line by default, independent of four_max_delta_b (both set draws both
+# lines). Only takes effect when the step exactly matches one of `four`'s
+# own gathered steps (no interpolation) -- a mismatch is silent, not an
+# error. Set to false to keep the vline but drop just this caption line.
 # four_deconfinement_caption = false
 # Which amplitude quantity(ies) `plot --diag four` draws. "max" (default) is
 # the whole-domain max |amplitude|; "rational_surface" is the value pinned

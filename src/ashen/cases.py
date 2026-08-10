@@ -118,13 +118,13 @@ class Case:
     #: delta_b_over_b's Btor profile). None (default) draws nothing.
     four_deconfinement_step: int | None = None
     #: Add a "delta_b/delta_b_over_b at deconfinement" line to those figures'
-    #: boxed caption -- on by default whenever four_deconfinement_step is
-    #: set (opt *out*, unlike four_max_delta_b), and independent of that
-    #: flag (both set draws both lines). Only takes effect when
-    #: four_deconfinement_step exactly matches one of `four`'s own gathered
-    #: steps (no interpolation, same rule as connection_length's psi_n
-    #: matching) -- a mismatch is silent, not an error, same as a
-    #: lc_psi_n_in value never actually traced.
+    #: boxed caption, as a percentage of that figure's own peak value -- on
+    #: by default whenever four_deconfinement_step is set (opt *out*, unlike
+    #: four_max_delta_b), and independent of that flag (both set draws both
+    #: lines). Only takes effect when four_deconfinement_step exactly
+    #: matches one of `four`'s own gathered steps (no interpolation, same
+    #: rule as connection_length's psi_n matching) -- a mismatch is silent,
+    #: not an error, same as a lc_psi_n_in value never actually traced.
     four_deconfinement_caption: bool = True
     #: Field-line-tracing knobs for the `average` tor_mode only; the midplane
     #: family uses n_points instead. Defaults match jorek2_postproc's own

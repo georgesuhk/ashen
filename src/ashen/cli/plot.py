@@ -646,9 +646,10 @@ def _plot_four_modes(
                     at_deconf = _value_at_step(
                         primary_series, variable, steps, case.four_deconfinement_step
                     )
-                    if at_deconf is not None:
+                    if at_deconf is not None and peak:
                         caption_lines.append(
-                            f"\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = {at_deconf:.3g}"
+                            f"\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = "
+                            f"{at_deconf / peak * 100:.3g}% of max"
                         )
             elif variable == DELTA_B:
                 ylabel = f"\N{GREEK SMALL LETTER DELTA}B [T]{ylabel_suffix or ''}"
@@ -659,9 +660,10 @@ def _plot_four_modes(
                     at_deconf = _value_at_step(
                         primary_series, variable, steps, case.four_deconfinement_step
                     )
-                    if at_deconf is not None:
+                    if at_deconf is not None and peak:
                         caption_lines.append(
-                            f"\N{GREEK SMALL LETTER DELTA}B at deconfinement = {at_deconf:.3g} T"
+                            f"\N{GREEK SMALL LETTER DELTA}B at deconfinement = "
+                            f"{at_deconf / peak * 100:.3g}% of max"
                         )
             else:
                 ylabel = f"|{variable}|{ylabel_suffix}" if ylabel_suffix else None
