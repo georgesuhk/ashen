@@ -108,7 +108,7 @@ def draw_mode_amplitudes(
 
     if vline is not None:
         vx, vlabel = vline
-        ax.axvline(vx, color="tab:blue", linestyle="--", linewidth=1.5, label=vlabel)
+        ax.axvline(vx, color="blue", linestyle="--", linewidth=1.5, label=vlabel)
 
     if log:
         ax.set_yscale("log")
