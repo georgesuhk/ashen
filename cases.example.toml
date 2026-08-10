@@ -95,12 +95,13 @@ n_points        = 100
 # cache, gathered on demand) on the time-axis figures. Unset (default) draws
 # nothing.
 # four_deconfinement_step = 1200
-# Add a "delta_b/delta_b_over_b at deconfinement" line to those figures'
-# boxed caption -- opt-in, independent of four_max_delta_b (both set draws
-# both lines). Needs four_deconfinement_step, and only takes effect when
-# that step exactly matches one of `four`'s own gathered steps (no
-# interpolation) -- a mismatch is silent, not an error.
-# four_deconfinement_caption = true
+# Whenever four_deconfinement_step is set, the delta_b/delta_b_over_b
+# figures' boxed caption also gets a "... at deconfinement = ..." line by
+# default, independent of four_max_delta_b (both set draws both lines).
+# Only takes effect when the step exactly matches one of `four`'s own
+# gathered steps (no interpolation) -- a mismatch is silent, not an error.
+# Set to false to keep the vline but drop just this caption line.
+# four_deconfinement_caption = false
 # Which amplitude quantity(ies) `plot --diag four` draws. "max" (default) is
 # the whole-domain max |amplitude|; "rational_surface" is the value pinned
 # to each mode's q=m/n resonant surface (needs the qprofile cache, gathered

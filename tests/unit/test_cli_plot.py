@@ -1070,8 +1070,7 @@ def test_delta_b_over_b_caption_adds_value_at_deconfinement_step(campaign, monke
         'steps = [100, 200]\n'
         'four_vars = ["delta_b_over_b"]\n'
         'four_max_delta_b = true\n'
-        'four_deconfinement_step = 100\n'
-        'four_deconfinement_caption = true\n',
+        'four_deconfinement_step = 100\n',
         encoding="utf-8",
     )
     captured = _spy_on_plot_mode_amplitudes(monkeypatch)
@@ -1079,6 +1078,7 @@ def test_delta_b_over_b_caption_adds_value_at_deconfinement_step(campaign, monke
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
     assert captured
     # scale = m/(r_axis**2*b_ref) = 2/(4*2) = 0.25; step 100's value = 4*0.25 = 1.
+    # four_deconfinement_caption defaults to true, so this needs no explicit setting.
     expected = (
         "max \N{GREEK SMALL LETTER DELTA}B/B = 2\n"
         "\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = 1"
@@ -1098,8 +1098,7 @@ def test_delta_b_over_b_caption_deconfinement_only_without_four_max_delta_b(camp
         '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'four_vars = ["delta_b_over_b"]\n'
-        'four_deconfinement_step = 100\n'
-        'four_deconfinement_caption = true\n',
+        'four_deconfinement_step = 100\n',
         encoding="utf-8",
     )
     captured = _spy_on_plot_mode_amplitudes(monkeypatch)
@@ -1110,10 +1109,10 @@ def test_delta_b_over_b_caption_deconfinement_only_without_four_max_delta_b(camp
         assert kwargs.get("caption") == "\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = 1"
 
 
-def test_deconfinement_caption_is_off_by_default(campaign, monkeypatch):
-    """The caption line is opt-in (four_deconfinement_caption), independent
-    of four_deconfinement_step -- the vline still draws, but a case that
-    only sets the step gets no caption change."""
+def test_deconfinement_caption_can_be_turned_off(campaign, monkeypatch):
+    """four_deconfinement_caption = false suppresses just the caption line
+    -- the vline still draws, since it's controlled by four_deconfinement_step
+    alone."""
     (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
     _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
@@ -1124,7 +1123,8 @@ def test_deconfinement_caption_is_off_by_default(campaign, monkeypatch):
         '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'four_vars = ["delta_b_over_b"]\n'
-        'four_deconfinement_step = 100\n',
+        'four_deconfinement_step = 100\n'
+        'four_deconfinement_caption = false\n',
         encoding="utf-8",
     )
     captured = _spy_on_plot_mode_amplitudes(monkeypatch)
@@ -1139,7 +1139,8 @@ def test_deconfinement_caption_is_off_by_default(campaign, monkeypatch):
 
 def test_deconfinement_caption_skipped_when_step_not_among_requested_steps(campaign, monkeypatch):
     """No interpolation: a deconfinement step that isn't one of the case's
-    own requested `steps` produces no caption line, silently."""
+    own requested `steps` produces no caption line, silently. Caption
+    defaults on, so this needs no explicit four_deconfinement_caption."""
     (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
     _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
@@ -1150,8 +1151,7 @@ def test_deconfinement_caption_skipped_when_step_not_among_requested_steps(campa
         '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'four_vars = ["delta_b_over_b"]\n'
-        'four_deconfinement_step = 150\n'
-        'four_deconfinement_caption = true\n',
+        'four_deconfinement_step = 150\n',
         encoding="utf-8",
     )
     captured = _spy_on_plot_mode_amplitudes(monkeypatch)

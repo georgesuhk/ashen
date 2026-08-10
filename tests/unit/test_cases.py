@@ -375,7 +375,7 @@ def test_four_ylim_and_deconfinement_step_default_empty(tmp_path):
     case = load_cases(path)["a"]
     assert case.four_ylim == {}
     assert case.four_deconfinement_step is None
-    assert case.four_deconfinement_caption is False
+    assert case.four_deconfinement_caption is True
 
 
 def test_four_ylim_and_deconfinement_step_are_settable(tmp_path):
@@ -386,13 +386,13 @@ def test_four_ylim_and_deconfinement_step_are_settable(tmp_path):
         steps = [1]
         four_ylim = { Psi = [1e-6, 1e-1], T = [1e-4, 1e1] }
         four_deconfinement_step = 1200
-        four_deconfinement_caption = true
+        four_deconfinement_caption = false
         """,
     )
     case = load_cases(path)["a"]
     assert case.four_ylim == {"Psi": [1e-6, 1e-1], "T": [1e-4, 1e1]}
     assert case.four_deconfinement_step == 1200
-    assert case.four_deconfinement_caption is True
+    assert case.four_deconfinement_caption is False
 
 
 def test_four_ylim_rejects_non_table(tmp_path):
