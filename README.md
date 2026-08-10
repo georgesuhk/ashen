@@ -704,10 +704,11 @@ four_ylim = { Psi = [1e-6, 1e-1], T = [1e-4, 1e1] }
 
 **Deconfinement step.** `four_deconfinement_step` (case field, plot-time
 only, a time step -- e.g. from a separate diagnostic, not computed here)
-draws a vertical dashed line marking it on every four-mode figure. On the
-step-axis (`*_modes_step.png`) figures it's drawn directly at that step; on
-the time-axis (`*_modes_time.png`) figures it's drawn at that step's real
-time, read from the zeroD cache -- gathered on demand if missing, the same
+draws a vertical dashed line, labelled "deconfinement window end", marking
+it on every four-mode figure. On the step-axis (`*_modes_step.png`) figures
+it's drawn directly at that step; on the time-axis (`*_modes_time.png`)
+figures it's drawn at that step's real time, read from the zeroD cache --
+gathered on demand if missing, the same
 precedent as `delta_b_over_b`'s `Btor` profile above. The step need not be
 one of the case's own requested `steps`. If its zeroD cache can't be
 gathered (e.g. the restart doesn't exist), the step-axis line still draws

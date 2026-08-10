@@ -1150,9 +1150,9 @@ def test_deconfinement_step_draws_vline_on_step_and_time_figures(campaign, monke
     # One variable ("Psi"), two x-axis variants -- step-axis then time-axis,
     # each drawing the marker in its own units.
     assert len(captured) == 2
-    assert captured[0].get("vline") == (100, "deconfinement step")
+    assert captured[0].get("vline") == (100, "deconfinement window end")
     # campaign's zeroD cache has step 100 at Time = 1e-4 s -> 100 microseconds.
-    assert captured[1].get("vline") == (100.0, "deconfinement time")
+    assert captured[1].get("vline") == (100.0, "deconfinement window end")
 
 
 def test_raw_variables_get_no_caption(campaign, monkeypatch):
