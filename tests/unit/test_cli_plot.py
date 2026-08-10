@@ -1058,6 +1058,103 @@ def test_delta_b_over_b_caption_uses_the_normalised_label(campaign, monkeypatch)
         assert kwargs.get("caption") == "max \N{GREEK SMALL LETTER DELTA}B/B = 2"
 
 
+def test_delta_b_over_b_caption_adds_value_at_deconfinement_step(campaign, monkeypatch):
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b_over_b"]\n'
+        'four_max_delta_b = true\n'
+        'four_deconfinement_step = 100\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    # scale = m/(r_axis**2*b_ref) = 2/(4*2) = 0.25; step 100's value = 4*0.25 = 1.
+    expected = (
+        "max \N{GREEK SMALL LETTER DELTA}B/B = 2\n"
+        "\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = 1"
+    )
+    for kwargs in captured:
+        assert kwargs.get("caption") == expected
+
+
+def test_delta_b_over_b_caption_deconfinement_only_without_four_max_delta_b(campaign, monkeypatch):
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b_over_b"]\n'
+        'four_deconfinement_step = 100\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    for kwargs in captured:
+        assert kwargs.get("caption") == "\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = 1"
+
+
+def test_deconfinement_caption_skipped_when_step_not_among_requested_steps(campaign, monkeypatch):
+    """No interpolation: a deconfinement step that isn't one of the case's
+    own requested `steps` produces no caption line, silently."""
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_btor_profile(campaign, psi_n=[0.0, 1.0], btor=[3.0, 2.0])
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b_over_b"]\n'
+        'four_deconfinement_step = 150\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    for kwargs in captured:
+        assert kwargs.get("caption") is None
+
+
+def test_deconfinement_step_draws_vline_on_step_and_time_figures(campaign, monkeypatch):
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["Psi"]\n'
+        'four_deconfinement_step = 100\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    # One variable ("Psi"), two x-axis variants -- step-axis then time-axis,
+    # each drawing the marker in its own units.
+    assert len(captured) == 2
+    assert captured[0].get("vline") == (100, "deconfinement step")
+    # campaign's zeroD cache has step 100 at Time = 1e-4 s -> 100 microseconds.
+    assert captured[1].get("vline") == (100.0, "deconfinement time")
+
+
 def test_raw_variables_get_no_caption(campaign, monkeypatch):
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 0, 1, real_peak=1.0)])
     _write_four_cache(campaign, 200, records=[_four_record("Psi", 0, 1, real_peak=1.5)])

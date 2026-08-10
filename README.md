@@ -718,6 +718,15 @@ nothing:
 four_deconfinement_step = 1200
 ```
 
+On the `delta_b`/`delta_b_over_b` figures specifically, setting
+`four_deconfinement_step` also adds `δB at deconfinement = ... T` /
+`δB/B at deconfinement = ...` to the boxed caption (the domain-wide max
+across modes, exactly at that step -- no interpolation, same rule as
+`connection_length`'s `psi_n` matching: a step not among the case's own
+requested `steps` produces no caption line, silently, rather than a wrong
+number). Independent of `four_max_delta_b` -- with both set, the caption
+gets two lines, `max δB/B = ...` then `δB/B at deconfinement = ...`.
+
 Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see
 `KNOWN_ISSUES.md` #6 and #7 for what changed and what's still an open question.

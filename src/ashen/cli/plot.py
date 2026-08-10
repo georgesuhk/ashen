@@ -442,6 +442,22 @@ def _peak_of_variable(series: dict, variable: str) -> float | None:
     return float(np.max(finite)) if finite.size else None
 
 
+def _value_at_step(series: dict, variable: str, steps: list[int], step: int) -> float | None:
+    """The largest finite value across every mode of ``variable`` at exactly
+    ``step`` -- ``None`` if ``step`` isn't one of ``steps`` (no interpolation,
+    same convention as connection_length's psi_n matching) or every mode is
+    nan there. ``series`` values are one entry per ``steps`` index (see
+    :func:`~ashen.diagnostics.four_modes.max_amplitude_series`), so ``step``
+    is resolved to that index positionally.
+    """
+    if step not in steps:
+        return None
+    idx = steps.index(step)
+    values = [v[idx] for (var, _, _), v in series.items() if var == variable]
+    finite = [v for v in values if np.isfinite(v)]
+    return float(max(finite)) if finite else None
+
+
 def _plot_four_modes(
     case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None
 ) -> None:
@@ -620,19 +636,36 @@ def _plot_four_modes(
             vline = (deconfinement_time_us, "deconfinement time")
         for variable in sorted({var for var, _, _ in primary_series}):
             out = paths.four_dir / f"{variable}_modes_{suffix}.png"
-            caption = None
+            caption_lines = []
             if variable == DELTA_B_OVER_B:
                 ylabel = f"\N{GREEK SMALL LETTER DELTA}B/B{ylabel_suffix or ''}"
                 peak = _peak_of_variable(primary_series, variable)
                 if case.four_max_delta_b and peak is not None:
-                    caption = f"max \N{GREEK SMALL LETTER DELTA}B/B = {peak:.3g}"
+                    caption_lines.append(f"max \N{GREEK SMALL LETTER DELTA}B/B = {peak:.3g}")
+                if case.four_deconfinement_step is not None:
+                    at_deconf = _value_at_step(
+                        primary_series, variable, steps, case.four_deconfinement_step
+                    )
+                    if at_deconf is not None:
+                        caption_lines.append(
+                            f"\N{GREEK SMALL LETTER DELTA}B/B at deconfinement = {at_deconf:.3g}"
+                        )
             elif variable == DELTA_B:
                 ylabel = f"\N{GREEK SMALL LETTER DELTA}B [T]{ylabel_suffix or ''}"
                 peak = _peak_of_variable(primary_series, variable)
                 if case.four_max_delta_b and peak is not None:
-                    caption = f"max \N{GREEK SMALL LETTER DELTA}B = {peak:.3g} T"
+                    caption_lines.append(f"max \N{GREEK SMALL LETTER DELTA}B = {peak:.3g} T")
+                if case.four_deconfinement_step is not None:
+                    at_deconf = _value_at_step(
+                        primary_series, variable, steps, case.four_deconfinement_step
+                    )
+                    if at_deconf is not None:
+                        caption_lines.append(
+                            f"\N{GREEK SMALL LETTER DELTA}B at deconfinement = {at_deconf:.3g} T"
+                        )
             else:
                 ylabel = f"|{variable}|{ylabel_suffix}" if ylabel_suffix else None
+            caption = "\n".join(caption_lines) if caption_lines else None
             ylim = case.four_ylim.get(variable)
             plot_mode_amplitudes(
                 x, primary_series, variable, out, rational_series=overlay_series or None,
