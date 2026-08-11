@@ -1,19 +1,18 @@
-"""``analyse`` entry point: the data-gathering side of ``analysis.py``'s rewrite.
+"""`analyse` entry point: the data-gathering side of analysis.py's rewrite.
 
-Ports the zeroD-gathering and Poincare/profile *data collection* stages of
-``Columbia/NL_kinks/analysis.py``, driven by a declarative ``cases.toml``
-(:mod:`ashen.cases`) instead of ~25 stacked variable reassignments and a
-hand-edited ``diags`` list.
+Ports the zeroD-gathering and Poincare/profile data-collection stages of
+Columbia/NL_kinks/analysis.py, driven by declarative cases.toml
+(ashen.cases) instead of ~25 stacked variable reassignments and a
+hand-edited diags list.
 
-**Not ported in this pass**: the plotting stages (``plot_poincare``,
-``plot_field_line_diffusion``, ``plot_stochastic_factor``,
-``plot_postproc_profiles``'s plotting half, ``max_fieldline_pos`` --
-the last of which calls a function, ``plot_max_fieldline_pos``, that does not
-exist anywhere in the legacy tree and would raise ``NameError`` if selected).
-Profile caches keep the ``.npz`` format the legacy plotting code reads. The
-Poincare cache does **not** -- it moved to per-line HDF5 so scans can be
-widened and extended in place, which the legacy dense format cannot express.
-See ``ashen/KNOWN_ISSUES.md`` #4 and #5.
+Not ported: the plotting stages (plot_poincare, plot_field_line_diffusion,
+plot_stochastic_factor, plot_postproc_profiles's plotting half,
+max_fieldline_pos -- the last calls plot_max_fieldline_pos, which doesn't
+exist anywhere in the legacy tree and would raise NameError if selected).
+Profile caches keep the .npz format legacy plotting reads. The Poincare
+cache does NOT -- moved to per-line HDF5 so scans can be widened/extended
+in place, which the legacy dense format can't express. KNOWN_ISSUES.md
+#4, #5.
 """
 
 from __future__ import annotations
@@ -81,11 +80,11 @@ def _gather_zero_d(
     jrun: Jorek2Run, paths: RunPaths, steps: list[int], *, force: bool, n_workers: int
 ) -> None:
     """zeroD for every step, cache-gated and fanned out across processes --
-    same shape as :func:`ashen.diagnostics.poincare.run_poincare_scan`.
+    same shape as poincare.run_poincare_scan.
 
-    A step whose restart file is missing is warned about and skipped rather
-    than aborting the whole case: restart files for a run still in progress
-    are routinely incomplete for the tail of a requested step range.
+    A step with a missing restart is warned about and skipped, not
+    aborted: restart files for a run in progress are routinely incomplete
+    at the tail of a requested step range.
     """
     total = len(steps)
     tasks: list[tuple[int, int]] = []
@@ -124,9 +123,8 @@ def _gather_qprofile(
     jrun: Jorek2Run, paths: RunPaths, steps: list[int], *, force: bool, n_workers: int
 ) -> None:
     """q-profile for every step, cache-gated and fanned out across processes
-    -- same shape as :func:`_gather_zero_d`, since
-    :func:`ashen.diagnostics.qprofile.run_qprofile_step` runs
-    ``jorek2_postproc`` in place exactly like :func:`ashen.jorek2.run_zero_d`.
+    -- same shape as _gather_zero_d, since qprofile.run_qprofile_step runs
+    jorek2_postproc in place exactly like jorek2.run_zero_d.
     """
     total = len(steps)
     tasks: list[tuple[int, int]] = []
@@ -181,14 +179,13 @@ def _run_case(
         pad_width=paths.pad_width,
     )
 
-    # poincare implies zerod even if not requested explicitly: `plot`'s LCTT
-    # figure reads each step's true time from the zeroD cache
-    # (cli/plot.py:_plot_connection_length), so a poincare-only gather that
-    # skipped it would leave LCTT with nothing to read. Cache-gated per step,
-    # so this costs nothing once zerod has already run. Each diag's own
-    # steps_for() override is respected -- zerod covers the union, so a
-    # separately-configured `zerod` step list and a `poincare` one both get
-    # what they need in one pass.
+    # poincare implies zerod even if not requested: plot's LCTT figure reads
+    # each step's true time from the zeroD cache (cli/plot.py:
+    # _plot_connection_length), so a poincare-only gather would leave LCTT
+    # with nothing to read. Cache-gated per step, so free once zerod has
+    # run. Each diag's own steps_for() override is respected -- zerod
+    # covers the union, so separately-configured zerod/poincare step lists
+    # both get what they need in one pass.
     zerod_steps: set[int] = set()
     if "zerod" in diags:
         zerod_steps.update(case.steps_for("zerod"))
@@ -200,9 +197,9 @@ def _run_case(
     if "poincare" in diags:
         poincare_steps = case.steps_for("poincare")
 
-        # The rational-surface highlight needs the qprofile cache to locate
+        # Rational-surface highlight needs the qprofile cache to locate
         # q=m/n, same reasoning as poincare implying zerod above: gathered
-        # here so a poincare-only case doesn't also need `--diag four`.
+        # here so a poincare-only case doesn't also need --diag four.
         if case.poincare_highlight:
             _gather_qprofile(jrun, paths, poincare_steps, force=force, n_workers=n_workers)
 
@@ -212,9 +209,9 @@ def _run_case(
         def _poincare_progress(done: int, total: int, report) -> None:
             print(f"  poincare {done}/{total}: {report}")
 
-        # No cache-existence check here any more: run_poincare_step plans
-        # against the cache per field line, so an already-satisfied step costs
-        # a read and traces nothing. --force still discards and retraces.
+        # No cache-existence check here: run_poincare_step plans against the
+        # cache per field line, so an already-satisfied step costs a read
+        # and traces nothing. --force still discards and retraces.
         poincare_diag.run_poincare_scan(
             jrun, paths, poincare_steps, psi_n_in,
             ang_sample_freq=case.ang_sample_freq,
@@ -242,9 +239,9 @@ def _run_case(
             on_progress=_profiles_progress,
         )
         # A mode that partly worked is expected -- `average` stops being
-        # computable once the flux surfaces it averages over are gone. A mode
-        # that never worked once is a configuration problem, and easy to miss
-        # among per-step warnings, so it is called out separately.
+        # computable once the flux surfaces it averages over are gone. A
+        # mode that never worked is a config problem, easy to miss among
+        # per-step warnings, so called out separately.
         for mode, n_ok in succeeded.items():
             if n_ok == 0:
                 print(
@@ -261,10 +258,10 @@ def _run_case(
     if "four" in diags:
         four_steps = case.steps_for("four")
 
-        # The q-profile locates each mode's q=m/n rational surface for
-        # plot's rational_surface_series (ashen.diagnostics.four_modes) --
-        # gathered alongside four so a plot-only run never needs a second
-        # `analyse` pass just to add it.
+        # q-profile locates each mode's q=m/n rational surface for plot's
+        # rational_surface_series (diagnostics.four_modes) -- gathered
+        # alongside four so a plot-only run never needs a second `analyse`
+        # pass just to add it.
         _gather_qprofile(jrun, paths, four_steps, force=force, n_workers=n_workers)
 
         def _four_progress(done: int, total: int, report) -> None:
@@ -281,12 +278,12 @@ def _run_case(
 
 
 def _resolve_parallelism(args) -> tuple[int, int]:
-    """CLI flags override ``site.toml``'s ``[diagnostics]``, which in turn
-    overrides the derived default.
+    """CLI flags override site.toml's [diagnostics], which overrides the
+    derived default.
 
-    A missing or unreadable ``site.toml`` is not fatal here -- the analysis
-    path needs no machine paths, only a core budget -- so it falls back to the
-    same derivation an empty ``[diagnostics]`` table would give.
+    A missing/unreadable site.toml isn't fatal here -- the analysis path
+    needs no machine paths, only a core budget -- so it falls back to the
+    same derivation an empty [diagnostics] table would give.
     """
     from ashen.config import Diagnostics
 
