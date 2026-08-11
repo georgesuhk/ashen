@@ -1,18 +1,14 @@
 """Site configuration discovery.
 
-Every machine-specific path lives in a single ``site.toml``.  Nothing else in
-Ashen may contain an absolute path, and no module may touch ``sys.path``.
+Every machine-specific path lives in one site.toml. No other Ashen module
+may contain an absolute path or touch sys.path.
 
-The file is located by, in order:
+Located by, in order: $ASHEN_SITE -> nearest site.toml walking up from cwd
+-> ~/.config/ashen/site.toml.
 
-1. ``$ASHEN_SITE``
-2. the nearest ``site.toml`` walking up from the current directory
-3. ``~/.config/ashen/site.toml``
-
-Relative entries resolve against **the directory containing site.toml**, not
-against the current directory.  That is what makes a campaign self-describing:
-drop ``site.toml`` at the campaign root with ``exe = "./exe"`` and the tree can
-be renamed, moved or cloned elsewhere without editing anything.
+Relative entries resolve against site.toml's own directory, not cwd -- what
+makes a campaign self-describing: drop site.toml at the campaign root with
+exe = "./exe" and the tree can be renamed/moved/cloned with zero edits.
 """
 
 from __future__ import annotations
@@ -57,15 +53,14 @@ class Launch:
 class Diagnostics:
     """How to spend cores on the analysis tools.
 
-    Deliberately separate from :class:`Launch`, which is solver-only: none of
-    JOREK's ``jorek2_*`` postprocessing tools use MPI at all. ``jorek2_poincare``
-    is a serial program with an OpenMP loop over field lines
-    (``jorek2_poincare.f90:204``), and JOREK's own ``convert2poincare.sh:146``
-    launches the alternative ``poincare`` tool with ``mpirun -n 1``. So the two
-    real axes are OpenMP threads *within* one restart step and processes
-    *across* steps, which is exactly what these two knobs control.
+    Separate from Launch (solver-only): no jorek2_* postprocessing tool
+    uses MPI. jorek2_poincare is serial with an OpenMP loop over field
+    lines (jorek2_poincare.f90:204); JOREK's own convert2poincare.sh:146
+    launches the alternative `poincare` tool with mpirun -n 1. So the real
+    axes are OpenMP threads within one restart step and processes across
+    steps -- exactly these two knobs.
 
-    Zero means "derive from the machine" -- see :meth:`resolve`.
+    Zero = "derive from the machine" (see resolve()).
     """
 
     #: Restart steps traced concurrently, one process each.
@@ -74,11 +69,11 @@ class Diagnostics:
     omp_threads: int = 0
 
     def resolve(self, cpu_count: int | None = None) -> tuple[int, int]:
-        """``(n_workers, omp_threads)``, filling in whichever is zero.
+        """(n_workers, omp_threads), filling in whichever is zero.
 
-        Warns rather than fails on oversubscription: a login node's
-        ``cpu_count`` is not the allocation, so an explicit pair the user set
-        is not something to refuse.
+        Warns, doesn't fail, on oversubscription: a login node's cpu_count
+        isn't the real allocation, so an explicit user-set pair shouldn't
+        be refused.
         """
         cpus = cpu_count or os.cpu_count() or 1
         omp = self.omp_threads or min(8, cpus)
