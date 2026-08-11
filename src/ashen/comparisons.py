@@ -1,45 +1,35 @@
-"""Cross-case comparisons for ``bin/plot``.
+"""Cross-case comparisons for `bin/plot`.
 
-Some figures compare *different runs* against each other rather than
-different steps of one run -- e.g. an eta scan's field-line theta-crossing
-distributions, one panel per run. :mod:`ashen.cases` has no notion of this:
-a ``Case`` is one run folder. A comparison is a named group of already-defined
-cases, read from the same ``cases.toml`` rather than a second file, since it
-is never independently meaningful -- every member it names must already be a
-``[cases.*]`` entry in that file.
+Some figures compare different runs (e.g. an eta scan's theta-crossing
+distributions, one panel per run) rather than different steps of one run --
+ashen.cases has no notion of this; a Case is one run folder. A comparison is
+a named group of already-defined cases, read from the same cases.toml (not
+a second file): every member must already be a [cases.*] entry there.
 
-Each member's own per-diag step override still does the per-run time-window
-selection (e.g. ``[cases.NAME.theta_hist] steps = [...]``) -- a comparison
-only supplies which cases to pool and how to label them, reusing
-:meth:`ashen.cases.Case.steps_for` rather than inventing a parallel mechanism.
+Each member's own per-diag step override still does per-run time-window
+selection ([cases.NAME.theta_hist] steps = [...]); a comparison only
+supplies which cases to pool and how to label them, via Case.steps_for.
 
-A comparison can also carry an explicit ``x_values`` (parallel to ``cases``)
-for plotting a derived scalar against a scan parameter across its members --
-e.g. wetted fraction vs. eta (:mod:`ashen.plotting.wetted_fraction`).
+A comparison can carry an explicit x_values (parallel to cases) for
+plotting a derived scalar vs. a scan parameter across members -- e.g.
+wetted fraction vs. eta (ashen.plotting.wetted_fraction).
 
-A comparison names its members one of two ways, never both:
+A comparison names members one of two ways, never both:
+- cases (flat): one series, one point per member. Pre-datasets default;
+  still the only form theta_hist's grid comparison understands (one panel
+  per member).
+- datasets (nested [comparisons.NAME.datasets.DATASET] tables): >1 related
+  scans sharing an x-axis, e.g. a resistivity scan under two profile
+  assumptions ("normal" vs "rho19"). Each dataset is its own case group;
+  wetted_fraction overlays them on one axes, one colour/legend entry per
+  dataset (plot_wetted_fraction_datasets). See Dataset for fields.
 
-* ``cases`` (flat) -- one series, one point per member. What every comparison
-  used before ``datasets`` existed, and still the only form the theta_hist
-  grid comparison understands (one panel per member).
-* ``datasets`` (nested ``[comparisons.NAME.datasets.DATASET]`` tables) -- more
-  than one *related* scan sharing the same x-axis, e.g. a resistivity scan
-  repeated under two different profile assumptions ("normal" vs "rho19").
-  Each dataset is its own group of cases; the wetted_fraction plot overlays
-  them on one axes, one colour and legend entry per dataset
-  (:func:`ashen.plotting.wetted_fraction.plot_wetted_fraction_datasets`).
-  See :class:`Dataset` for its fields.
-
-A comparison can also override the analysis parameters that produce that
-scalar (``theta_target_psi``, ``theta_bins``, ``theta_psi_n_range``,
-``theta_wetted_threshold``) for every member **uniformly**, rather than each
-member case needing its own matching copy (or all cases sharing one
-``[defaults]``, which would apply to non-comparison uses of those cases too).
-A scan is only an apples-to-apples comparison if every point was computed
-the same way, so these belong to the comparison, not scattered across its
-members. Precedence, most specific wins: CLI flag (e.g.
-``--theta_target_psi``) > this comparison's own setting > the member case's
-own setting > the diagnostic's built-in default.
+A comparison can override theta_target_psi/theta_bins/theta_psi_n_range/
+theta_wetted_threshold for every member uniformly, rather than duplicating
+per case (or a shared [defaults], which would leak into non-comparison
+uses) -- an apples-to-apples scan needs every point computed the same way.
+Precedence, most specific wins: CLI flag (--theta_target_psi) > comparison
+setting > member case setting > diagnostic default.
 """
 
 from __future__ import annotations
@@ -55,90 +45,80 @@ __all__ = ["Comparison", "Dataset", "load_comparisons"]
 
 @dataclass(frozen=True)
 class Dataset:
-    """One named group of cases within a ``datasets``-style comparison --
-    e.g. the "rho19" scan, alongside a sibling "normal" scan, both under the
-    same comparison. See the module docstring for when to use this instead
-    of a comparison's own flat ``cases``.
-    """
+    """One named case group within a `datasets`-style comparison, e.g.
+    "rho19" alongside sibling "normal". See module docstring."""
 
     name: str
     #: Member case names, in point order.
     cases: list[str]
-    #: Per-case labels, parallel to `cases`. Not the legend text -- see
-    #: `dataset_label`.
+    #: Per-case labels, parallel to `cases`. Not legend text -- see dataset_label.
     x_tick_labels: list[str] = field(default_factory=list)
-    #: Parallel to `cases`; falls back to the comparison's own `x_values`.
+    #: Parallel to `cases`; falls back to the comparison's own x_values.
     x_values: list[float] | None = None
-    #: Legend colour. `None` assigns one from `ashen.plotting.colors.
-    #: DISCRETE_PALETTE` by position among sibling datasets.
+    #: Legend colour. None -> assigned from DISCRETE_PALETTE by position
+    #: among sibling datasets.
     color: str | None = None
-    #: This series' legend text; falls back to `name` (the TOML table key)
-    #: when empty. See `series_label`.
+    #: Legend text; falls back to `name` (the TOML table key) if empty.
     dataset_label: str = ""
 
     def labelled_cases(self) -> list[tuple[str, str]]:
-        """``[(x_tick_label, case_name), ...]`` in point order."""
+        """[(x_tick_label, case_name), ...] in point order."""
         labels = self.x_tick_labels or self.cases
         return list(zip(labels, self.cases))
 
     @property
     def series_label(self) -> str:
-        """What a renderer puts in the legend for this dataset's series --
-        `dataset_label` if set, else `name`."""
+        """Legend text for this dataset's series: dataset_label if set, else name."""
         return self.dataset_label or self.name
 
 
 @dataclass(frozen=True)
 class Comparison:
     name: str
-    #: Member case names, in panel order. Empty when `datasets` is used
-    #: instead -- exactly one of the two is ever set, never both.
+    #: Member case names, panel order. Empty when `datasets` is used instead
+    #: -- exactly one of the two is ever set.
     cases: list[str] = field(default_factory=list)
-    #: Per-case labels, parallel to `cases` -- e.g. panel titles in the
-    #: theta_hist grid. Defaults to the case names themselves if omitted.
+    #: Per-case labels, parallel to `cases` (e.g. theta_hist panel titles).
+    #: Defaults to the case names if omitted.
     x_tick_labels: list[str] = field(default_factory=list)
-    #: Named sub-scans sharing this comparison's x-axis -- see the module
-    #: docstring. Empty when the comparison uses flat `cases` instead.
+    #: Named sub-scans sharing this comparison's x-axis; see module
+    #: docstring. Empty when flat `cases` is used instead.
     datasets: dict[str, Dataset] = field(default_factory=dict)
     note: str = ""
     n_cols: int = 4
-    #: An explicit numeric value per member (e.g. each case's resistivity),
-    #: for a "scalar vs. scan parameter" plot (ashen.plotting.
-    #: wetted_fraction). Deliberately not inferred from run folder names
-    #: (e.g. parsing "eta1e-3" out of "eta1e-3_RE") -- CLAUDE.md flags
-    #: CASTOR3D's directory-name parsing as a hazard this project exists to
-    #: not repeat.
+    #: Explicit numeric value per member (e.g. resistivity), for a "scalar
+    #: vs. scan parameter" plot (wetted_fraction). Never inferred from run
+    #: folder names -- CASTOR3D's directory-name parsing is the hazard this
+    #: project exists to avoid (see CLAUDE.md).
     x_values: list[float] | None = None
-    #: Axis label for `x_values`, e.g. "$\\eta$ [$\\Omega \\cdot$ m]".
+    #: Axis label for x_values, e.g. "$\\eta$ [$\\Omega \\cdot$ m]".
     x_label: str = ""
-    #: Uniform overrides applied to every member case -- see the module
-    #: docstring for why these live on the comparison rather than each case.
-    #: None (default) falls through to each case's own setting.
+    #: Uniform overrides for every member case (see module docstring for
+    #: why they live here, not per case). None falls through to the case's
+    #: own setting.
     theta_target_psi: float | None = None
     theta_bins: int | None = None
     theta_psi_n_range: list[float] | None = None
     theta_wetted_threshold: float | None = None
 
     def labelled_cases(self) -> list[tuple[str, str]]:
-        """``[(x_tick_label, case_name), ...]`` in panel order -- what a
-        renderer iterates to build panels. Flat-mode (`cases`) only; a
-        `datasets` comparison has no single flat panel order -- iterate
-        `datasets` instead."""
+        """[(x_tick_label, case_name), ...] in panel order. Flat-mode
+        (`cases`) only -- a `datasets` comparison has no single flat panel
+        order; iterate `datasets` instead."""
         labels = self.x_tick_labels or self.cases
         return list(zip(labels, self.cases))
 
 
 def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comparison]:
-    """Parse ``[comparisons.*]`` tables from ``cases.toml``.
+    """Parse [comparisons.*] tables from cases.toml.
 
-    ``cases`` is the already-loaded result of :func:`ashen.cases.load_cases`
-    against the same file, passed in rather than re-derived here so every
-    member name is validated against exactly what the caller resolved --
-    ``load_cases`` and this function reading the file independently could
-    otherwise disagree if one were extended and the other weren't.
+    `cases` is load_cases's already-resolved result for the same file,
+    passed in rather than re-derived, so member names validate against
+    exactly what the caller resolved (avoids drift if one function is
+    extended and the other isn't).
 
-    Returns ``{}`` if the file has no ``[comparisons.*]`` section -- this is
-    not an error, since most cases.toml files will not define any.
+    Returns {} if there's no [comparisons.*] section -- not an error, most
+    cases.toml files won't define any.
     """
     path = Path(path)
     try:
@@ -177,9 +157,9 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
                 "empty) and no 'datasets'"
             )
 
-        # Parsed once, regardless of mode: flat mode validates it against
+        # Parsed once regardless of mode: flat mode validates against
         # `members` below; datasets mode treats it as each dataset's shared
-        # fallback, validated per-dataset instead (see the datasets loop).
+        # fallback (validated per-dataset in the loop below).
         x_values = None
         if "x_values" in raw:
             x_values = [float(v) for v in raw["x_values"]]

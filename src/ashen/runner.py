@@ -1,41 +1,36 @@
 """Populating a run folder and submitting JOREK jobs.
 
-Turns the straight-line ``Columbia/run_jorek.py`` script into functions:
-``prepare_run`` (folder population, namelist writes, profile generation) and
-``submit_*`` (the five job-launch stages). Everything that can be decided
-before touching disk is decided first; nothing is written until validation
-has passed.
+Turns the straight-line `Columbia/run_jorek.py` script into functions:
+prepare_run (folder population, namelist writes, profile generation) and
+submit_* (the five job-launch stages). Everything decidable before touching
+disk is decided first; nothing is written until validation passes.
 
-**Fixes applied here, all confirmed with George (see the refactor plan's
-"Behaviour changes to confirm" list):**
+Fixes applied vs. run_jorek.py (confirmed with George; refactor plan's
+"Behaviour changes to confirm" list):
+- freeboundary is a real bool on ShotParams (not the ".t."/".f." string the
+  old code tested truthiness of) -- starwall-response requirement now
+  actually respects fixed-boundary runs.
+- --replace actually allows overwrite now (old exist_ok=(not replace_flag)
+  had it backwards).
+- --run_sw tees its equilibrium stage into log_eq, not log (old code
+  clobbered the main run's log).
+- Regenerated boundary written to all 3 namelists (in_eq, in_main,
+  in_main_r), not just in_eq.
+- castor_dir/psi computed whenever ANY of ffprime/T/rho/bnd-method is
+  "castor" (old code only checked ffprime/T/rho -> bnd_method="castor"
+  alone raised NameError).
+- prepare_run's run_sw param mirrors run_jorek.py:146's `not run_sw_flag`
+  guard on symlinking the archived STARWALL response in -- missing this
+  turns into shutil.SameFileError in submit_starwall on the HPC's real
+  POSIX symlinks (this dev clone's copy-based bypass hides it). See that
+  function's docstring.
+- castor_params["machine_folder"] no longer needs a hand-built absolute
+  path per shotfile: castor_params["machine"] (subfolder name, e.g.
+  "DIIID_low_pres") joins onto site.toml's castor_root. "machine_folder"
+  still wins if a shotfile sets it explicitly (backward compat).
 
-- ``freeboundary`` is a real ``bool`` on :class:`~ashen.shotfile.ShotParams`
-  (not the string ``".t."``/``".f."`` the old code tested truthiness of), so
-  the starwall-response requirement now actually respects fixed-boundary runs.
-- ``--replace`` now genuinely allows overwriting an existing folder (the old
-  ``exist_ok=(not replace_flag)`` had this backwards).
-- ``--run_sw`` tees its equilibrium stage into ``log_eq``, not ``log`` --
-  the old code clobbered the main run's log.
-- The regenerated boundary is written to **all three** namelists
-  (``in_eq``, ``in_main``, ``in_main_r``), not just ``in_eq``.
-- ``castor_dir``/``psi`` are computed whenever *any* of
-  ffprime/T/rho/bnd-method is ``"castor"`` (the old code only checked
-  ffprime/T/rho, so ``bnd_method="castor"`` alone raised ``NameError``).
-- ``prepare_run``'s ``run_sw`` parameter mirrors ``run_jorek.py:146``'s
-  ``not run_sw_flag`` guard on symlinking the archived STARWALL response in
-  -- found missing during the initial port when real POSIX symlinks on the
-  HPC (not this dev clone's copy-based bypass) turned it into a
-  ``shutil.SameFileError`` in :func:`submit_starwall`. See that function's
-  docstring.
-- ``castor_params["machine_folder"]`` no longer has to be a hand-built
-  absolute path in every shotfile: ``castor_params["machine"]`` (just the
-  subfolder name, e.g. ``"DIIID_low_pres"``) is now joined onto
-  ``site.toml``'s ``castor_root``. ``"machine_folder"`` still wins if a
-  shotfile sets it explicitly, for backward compatibility.
-
-**Not fixed here -- see ``KNOWN_ISSUES.md``:** the T-profile grid and
-density-independence issues in :func:`ashen.profiles.get_t_profile_from_castor`
-are reproduced exactly.
+Not fixed (see KNOWN_ISSUES.md): profiles.get_t_profile_from_castor's
+T-profile grid and density-independence issues are reproduced exactly.
 """
 
 from __future__ import annotations
@@ -175,17 +170,16 @@ def prepare_run(
 ) -> PreparedRun:
     """Populate a run folder from a shotfile. Validates before writing anything.
 
-    Mirrors ``Columbia/run_jorek.py``'s folder-population section (roughly
-    lines 124-302), with the fixes listed in this module's docstring applied.
+    Mirrors run_jorek.py's folder-population section (~lines 124-302), with
+    the fixes listed in this module's docstring applied.
 
-    ``run_sw`` mirrors ``run_jorek.py:146``'s ``not run_sw_flag`` guard: pass
-    ``True`` when this same invocation will also call :func:`submit_starwall`
-    to *generate* the archived response, not consume it. Without this, the
-    archived response gets symlinked in as ``starwall-response.dat`` and then
-    :func:`submit_starwall`'s archive step tries to copy that file onto
-    itself, raising ``shutil.SameFileError`` -- caught on the HPC, where real
-    symlinks exposed it; the Windows dev clone's copy-based symlink bypass
-    could not.
+    run_sw mirrors run_jorek.py:146's `not run_sw_flag` guard: pass True
+    when this invocation will also call submit_starwall to *generate* the
+    archived response, not consume it. Without this the archived response
+    gets symlinked in as starwall-response.dat and submit_starwall's archive
+    step then tries to copy that file onto itself -> shutil.SameFileError
+    (only visible on the HPC's real symlinks, not this dev clone's
+    copy-based bypass).
     """
     run_dir = Path(run_dir).resolve()
     disk = _Disk(dry_run)
@@ -208,10 +202,8 @@ def prepare_run(
 
     if _uses_castor(params):
         cp = params.castor_params
-        # "machine_folder" (an absolute path) wins if a shotfile still sets it
-        # directly; otherwise "machine" (just the subfolder name, e.g.
-        # "DIIID_low_pres") is joined onto site.toml's castor_root. See the
-        # refactor plan's "Gap found and fixed" note on castor_master_folder.
+        # "machine_folder" (absolute path) wins if set directly; else "machine"
+        # (subfolder name) joins onto site.toml's castor_root.
         machine_folder = cp.get("machine_folder") or str(site.castor_root / cp["machine"])
         cotrans_dir = f"{machine_folder}/equilib/cotrans/qa{cp['qa']:.1f}/a1.00_g{cp['g']:.3f}"
         castor_dir = f"{machine_folder}/castor3d/{cp['scan_folder']}/qa{cp['qa']:.1f}/a1.00_g{cp['g']:.3f}"
@@ -252,8 +244,8 @@ def prepare_run(
 
     # ---- T -----------------------------------------------------------------
     if params.T_method == "castor":
-        # rho_prof (list form) matches what the old code passed -- see
-        # KNOWN_ISSUES.md for why its value doesn't actually matter here.
+        # rho_prof (list form) matches old code's arg; value doesn't
+        # actually matter here (KNOWN_ISSUES.md).
         t_prof = prof_mod.get_t_profile_from_castor(
             [rho_const_jorek], cotrans_dir, params.castor_suffix
         )
@@ -296,15 +288,12 @@ def prepare_run(
     # dry run has already exercised every failure mode a real run would hit.
     # =========================================================================
 
-    # run_dir is always the caller's cwd (same as the old script), so it
-    # *always already exists* by the time prepare_run runs -- you have to cd
-    # into it first. Bare existence is therefore not a meaningful signal;
-    # the old `exist_ok=(not replace_flag)` made --replace fail every time
-    # (bug #2), and a naive `exist_ok=replace` inversion would make the
-    # *default* case fail every time instead, which is worse. What actually
-    # needs gating behind --replace is whether the folder looks like it was
-    # already populated by a previous prepare_run -- checked via in_eq,
-    # the first file that step writes.
+    # run_dir is always the caller's cwd, so it always already exists by
+    # this point -- bare existence isn't a meaningful signal. Naively
+    # inverting the old exist_ok=(not replace_flag) bug would break the
+    # *default* case instead. Gate --replace on whether the folder was
+    # already populated by a prior prepare_run: check in_eq, the first
+    # file that step writes.
     if paths.in_eq.exists() and not replace:
         raise FileExistsError(
             f"{run_dir} already contains a prepared run (in_eq exists); "
@@ -345,10 +334,9 @@ def prepare_run(
     disk.set_fields(
         [paths.in_main, paths.in_main_r],
         {
-            # Preserve the old string formatting exactly: run_jorek.py passed
-            # str(list).strip("[]") through untouched, not a Fortran-double
-            # literal -- see namelist.py's fortran_literal for why a Python
-            # list would otherwise render differently (e.g. "3.0d-2").
+            # Preserve exact old formatting: str(list).strip("[]"), not a
+            # Fortran-double literal (namelist.fortran_literal would render
+            # a Python list differently, e.g. "3.0d-2").
             "tstep_n": str(params.tstep_n).strip("[]"),
             "nstep_n": str(params.nstep_n).strip("[]"),
             "nout": params.nout,
@@ -375,8 +363,8 @@ def prepare_run(
     disk.savetxt(run_dir / "T_prof.dat", t_data)
     disk.savetxt(run_dir / "rho_prof.dat", rho_data)
 
-    # FIX applied here (confirmed with George, see module docstring): the
-    # boundary now goes into every namelist, not just in_eq.
+    # Fix vs. legacy (see module docstring): boundary goes into every
+    # namelist, not just in_eq.
     for target in paths.namelists:
         disk.set_boundary_block(target, bnd[:, 0], bnd[:, 1], psi_bnd, ".2f")
     disk.write_boundary_file(paths.in_bnd, bnd[:, 0], bnd[:, 1], psi_bnd)
@@ -443,14 +431,12 @@ def submit_starwall(
 ) -> list[str]:
     """Equilibrium then STARWALL, then archive the response.
 
-    FIX applied here (confirmed with George): the equilibrium stage tees into
-    ``log_eq``, matching ``submit_eq``, not ``log`` -- the old code clobbered
-    the main run's log with this stage's equilibrium output.
+    Fix vs. legacy: equilibrium stage tees into log_eq (matching submit_eq),
+    not log -- old code clobbered the main run's log with this stage's output.
 
-    Requires the run folder to have been prepared with
-    ``prepare_run(..., run_sw=True)`` -- otherwise ``starwall-response.dat``
-    is already a symlink to the exact archive path this function copies onto,
-    and the copy raises ``shutil.SameFileError``.
+    Requires prepare_run(..., run_sw=True) -- otherwise starwall-response.dat
+    is already a symlink to the exact archive path this copies onto, and the
+    copy raises shutil.SameFileError.
     """
     commands = []
 
