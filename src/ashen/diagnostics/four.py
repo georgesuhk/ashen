@@ -1,37 +1,31 @@
-"""Toroidal Fourier decomposition via ``jorek2_four``.
+"""Toroidal Fourier decomposition via `jorek2_four`.
 
-No legacy Python wrapper for ``jorek2_four`` exists anywhere in this tree
-(checked ``castor3d/util`` and ``Columbia/jorek_RE/util``) -- this is new
-ground, not a port.
+No legacy Python wrapper exists anywhere in this tree (checked castor3d/util
+and Columbia/jorek_RE/util) -- new ground, not a port.
 
-**I/O contract** (``Columbia/jorek_RE/diagnostics/jorek2_four.f90``): reads
-the run's namelist from stdin -- ``initialise_parameters(0, "__NO_FILENAME__")``
-falls through to ``read(5, in1)`` (``models/model600/initialise_parameters.f90:257-267``),
-the same convention ``jorek2_poincare`` uses -- and the restart file under the
-fixed name ``jorek_restart`` via ``import_restart``, so
-:func:`ashen.jorek2.run_tool`'s default ``restart_name="jorek_restart.h5"``
-fits unchanged. An optional ``four_params.nml`` in the working directory
-supplies ``nstpts``/``nTht``/``nmaxsteps``/``deltaphi``/``nsmallsteps``/
-``rad_range`` (``jorek2_four.f90:44-59``); this module's defaults reproduce
-the tool's own fallback values, so an unconfigured case behaves identically
-to a bare ``jorek2_four`` run with no control file.
+I/O contract (jorek_RE/diagnostics/jorek2_four.f90): reads the run's
+namelist from stdin (initialise_parameters(0,"__NO_FILENAME__") falls
+through to read(5,in1), model600/initialise_parameters.f90:257-267, same
+convention as jorek2_poincare) and the restart under fixed name
+jorek_restart via import_restart, so jorek2.run_tool's default
+restart_name="jorek_restart.h5" fits unchanged. Optional four_params.nml
+in the working dir supplies nstpts/nTht/nmaxsteps/deltaphi/nsmallsteps/
+rad_range (jorek2_four.f90:44-59); this module's defaults reproduce the
+tool's own fallbacks, so an unconfigured case == a bare jorek2_four run.
 
-**Why output_glob, not a fixed outputs list.** Output files are one per
-``(variable, toroidal mode n)`` -- ``{variable_name}_modes_n{n:03d}`` --
-written directly into the working directory (``jorek2_four.f90:99-119``), not
-under ``postproc/``. ``variable_names``/``n_var`` are compile-time and
-model-dependent (``models/mod_parameters.f90`` -- a run with the RE fluid
-enabled carries an extra ``n_RE`` variable others don't), so the exact
-filenames can't be predicted ahead of a run. :func:`ashen.jorek2.run_tool`'s
-``output_glob`` collects whatever matches instead.
+output_glob, not a fixed outputs list: output files are one per (variable,
+toroidal mode n) -- {variable_name}_modes_n{n:03d} -- written directly into
+the working dir (jorek2_four.f90:99-119), not under postproc/.
+variable_names/n_var are compile-time and model-dependent
+(mod_parameters.f90 -- RE-fluid runs carry an extra n_RE var others don't),
+so filenames can't be predicted ahead of a run; run_tool's output_glob
+collects whatever matches instead.
 
-**Parsing.** Each file is ``nTht/2 + 1`` blank-line-separated blocks (one per
-poloidal mode ``m``, in ascending order starting at 0), each a
-``(psi_n, abs, real, imag, phase)`` table over ``nstpts`` radial points.
-Every block carries its own ``# l: m=.., n=..`` header
-(``jorek2_four.f90:107``); it is cross-checked against the block's position
-and the ``n`` embedded in the filename, so a format change upstream raises
-rather than silently mislabelling a mode.
+Parsing: each file is nTht/2+1 blank-line-separated blocks (one per
+poloidal mode m, ascending from 0), each a (psi_n, abs, real, imag, phase)
+table over nstpts radial points. Every block's own "# l: m=.., n=.." header
+(jorek2_four.f90:107) is cross-checked against block position and the
+filename's n -- a format change upstream raises, doesn't silently mislabel.
 """
 
 from __future__ import annotations
@@ -87,13 +81,12 @@ def four_params_nml(
     nsmallsteps: int = 3,
     rad_range: tuple[float, float] = (0.001, 0.999),
 ) -> str:
-    """The ``four_params.nml`` control file ``jorek2_four`` reads for its
+    """The four_params.nml control file jorek2_four reads for its
     field-line-tracing (magnetic-coordinate) parameters.
 
-    Ports the layout of ``Columbia/jorek_RE/util/examples/four_params.nml``.
-    ``jorek2_four`` validates ``nTht`` itself (must be a multiple of 4, >=32;
-    ``jorek2_four.f90:80-84``) and exits non-zero if it isn't, which
-    :func:`ashen.jorek2.run_tool` already turns into a :class:`Jorek2Error`.
+    Ports jorek_RE/util/examples/four_params.nml's layout. jorek2_four
+    validates nTht itself (multiple of 4, >=32; jorek2_four.f90:80-84) and
+    exits non-zero if not -- run_tool already turns that into Jorek2Error.
     """
     lines = [
         "&four_params",
@@ -110,10 +103,8 @@ def four_params_nml(
 
 
 def _parse_four_file(path: Path, *, expected_n: int) -> list[tuple[int, np.ndarray]]:
-    """One ``{variable}_modes_n{n}`` file -> ``[(m, data)]`` in block order.
-
-    ``data`` columns are ``(psi_n, abs, real, imag, phase)``.
-    """
+    """One {variable}_modes_n{n} file -> [(m, data)] in block order.
+    data columns: (psi_n, abs, real, imag, phase)."""
     blocks: list[tuple[int, np.ndarray]] = []
     header: tuple[int, int, int] | None = None
     rows: list[list[float]] = []
@@ -170,8 +161,8 @@ def run_four_step(
 ) -> FourStepReport:
     """One restart step's Fourier decomposition.
 
-    Cached whole: unlike Poincare tracing this isn't incremental, so a step
-    with an existing cache does nothing unless ``force=True``.
+    Cached whole: unlike Poincare tracing, not incremental -- a step with
+    an existing cache does nothing unless force=True.
     """
     cache_path = paths.four_cache(step)
     if not force and cache_path.is_file():
@@ -239,12 +230,12 @@ def run_four_scan(
     force: bool = False,
     on_progress: Callable[[int, int, FourStepReport], None] | None = None,
 ) -> list[FourStepReport]:
-    """Every step in a case, with steps traced concurrently -- one process per
-    step, same fan-out as :func:`ashen.diagnostics.poincare.run_poincare_scan`.
+    """Every step in a case, traced concurrently -- one process per step,
+    same fan-out as poincare.run_poincare_scan.
 
-    ``on_progress(done, total, report)``, if given, fires as each step
-    finishes -- in completion order under the process pool, which need not
-    match ``steps``' order. The returned list is always in ``steps`` order.
+    on_progress(done, total, report), if given, fires in process-pool
+    completion order (not necessarily `steps`' order). The returned list
+    is always in `steps` order.
     """
     steps = list(steps)
     total = len(steps)

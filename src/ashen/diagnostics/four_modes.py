@@ -1,11 +1,10 @@
 """Time evolution of jorek2_four mode amplitudes across restart steps.
 
-Extracts, from the per-step caches ``analyse --diag four`` already wrote
-(:mod:`ashen.diagnostics.four_cache`), the peak ``|amplitude|`` over the
-radial (``psi_n``) grid for each requested ``(variable, n, m)``, one value per
-restart step -- the data :mod:`ashen.plotting.four_modes` draws as a time
-series. Pure/no matplotlib import, like :mod:`ashen.diagnostics.
-connection_length`.
+Extracts, from the per-step caches `analyse --diag four` already wrote
+(four_cache), the peak |amplitude| over the radial (psi_n) grid for each
+requested (variable, n, m), one value per restart step -- what
+plotting.four_modes draws as a time series. Pure/no matplotlib import,
+like diagnostics.connection_length.
 """
 
 from __future__ import annotations
@@ -42,18 +41,15 @@ def max_amplitude_series(
     variables: Sequence[str] | None = None,
     modes: Sequence[tuple[int, int]] | None = None,
 ) -> dict[ModeKey, np.ndarray]:
-    """``{(variable, n, m): amplitudes}``, one value per ``steps`` entry.
+    """{(variable, n, m): amplitudes}, one value per `steps` entry.
 
-    ``amplitudes[i]`` is ``max(record.abs)`` over the radial grid for that
-    key at ``steps[i]`` -- ``nan`` if that step has no cache at all, or the
-    cache doesn't carry that particular key (e.g. an ``n`` the run's model
-    doesn't produce). Visibly missing rather than silently dropped, same
-    convention as :func:`ashen.diagnostics.connection_length.
-    harmonic_connection_length`.
+    amplitudes[i] = max(record.abs) over the radial grid for that key at
+    steps[i]; nan if that step has no cache, or lacks that key (e.g. an n
+    the model doesn't produce) -- visibly missing, not silently dropped,
+    same convention as connection_length.harmonic_connection_length.
 
-    ``variables``/``modes`` filter which keys come back; ``None`` for either
-    means "every one found across the requested steps' caches" -- the union,
-    since different steps can have carried different keys.
+    variables/modes filter which keys come back; None for either = union
+    of every key found across the requested steps' caches.
     """
     per_step: list[dict[ModeKey, fc.FourRecord]] = [
         fc.read_cache(paths.four_cache(step)) for step in steps
@@ -87,28 +83,25 @@ def rational_surface_series(
     *,
     variables: Sequence[str] | None = None,
 ) -> dict[ModeKey, np.ndarray]:
-    """``{(variable, n, m): amplitudes}`` pinned to the ``q = m/n`` rational
-    surface, instead of :func:`max_amplitude_series`'s whole-domain max.
+    """{(variable, n, m): amplitudes} pinned to the q=m/n rational surface,
+    instead of max_amplitude_series's whole-domain max.
 
-    For each step, the cached q-profile (:func:`ashen.diagnostics.qprofile.
-    run_qprofile_step`, gathered alongside ``--diag four``) is searched for
-    every ``psi_n`` where ``q`` crosses ``m/n``; the four cache's amplitude
-    is linearly interpolated onto each crossing and the largest kept. A
-    reversed-shear profile can cross a given q more than once -- each is a
-    distinct physical rational surface, and only the strongest is relevant
-    to "how hard is this helicity driven".
+    Per step: the cached q-profile (qprofile.run_qprofile_step, gathered
+    alongside --diag four) is searched for every psi_n where q crosses m/n;
+    the four cache's amplitude is linearly interpolated onto each crossing
+    and the largest kept. A reversed-shear profile can cross a given q more
+    than once -- each is a distinct physical rational surface, only the
+    strongest matters for "how hard is this helicity driven".
 
-    Uses ``abs``, not the signed real part, even though the physically
-    literal quantity is Re(psi) at that surface: a Fourier component's phase
-    is an arbitrary toroidal-angle offset with no fixed sign convention
-    across steps, so the signed real part flips sign as the mode rotates and
-    is not a meaningful growth trace. ``abs`` is also what the log-scale
-    default axis in :mod:`ashen.plotting.four_modes` requires.
+    Uses abs, not signed real part: a Fourier component's phase is an
+    arbitrary toroidal-angle offset with no fixed sign convention across
+    steps, so the signed real part flips as the mode rotates -- not a
+    meaningful growth trace. abs also matches plotting.four_modes' default
+    log-scale axis.
 
-    ``n=0`` modes have no rational surface (``m/0`` is undefined) and are
-    silently skipped. A step missing either cache, or whose q-profile never
-    crosses the target, is ``nan`` there -- same convention as
-    :func:`max_amplitude_series`.
+    n=0 has no rational surface (m/0 undefined), silently skipped. A step
+    missing either cache, or whose q-profile never crosses the target, is
+    nan -- same convention as max_amplitude_series.
     """
     wanted_modes = [(int(n), int(m)) for n, m in modes if int(n) != 0]
 
@@ -152,11 +145,9 @@ def _b_r_from_psi(
     b_ref: float | None,
     target_name: str,
 ) -> dict[ModeKey, np.ndarray]:
-    """Shared conversion behind :func:`delta_b_series` and
-    :func:`delta_b_over_b_series` -- see either for the physics. ``b_ref``
-    controls whether the result is normalised (Tesla-per-Tesla, dimensionless)
-    or left as a raw field magnitude (Tesla).
-    """
+    """Shared conversion behind delta_b_series/delta_b_over_b_series -- see
+    either for the physics. b_ref controls normalised (Tesla/Tesla,
+    dimensionless) vs. raw field magnitude (Tesla)."""
     out: dict[ModeKey, np.ndarray] = {}
     for (variable, n, m) in psi_series:
         if variable != "Psi" or m == 0:
@@ -171,19 +162,18 @@ def _b_r_from_psi(
 def delta_b_series(
     psi_series: Mapping[ModeKey, np.ndarray], *, r_axis: float
 ) -> dict[ModeKey, np.ndarray]:
-    """Convert a ``Psi``-variable amplitude series (from
-    :func:`max_amplitude_series` or :func:`rational_surface_series`, filtered
-    to ``variable == "Psi"``) into an approximate perturbed radial field, in
-    Tesla, keyed under :data:`DELTA_B` in place of ``"Psi"``.
+    """Convert a Psi-variable amplitude series (from max_amplitude_series
+    or rational_surface_series, filtered to variable=="Psi") into an
+    approximate perturbed radial field, in Tesla, keyed under DELTA_B
+    instead of "Psi".
 
-    Uses the standard tearing-mode shorthand ``b_r^(m,n) ~ (m / R^2) *
-    |Psi_mn|`` -- see :func:`delta_b_over_b_series` for the same quantity
-    normalised by a reference field, and for the approximation this
-    shorthand makes (``r_axis`` standing in for the true local minor radius).
+    Tearing-mode shorthand: b_r^(m,n) ~ (m/R^2)*|Psi_mn| -- see
+    delta_b_over_b_series for the normalised version and the approximation
+    this makes (r_axis standing in for the true local minor radius).
 
-    ``m=0`` modes carry no helical radial-field content in this shorthand
-    (the ``m`` factor vanishes) and are dropped rather than shown as a flat
-    zero line, mirroring how ``n=0`` is dropped from rational-surface data.
+    m=0 modes carry no helical radial-field content in this shorthand (the
+    m factor vanishes) and are dropped, not shown as a flat zero line --
+    mirrors n=0 being dropped from rational-surface data.
     """
     return _b_r_from_psi(psi_series, r_axis=r_axis, b_ref=None, target_name=DELTA_B)
 
@@ -191,38 +181,33 @@ def delta_b_series(
 def delta_b_over_b_series(
     psi_series: Mapping[ModeKey, np.ndarray], *, r_axis: float, b_ref: float
 ) -> dict[ModeKey, np.ndarray]:
-    """Convert a ``Psi``-variable amplitude series into an approximate
-    perturbed-field fraction, keyed under :data:`DELTA_B_OVER_B` in place of
-    ``"Psi"``.
+    """Convert a Psi-variable amplitude series into an approximate
+    perturbed-field fraction, keyed under DELTA_B_OVER_B instead of "Psi".
 
-    Uses the standard tearing-mode shorthand ``b_r^(m,n) ~ (m / R^2) *
-    |Psi_mn|``, normalised by a reference field: ``delta_b_over_b =
-    (m / r_axis**2) * |Psi_mn| / b_ref``. This is an approximation -- the
-    exact relation uses the local minor radius and the true |grad Psi|, not
-    the (constant) major radius at the magnetic axis -- but the four cache
-    only carries ``|Psi_mn|`` on a ``psi_n`` grid, not real-space geometry,
-    so ``r_axis`` stands in for it everywhere.
+    Tearing-mode shorthand normalised by a reference field:
+    delta_b_over_b = (m/r_axis**2)*|Psi_mn|/b_ref. Approximation: the exact
+    relation uses the local minor radius and true |grad Psi|, not the
+    constant major radius at the axis -- but the four cache only carries
+    |Psi_mn| on a psi_n grid, so r_axis stands in for it everywhere.
 
-    ``b_ref`` is caller-supplied and not otherwise interpreted here -- see
-    :func:`ashen.diagnostics.profiles.edge_toroidal_field` for the reference
-    field :mod:`ashen.cli.plot` actually feeds in (``Btor`` at the plasma
-    edge, from the initial-equilibrium step).
+    b_ref is caller-supplied, not interpreted here -- see
+    profiles.edge_toroidal_field for the reference cli.plot actually feeds
+    in (Btor at the plasma edge, initial-equilibrium step).
 
-    ``m=0`` modes are dropped -- see :func:`delta_b_series`.
+    m=0 modes dropped -- see delta_b_series.
     """
     return _b_r_from_psi(psi_series, r_axis=r_axis, b_ref=b_ref, target_name=DELTA_B_OVER_B)
 
 
 @dataclass(frozen=True)
 class GrowthFit:
-    """A least-squares exponential-growth fit, ``|amplitude| ~
-    exp(intercept) * exp(gamma * t)`` -- i.e. ``ln|amplitude| = gamma * t +
-    intercept``, fit against real time in seconds.
+    """Least-squares exponential-growth fit: |amplitude| ~
+    exp(intercept)*exp(gamma*t), i.e. ln|amplitude| = gamma*t + intercept,
+    fit against real time in seconds.
 
-    ``gamma`` is always physical (1/s), independent of whatever units a
-    plot's x-axis happens to display (step index, or time in microseconds)
-    -- growth rate is only meaningful against real time, so it is computed
-    once here and reused unchanged everywhere it's shown.
+    gamma is always physical (1/s), independent of a plot's x-axis units
+    (step index vs. microseconds) -- computed once here, reused unchanged
+    everywhere shown.
     """
 
     gamma: float
@@ -231,10 +216,9 @@ class GrowthFit:
 
 
 def fit_growth_rate(t: Sequence[float], y: Sequence[float]) -> GrowthFit | None:
-    """Least-squares fit of ``ln(y)`` vs ``t``. ``None`` if fewer than 2
-    finite, positive-``y`` points survive -- not enough to fit a line
-    through, and ``ln`` of a non-positive amplitude is undefined.
-    """
+    """Least-squares fit of ln(y) vs t. None if fewer than 2 finite,
+    positive-y points survive (not enough to fit a line; ln of a
+    non-positive amplitude is undefined)."""
     t_arr = np.asarray(t, dtype=float)
     y_arr = np.asarray(y, dtype=float)
     mask = np.isfinite(t_arr) & np.isfinite(y_arr) & (y_arr > 0)
@@ -252,18 +236,15 @@ def growth_rate_series(
     *,
     step_range: tuple[int, int] | None = None,
 ) -> dict[ModeKey, GrowthFit]:
-    """One :class:`GrowthFit` per mode in ``series``, fit against
-    ``true_times`` (seconds, one per ``steps`` entry, same alignment as
-    :func:`max_amplitude_series`'s output).
+    """One GrowthFit per mode in `series`, fit against true_times (seconds,
+    one per `steps` entry, same alignment as max_amplitude_series's output).
 
-    ``step_range``, if given, restricts the fit to steps within
-    ``[start, end]`` inclusive -- picking the visually-linear region of a
-    growth curve, since points near the noise floor (pre-growth) or past
-    saturation bias a whole-range least-squares fit. ``None`` (default)
-    uses every step in ``steps``.
+    step_range, if given, restricts the fit to [start, end] inclusive --
+    picks the visually-linear region, since noise-floor or post-saturation
+    points bias a whole-range fit. None (default) uses every step.
 
-    A mode with fewer than 2 valid points inside the window is silently
-    omitted from the result rather than given a meaningless fit.
+    A mode with fewer than 2 valid points in the window is omitted, not
+    given a meaningless fit.
     """
     steps_arr = np.asarray(steps)
     t = np.asarray(true_times, dtype=float)
@@ -282,11 +263,9 @@ def growth_rate_series(
 
 
 def format_growth_rates(fits: Mapping[ModeKey, GrowthFit]) -> str:
-    """A human-readable table, sorted by ``(variable, m, n)`` -- ``m``
-    before ``n`` to match the ``[m, n]`` convention ``cases.toml``'s
-    ``four_modes`` field uses. What ``plot --diag four`` writes to
-    ``four_dir/growth_rates.txt``.
-    """
+    """Human-readable table, sorted by (variable, m, n) -- m before n to
+    match cases.toml's four_modes [m, n] convention. Written by
+    `plot --diag four` to four_dir/growth_rates.txt."""
     header = f"{'variable':<12}{'m':>4}{'n':>4}{'gamma [1/s]':>18}{'n_points':>10}"
     lines = [header]
     for var, n, m in sorted(fits, key=lambda k: (k[0], k[2], k[1])):

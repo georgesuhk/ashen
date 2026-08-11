@@ -1,15 +1,13 @@
 """Radial profile extraction via jorek2_postproc.
 
-Ports ``castor3d/util/diagnostics/gather_profiles.py``'s ``run_single_var``
-and ``get_postproc_profiles``. Staging and execution now go through
-:func:`ashen.jorek2.run_tool` instead of a second hand-rolled
-``shell=True`` subprocess call.
+Ports gather_profiles.py's run_single_var and get_postproc_profiles;
+staging/execution now goes through jorek2.run_tool, not a second hand-
+rolled shell=True subprocess call.
 
-Drawing lives in :mod:`ashen.plotting.profiles`, which consumes the ``.npz``
-caches written here via :func:`read_profile_series`. ``postproc_get_q``
-(the derived q-profile half of the legacy ``plot_postproc_profs``, and the
-``dJ/dr``-at-the-q=2-surface scatter buried inside it) is still not ported --
-see ``ashen/KNOWN_ISSUES.md`` #8.
+Drawing lives in ashen.plotting.profiles, reading the .npz caches written
+here via read_profile_series. Not yet ported: postproc_get_q (legacy
+plot_postproc_profs's derived-q-profile half, incl. the dJ/dr-at-q=2
+scatter) -- KNOWN_ISSUES.md #8.
 """
 
 from __future__ import annotations
@@ -31,14 +29,12 @@ __all__ = [
     "TOR_MODES",
 ]
 
-#: Postproc command -> the output filename prefix it writes under ``postproc/``.
-#:
-#: The three midplane variants are distinct commands with distinct output
-#: names (``exec_commands.f90:1332-1345``), not one command with an option:
-#: bare ``midplane`` is ``BOTH_SIDES``, so its cut crosses the magnetic axis
-#: and ``Psi_N`` runs 1 -> 0 -> 1 along it -- double-valued, and useless as a
-#: radial coordinate. ``midplane outer`` (LFS only) is the one to use when
-#: ``coords_var = "Psi_N"``.
+#: Postproc command -> output filename prefix under postproc/. The 3
+#: midplane variants are distinct commands with distinct outputs
+#: (exec_commands.f90:1332-1345), not one command with an option: bare
+#: "midplane" is BOTH_SIDES, crosses the magnetic axis, Psi_N runs
+#: 1->0->1 (double-valued, useless as a radial coord). Use "midplane
+#: outer" (LFS only) when coords_var="Psi_N".
 _TOR_MODE_PREFIX = {
     "average": "exprs_averaged_s",
     "midplane": "exprs_midplane_s",
@@ -49,9 +45,9 @@ _TOR_MODE_PREFIX = {
 #: The valid ``tor_mode`` values, for config validation in ashen.cases.
 TOR_MODES: tuple[str, ...] = tuple(_TOR_MODE_PREFIX)
 
-#: Compound variables that aren't real jorek2_postproc outputs -- they're
-#: derived downstream (e.g. q from r_minor/Btheta/Btor) from these components.
-#: Ports the two ad hoc expansions in gather_profiles.py:96-106.
+#: Compound variables that aren't real jorek2_postproc outputs -- derived
+#: downstream from these components (e.g. q from r_minor/Btheta/Btor).
+#: Ports gather_profiles.py:96-106's two ad hoc expansions.
 _COMPOUND_VARS = {
     "q": ("r_minor", "Btheta", "Btor"),
     "Jgrad": ("currdens", "Btheta", "Btor", "r_minor"),
@@ -84,17 +80,15 @@ def extract_profile(
     deltaphi: float = 0.3,
     nsmallsteps: int = 3,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """One ``(step, var, tor_mode)`` triple. Ports ``gather_profiles.py:17``
-    ``run_single_var``.
+    """One (step, var, tor_mode) triple. Ports gather_profiles.py:17
+    run_single_var.
 
-    Stages the *actual* padded restart filename into the scratch dir (not
-    ``jorek_restart.h5``) and copies the exe alongside it, matching the
-    legacy behaviour exactly -- unlike Poincare tracing, this wasn't
-    confirmed to be safe to simplify, so it is preserved as-is.
+    Stages the actual padded restart filename (not jorek_restart.h5) and
+    copies the exe alongside it, matching legacy exactly -- unlike Poincare
+    tracing, not confirmed safe to simplify, so preserved as-is.
 
-    The ``surfaces``/``rad_range``/``nmaxsteps``/``deltaphi``/``nsmallsteps``
-    arguments only reach ``average`` (see :func:`ashen.postproc.
-    profile_script`); the midplane family ignores them and uses ``n_points``.
+    surfaces/rad_range/nmaxsteps/deltaphi/nsmallsteps only reach `average`
+    (postproc.profile_script); midplane family ignores them, uses n_points.
     """
     if tor_mode not in _TOR_MODE_PREFIX:
         raise ValueError(
@@ -148,31 +142,26 @@ def gather_profiles(
     nsmallsteps: int = 3,
     on_progress: Callable[[int, int, int, str, str], None] | None = None,
 ) -> dict[str, int]:
-    """Gathers every ``(step, var, tor_mode)`` profile in parallel, caching
-    each via :meth:`ashen.paths.RunPaths.profile_cache`. Ports
-    ``gather_profiles.py:89`` ``get_postproc_profiles``, extended to several
-    modes at once.
+    """Gathers every (step, var, tor_mode) profile in parallel, caching each
+    via RunPaths.profile_cache. Ports gather_profiles.py:89
+    get_postproc_profiles, extended to several modes at once.
 
-    Returns ``{tor_mode: n_succeeded}`` so the caller can tell a mode that
-    partly worked from one that never worked at all.
+    Returns {tor_mode: n_succeeded} so a partly-working mode is
+    distinguishable from one that never worked.
 
-    **A failing step no longer aborts the whole gather.** ``average`` does
-    real field-line tracing, and a trace that fails hits a hard Fortran
-    ``stop`` (``mod_straight_field_line.f90:518``) rather than returning an
-    error -- so ``jorek2_postproc`` exits non-zero and :func:`ashen.jorek2.
-    run_tool` raises :class:`~ashen.jorek2.Jorek2Error`. That is the *normal*
-    outcome for late steps of a nonlinear run, where the flux surfaces the
-    average is defined on no longer exist (see ``KNOWN_ISSUES.md`` #9), so it
-    is caught per task, warned about, and stepped over. Where the average
-    stops succeeding is itself the physics signal.
+    A failing step no longer aborts the whole gather. `average` does real
+    field-line tracing; a failed trace hits a hard Fortran stop
+    (mod_straight_field_line.f90:518), so jorek2_postproc exits non-zero and
+    run_tool raises Jorek2Error -- the normal outcome for late nonlinear-run
+    steps once the average's flux surfaces stop existing (KNOWN_ISSUES.md
+    #9). Caught per task, warned, stepped over -- where `average` stops
+    succeeding IS the physics signal.
 
-    ``force`` replaces the legacy ``force_data = True`` hardcoded at
-    ``analysis.py:76`` (which meant every diagnostic always re-ran, cache or
-    not) with a real opt-in flag.
+    `force` replaces legacy analysis.py:76's hardcoded force_data=True
+    (every diagnostic always re-ran) with a real opt-in flag.
 
-    ``on_progress(done, total, step, var, tor_mode)``, if given, fires as
-    each task finishes -- in completion order, not submission order, since
-    that's the only order a process pool can report in.
+    on_progress(done, total, step, var, tor_mode), if given, fires in
+    completion order (the only order a process pool can report).
     """
     if isinstance(tor_modes, str):
         tor_modes = [tor_modes]
@@ -265,13 +254,12 @@ def read_profile_series(
     var: str,
     tor_mode: str = "midplane",
 ) -> dict[int, tuple[np.ndarray, np.ndarray]]:
-    """``{step: (x, y)}`` from the cached ``.npz`` profiles.
+    """{step: (x, y)} from the cached .npz profiles.
 
-    A step with no cache is simply absent from the result rather than
-    ``nan``-filled: unlike a mode-amplitude time series, where a gap has to
-    line up with its neighbours on a shared time axis, each profile here is
-    an independent curve, so "not gathered" and "gathered as empty" stay
-    distinguishable by just not drawing a line.
+    A step with no cache is absent, not nan-filled: unlike a mode-amplitude
+    series needing a shared time axis, each profile here is an independent
+    curve, so "not gathered" and "gathered empty" stay distinguishable by
+    just not drawing a line.
     """
     series: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     for step in steps:
@@ -286,21 +274,18 @@ def read_profile_series(
 def edge_toroidal_field(
     paths: RunPaths, *, step: int = 0, psi_n: float = 1.0
 ) -> float | None:
-    """``Btor`` interpolated to ``psi_n`` (the plasma edge by default) from
-    the cached midplane profile at ``step`` (the initial equilibrium by
-    default) -- a fixed reference field for normalising a perturbation
-    amplitude, independent of the axis-based :func:`ashen.logfile.b_axis`.
+    """Btor interpolated to psi_n (plasma edge by default) from the cached
+    midplane profile at `step` (initial equilibrium by default) -- a fixed
+    reference field for normalising a perturbation amplitude, independent
+    of the axis-based logfile.b_axis.
 
-    Uses ``"midplane outer"``, not bare ``"midplane"``: with
-    ``coords_var = "Psi_N"``, bare midplane crosses the magnetic axis and
-    ``Psi_N`` runs ``1 -> 0 -> 1`` along it, double-valued and useless as an
-    interpolation axis (see the module docstring's ``_TOR_MODE_PREFIX`` note).
+    Uses "midplane outer", not bare "midplane": with coords_var="Psi_N",
+    bare midplane crosses the axis, Psi_N runs 1->0->1 (double-valued,
+    useless as an interpolation axis; see _TOR_MODE_PREFIX above).
 
-    ``None`` if that profile hasn't been gathered
-    (``analyse --diag profiles`` needs ``"Btor"`` in the case's profile
-    ``vars``, with ``tor_mode`` including ``"midplane outer"``, for ``step``)
-    -- the caller decides how to report that, same convention as a missing
-    logfile field.
+    None if that profile hasn't been gathered (needs "Btor" in the case's
+    profile vars, tor_mode incl. "midplane outer", for `step`) -- caller
+    decides how to report, same convention as a missing logfile field.
     """
     cache = paths.profile_cache("Psi_N", "Btor", step, "midplane outer")
     if not cache.is_file():
@@ -321,20 +306,17 @@ def ensure_edge_toroidal_field(
     psi_n: float = 1.0,
     n_points: int = 100,
 ) -> float | None:
-    """:func:`edge_toroidal_field`, gathering the underlying ``Btor``
-    ``"midplane outer"`` profile first if it isn't cached yet.
+    """edge_toroidal_field, gathering the Btor "midplane outer" profile
+    first if not cached yet.
 
-    Runs a single ``jorek2_postproc`` call (via :func:`gather_profiles`, one
-    ``(step, "Btor", "midplane outer")`` task) rather than requiring a
-    separate ``analyse --diag profiles`` pass -- unlike the rest of
-    ``bin/plot`` (see the module docstring), this one lookup is cheap and
-    single-valued, so gathering it on demand at plot time doesn't blur
-    `analyse`/`plot`'s slow-batch/fast-iterative split the way gathering a
-    whole profile diagnostic on demand would.
+    Runs a single jorek2_postproc call (gather_profiles, one (step, "Btor",
+    "midplane outer") task) instead of requiring a separate `analyse
+    --diag profiles` pass -- cheap/single-valued enough that gathering it
+    on demand doesn't blur plot's slow-batch/fast-iterative split (see
+    cli/plot's module docstring) the way a whole profile diagnostic would.
 
-    ``None`` if the restart at ``step`` doesn't exist or the tool fails --
-    :func:`gather_profiles` already warns and skips per-task rather than
-    raising, so nothing further to catch here.
+    None if the restart at `step` doesn't exist or the tool fails --
+    gather_profiles already warns and skips per-task, nothing further to catch.
     """
     value = edge_toroidal_field(paths, step=step, psi_n=psi_n)
     if value is not None:
