@@ -1,52 +1,43 @@
 """Field-line Poincare tracing via jorek2_poincare.
 
-Ports ``castor3d/util/diagnostics/poinc_diag.py``, but inverts how the work is
-parallelised and cached.
+Ports castor3d/util/diagnostics/poinc_diag.py; inverts parallelism/caching.
 
-**Parallelism.** The legacy code (and Phase 4's faithful port of it) launched
-one ``jorek2_poincare`` process *per field line* -- ``n_lines = 1`` in every
-``stpts``, so 96 processes per step with a 12-psi_n, 8-sample scan. Each one
-independently copied the restart ``.h5`` and redid the tool's O(N^2)
-element-neighbour scan (``jorek2_poincare.f90:60-70``) before tracing a single
-line, while the tool's own OpenMP loop over field lines (``.f90:204-212``) sat
-unused. Here one invocation per step traces *all* that step's pending lines,
-with ``OMP_NUM_THREADS`` set explicitly, and :func:`run_poincare_scan` fans out
-across steps -- which the legacy code did strictly serially.
+Parallelism: legacy launched 1 jorek2_poincare process per field line
+(n_lines=1 per stpts -> 96 procs/step for a 12-psi_n x 8-sample scan), each
+redoing the tool's O(N^2) element-neighbour scan (jorek2_poincare.f90:60-70)
+and never using its own OpenMP line loop (.f90:204-212). Here: 1 invocation/
+step traces all pending lines (OMP_NUM_THREADS set explicitly);
+run_poincare_scan fans out across steps (legacy did this serially).
+jorek2_poincare has no MPI (see config.Diagnostics).
 
-``jorek2_poincare`` has no MPI at all; see :class:`ashen.config.Diagnostics`.
+Demultiplexing: all lines share one poinc_R-Z.dat / poinc_rho-theta.dat,
+blocks separated by double blank lines (.f90:457-460 -- write(21,*) called
+twice unconditionally, so even a 0-point line gets a blank-blank pair;
+_split_blocks depends on "double" not "single"). Writes happen inside
+!$omp critical in thread-completion order, not line order (.f90:450-455),
+so block position != line identity. The same critical section prints
+"=> Line{i:6d}:{ip:6d} points" (.f90:449); _demux_blocks uses that to
+assign blocks and raises on any disagreement -- a wrong assignment would be
+near-invisible corruption.
 
-**Demultiplexing.** All lines share one ``poinc_R-Z.dat`` / one
-``poinc_rho-theta.dat``, separated by double blank lines (``.f90:457-460``,
-``write(21,*)`` called twice unconditionally -- see :func:`_split_blocks` for
-why "double", not "single", matters: a 0-point line writes no data but still
-gets its blank-blank pair). The writes happen inside ``!$omp critical`` in
-**thread-completion order, not line order** (``.f90:450-455``), so a block's
-position does *not* identify its line. The same critical section prints
-``=> Line{i:6d}:{ip:6d} points`` (``.f90:449``), and :func:`_demux_blocks`
-uses that to assign blocks, refusing to guess if the two disagree. Assigning
-traces to the wrong starting positions would be an near-invisible corruption,
-so every mismatch raises.
+Incremental caching: work planned per line against poincare_cache, so
+widening psi_n_in traces only new positions, raising n_turns traces only
+the shortfall.
 
-**Incremental caching.** Work is planned per line against the existing cache
-(:mod:`ashen.diagnostics.poincare_cache`), so widening ``psi_n_in`` traces only
-the new positions and raising ``n_turns`` traces only the shortfall.
+Resuming is valid: jorek2_poincare advances n_phi=1500 substeps = exactly
+one toroidal period (.f90:162-163) before recording a puncture
+(.f90:441-455), so every puncture is on the same toroidal plane --
+restarting from the last puncture with the original phi_start continues
+the same trajectory. Caveat: for stochastic lines the resumed trajectory
+diverges from an uninterrupted trace of equal length (exponential
+sensitivity + element re-located from written-out R,Z) -- same field/
+invariant set, so Poincare plots/island widths/diffusion stats are
+unaffected, but not bit-reproducible. Records carry n_segments so a
+stitched trace is identifiable.
 
-**Resuming is valid.** ``jorek2_poincare`` advances ``n_phi = 1500`` substeps
-totalling exactly one toroidal period (``.f90:162-163``) and only then records
-a puncture (``.f90:441-455``), so every puncture lies on the *same* toroidal
-plane. Restarting a line at its last puncture with its original ``phi_start``
-continues the same trajectory. Caveat, stated rather than hidden: for
-stochastic lines the resumed trajectory diverges from an uninterrupted trace of
-the same total length (exponential sensitivity, plus the element is re-located
-from a written-out ``R, Z``). It samples the same field and the same invariant
-set -- Poincare plots, island widths and diffusion statistics are unaffected --
-but it is not bit-reproducible against a single long trace. Records carry
-``n_segments`` so a stitched trace is always identifiable.
-
-**Not ported in this pass**: the plotting functions (``plot_poincare``,
-``plot_field_line_diffusion``, ``plot_connection_length``, ``get_island_width``)
-in ``castor3d/util/data_jorek.py``, which read the old ``.npz`` format and
-cannot read this cache -- see ``ashen/KNOWN_ISSUES.md`` #4 and #5.
+Not ported: data_jorek.py's plot_poincare/plot_field_line_diffusion/
+plot_connection_length/get_island_width -- they read the old .npz format,
+incompatible with this cache (KNOWN_ISSUES.md #4, #5).
 """
 
 from __future__ import annotations
