@@ -285,6 +285,7 @@ def _plot_connection_length(
     smooth: bool,
     dpi: int | None,
     psi_range: tuple[float, float] | None = None,
+    n_workers: int = 1,
 ) -> None:
     real_psi_edge = read_float(paths.real_psi_edge)
     try:
@@ -307,7 +308,7 @@ def _plot_connection_length(
         records_by_step, steps, psi_n_targets, real_psi_edge=real_psi_edge, R0=R0
     )
 
-    true_times = _read_true_times(case, paths, steps)
+    true_times = _read_true_times(case, paths, steps, n_workers=n_workers)
 
     kwargs = _dpi_kwargs(dpi)
     for plot_true_times in (True, False):
@@ -340,7 +341,9 @@ def _zero_d_is_usable(path: Path) -> bool:
     return True
 
 
-def _ensure_zero_d(case: Case, paths: RunPaths, steps: list[int]) -> None:
+def _ensure_zero_d(
+    case: Case, paths: RunPaths, steps: list[int], *, n_workers: int = 1
+) -> None:
     """Gather the zeroD cache for whichever `steps` lack a usable one --
     absent or unparseable (_zero_d_is_usable).
 
@@ -357,6 +360,10 @@ def _ensure_zero_d(case: Case, paths: RunPaths, steps: list[int]) -> None:
     isn't symlinked in) is reported and skipped, not raised -- one step's
     failure only drops that step from the eventual axis, doesn't abort
     every other diag this invocation also asked for.
+
+    n_workers > 1 fans missing steps out across processes, same shape as
+    _plot_poincare's rendering pool -- each zeroD call is its own
+    jorek2_postproc invocation, independent of every other step.
     """
     missing = [step for step in steps if not _zero_d_is_usable(paths.zero_d(step))]
     if not missing:
@@ -367,27 +374,45 @@ def _ensure_zero_d(case: Case, paths: RunPaths, steps: list[int]) -> None:
         run_dir=paths.run_dir, exe_dir=paths.run_dir,
         namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
     )
-    for step in missing:
-        try:
-            run_zero_d(jrun, step, paths)
-        except (FileNotFoundError, Jorek2Error) as exc:
-            print(f"  zerod: step {step} skipped ({exc})")
-        else:
+
+    if n_workers <= 1 or len(missing) <= 1:
+        for step in missing:
+            try:
+                run_zero_d(jrun, step, paths)
+            except (FileNotFoundError, Jorek2Error) as exc:
+                print(f"  zerod: step {step} skipped ({exc})")
+            else:
+                print(f"  zerod: step {step} done")
+        return
+
+    one = partial(run_zero_d, jrun, paths=paths)
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(one, step): step for step in missing}
+        for future in as_completed(futures):
+            step = futures[future]
+            try:
+                future.result()
+            except (FileNotFoundError, Jorek2Error) as exc:
+                print(f"  zerod: step {step} skipped ({exc})")
+                continue
             print(f"  zerod: step {step} done")
 
 
-def _read_true_times(case: Case, paths: RunPaths, steps: list[int]) -> list[float] | None:
+def _read_true_times(
+    case: Case, paths: RunPaths, steps: list[int], *, n_workers: int = 1
+) -> list[float] | None:
     """Each step's true time (seconds) from the zeroD cache, gathering
-    missing ones first (_ensure_zero_d). Still None if any requested
-    step's cache is missing/unreadable after that -- a genuinely-missing
-    restart can't be gathered, and a partial time axis is worse than none.
+    missing ones first (_ensure_zero_d, in parallel if n_workers > 1).
+    Still None if any requested step's cache is missing/unreadable after
+    that -- a genuinely-missing restart can't be gathered, and a partial
+    time axis is worse than none.
 
     ValueError covers a cache that's empty/truncated or unparseable
     (postproc.read_zeroD) -- the same case _zero_d_is_usable already tried
     to re-gather; kept here so a failed re-gather degrades to skipping the
     time axis rather than aborting every other diag.
     """
-    _ensure_zero_d(case, paths, steps)
+    _ensure_zero_d(case, paths, steps, n_workers=n_workers)
     true_times = []
     for step in steps:
         try:
@@ -428,7 +453,8 @@ def _value_at_step(series: dict, variable: str, steps: list[int], step: int) -> 
 
 
 def _plot_four_modes(
-    case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None
+    case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None,
+    n_workers: int = 1,
 ) -> None:
     want_max = "max" in case.four_quantities
     want_rational = "rational_surface" in case.four_quantities
@@ -552,7 +578,7 @@ def _plot_four_modes(
     # rather than picking one): "step" always works, "time" only if the
     # zeroD cache covers every requested step.
     variants = [("step", list(steps), "Time step")]
-    true_times = _read_true_times(case, paths, steps)
+    true_times = _read_true_times(case, paths, steps, n_workers=n_workers)
     if true_times is not None:
         variants.append(("time", [t * 1e6 for t in true_times], r"t [$\mu s$]"))
     else:
@@ -589,7 +615,9 @@ def _plot_four_modes(
     # be gathered (e.g. its restart doesn't exist).
     deconfinement_time_us = None
     if case.four_deconfinement_step is not None:
-        step_time = _read_true_times(case, paths, [case.four_deconfinement_step])
+        step_time = _read_true_times(
+            case, paths, [case.four_deconfinement_step], n_workers=n_workers
+        )
         if step_time is None:
             print(f"  skipping deconfinement-time marker: no zeroD cache for step "
                   f"{case.four_deconfinement_step} (run analyse --diag zerod)")
@@ -647,7 +675,9 @@ def _plot_four_modes(
             print(f"  {out}")
 
 
-def _plot_profiles(case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None) -> None:
+def _plot_profiles(
+    case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1
+) -> None:
     """One figure per variable: a panel per ``tor_mode``, a curve per step.
 
     Colour carries true time where the zeroD cache allows it, falling back to
@@ -660,7 +690,7 @@ def _plot_profiles(case: Case, paths: RunPaths, steps: list[int], *, dpi: int | 
         print("  no vars configured for this case; nothing to plot")
         return
 
-    true_times = _read_true_times(case, paths, steps)
+    true_times = _read_true_times(case, paths, steps, n_workers=n_workers)
     if true_times is not None:
         color_by = {step: t * 1e6 for step, t in zip(steps, true_times)}
         color_label = r"t [$\mu s$]"
@@ -1093,12 +1123,17 @@ def _run_case(
         # already has) -- it never gathers new data on its own.
         _plot_connection_length(
             case, paths, steps or case.steps_for("connection_length"),
-            log=log, smooth=smooth, dpi=dpi, psi_range=psi_range,
+            log=log, smooth=smooth, dpi=dpi, psi_range=psi_range, n_workers=n_workers,
         )
     if "four" in diags:
-        _plot_four_modes(case, paths, steps or case.steps_for("four"), log=four_log, dpi=dpi)
+        _plot_four_modes(
+            case, paths, steps or case.steps_for("four"), log=four_log, dpi=dpi,
+            n_workers=n_workers,
+        )
     if "profiles" in diags:
-        _plot_profiles(case, paths, steps or case.steps_for("profiles"), dpi=dpi)
+        _plot_profiles(
+            case, paths, steps or case.steps_for("profiles"), dpi=dpi, n_workers=n_workers,
+        )
     if "theta_hist" in diags:
         _plot_theta_hist(
             case, paths, steps or case.steps_for("theta_hist"),
