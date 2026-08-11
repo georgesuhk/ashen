@@ -1,22 +1,18 @@
 """One runner for JOREK's own postprocessing tools (jorek2_postproc,
 jorek2_poincare, and -- not wired up yet -- jorek2vtk).
 
-Today the "stage a scratch dir, run a jorek2_* tool, collect outputs" dance is
-written out three separate times: ``poinc_diag.py:74`` ``run_single``,
-``gather_profiles.py:17`` ``run_single_var``, and ``data_jorek.py:719``
-``get_zeroDs_at_t`` (the last of which turns out not to need staging at all --
-see :func:`run_zero_d`). :func:`run_tool` extracts the shared shape once,
-using ``poinc_diag.py``'s version as the template since it already avoids
-``shell=True`` by piping the control input through a real file object;
-``gather_profiles.py:70`` used ``subprocess.run(f"{exe} < ...", shell=True)``,
-which is POSIX-only.
+Legacy wrote the "stage scratch dir, run tool, collect outputs" dance 3x:
+poinc_diag.py:74 run_single, gather_profiles.py:17 run_single_var,
+data_jorek.py:719 get_zeroDs_at_t (which turns out not to need staging at
+all -- see run_zero_d). run_tool extracts the shared shape once, using
+poinc_diag.py's version as template since it already avoids shell=True by
+piping control input through a real file object; gather_profiles.py:70
+used subprocess.run(f"{exe} < ...", shell=True), POSIX-only.
 
-**Fix applied here (flagged in the refactor plan's verification section):**
-the legacy ``run_single`` wraps its output-parsing in a bare
-``try/except: pass`` and returns an array of ``None``s on failure
-(``poinc_diag.py:124-130``), silently discarding a tool crash. Here a
-non-zero exit or a missing expected output raises :class:`Jorek2Error` naming
-the tool, the step, and the run directory.
+Fix vs. legacy: run_single wraps output-parsing in a bare try/except: pass
+and returns an array of Nones on failure (poinc_diag.py:124-130), silently
+discarding a tool crash. Here a non-zero exit or missing expected output
+raises Jorek2Error naming the tool, step, and run directory.
 """
 
 from __future__ import annotations
@@ -43,27 +39,25 @@ class Jorek2Error(RuntimeError):
 class MissingRestartError(FileNotFoundError):
     """The restart file for a requested step doesn't exist.
 
-    Distinguished from a bare :class:`FileNotFoundError` (e.g. a missing
-    executable) so per-step gather loops can catch this specifically, warn,
-    and move on to the next step instead of aborting the whole scan.
+    Distinguished from a bare FileNotFoundError (e.g. missing executable)
+    so per-step gather loops can catch this specifically, warn, and move
+    on instead of aborting the whole scan.
     """
 
 
 @dataclass(frozen=True)
 class ToolResult:
-    """What one :func:`run_tool` invocation produced.
+    """What one run_tool invocation produced.
 
-    ``outputs`` maps each *requested* output path to where it was copied.
-    ``stdout`` is empty unless ``capture_stdout=True`` -- it matters for
-    ``jorek2_poincare``, whose per-line progress messages are the only way to
-    tell which output block belongs to which field line (see
-    :mod:`ashen.diagnostics.poincare`).
+    outputs maps each requested output path to where it was copied. stdout
+    is empty unless capture_stdout=True -- matters for jorek2_poincare,
+    whose per-line progress messages are the only way to tell which output
+    block belongs to which field line (diagnostics.poincare).
 
-    ``stderr`` is always captured (it is quoted when a tool exits non-zero)
-    and is kept here on success too: which stream a Fortran ``write(*,...)``
-    lands on is not guaranteed across builds and launchers, so a caller
-    scraping the tool's own log should look at :attr:`log` rather than
-    ``stdout`` alone.
+    stderr is always captured (quoted on non-zero exit) and kept here on
+    success too: which stream a Fortran write(*,...) lands on isn't
+    guaranteed across builds/launchers, so a caller scraping the tool's
+    log should use `log`, not stdout alone.
     """
 
     outputs: dict[str, Path]
@@ -73,11 +67,9 @@ class ToolResult:
     @property
     def log(self) -> str:
         """Both captured streams, for scraping the tool's progress messages.
-
-        Concatenated rather than interleaved -- the true interleaving is lost
-        once they're two pipes, and every consumer here matches per-line
-        patterns rather than depending on cross-stream ordering.
-        """
+        Concatenated, not interleaved -- true interleaving is lost once
+        they're two pipes; every consumer here matches per-line patterns,
+        not cross-stream ordering."""
         return self.stdout + ("\n" if self.stdout and self.stderr else "") + self.stderr
 
     # Ergonomics: run_tool used to return the mapping directly, and most
@@ -93,10 +85,9 @@ class ToolResult:
 class Jorek2Run:
     """Where to find one run's inputs for staging into a jorek2_* scratch dir.
 
-    ``exe_dir`` is usually ``run_dir`` itself -- the jorek2_* tools are
-    symlinked into every prepared run folder (see
-    :func:`ashen.runner.prepare_run`) -- but is kept separate since nothing
-    here requires that.
+    exe_dir is usually run_dir itself (jorek2_* tools are symlinked into
+    every prepared run folder, runner.prepare_run) but kept separate since
+    nothing here requires that.
     """
 
     run_dir: Path
@@ -127,42 +118,38 @@ def run_tool(
 ) -> ToolResult:
     """Stage inputs for one jorek2_* invocation, run it, collect outputs.
 
-    A fresh temporary directory gets: the restart file for ``step`` (named
-    ``restart_name`` -- ``jorek2_poincare`` wants the fixed name
-    ``jorek_restart.h5``, but ``jorek2_postproc`` (via
-    :func:`ashen.diagnostics.profiles.extract_profile`) is called with the
-    real padded filename, matching ``gather_profiles.py:46``), the namelist,
-    this run's profile files, and anything in ``extra_files`` (e.g. a
-    Poincaré ``stpts`` starting-point file).
+    A fresh temp dir gets: the restart file for `step` (named restart_name
+    -- jorek2_poincare wants fixed name jorek_restart.h5, but
+    jorek2_postproc, via diagnostics.profiles.extract_profile, is called
+    with the real padded filename, matching gather_profiles.py:46), the
+    namelist, this run's profile files, and anything in extra_files (e.g.
+    a Poincare stpts starting-point file).
 
-    Exactly one of ``stdin_text`` (a control script, e.g. from
-    :mod:`ashen.postproc`) or ``stdin_is_namelist=True`` (pipe the copied
-    namelist itself -- what ``jorek2_poincare`` expects) must be given.
+    Exactly one of stdin_text (a control script, e.g. from ashen.postproc)
+    or stdin_is_namelist=True (pipe the copied namelist itself -- what
+    jorek2_poincare expects) must be given.
 
-    Every path in ``outputs`` (relative to the scratch dir, e.g.
-    ``"postproc/exprs_midplane_s005000.dat"``) is copied into ``dest_dir``
-    before the scratch dir is discarded; the returned
-    :class:`ToolResult` maps the *requested* path to where it landed. Raises
-    :class:`Jorek2Error` if the tool exits non-zero or an expected output is
-    missing -- see the module docstring for why that matters here
-    specifically.
+    Every path in `outputs` (relative to the scratch dir, e.g.
+    "postproc/exprs_midplane_s005000.dat") is copied into dest_dir before
+    the scratch dir is discarded; the returned ToolResult maps the
+    requested path to where it landed. Raises Jorek2Error if the tool
+    exits non-zero or an expected output is missing (see module docstring).
 
-    ``output_glob``, if given, additionally collects every top-level file
-    matching that pattern -- for a tool like ``jorek2_four`` whose output
-    filenames depend on the model (which variables it carries) and the run's
-    own namelist (how many toroidal harmonics), so they can't be listed in
-    ``outputs`` ahead of time. Collected files are keyed by name in the same
-    ``ToolResult.outputs`` mapping. Raises :class:`Jorek2Error` if nothing
-    matches -- a tool that "succeeded" but produced none of its expected
-    output is exactly the silent failure this function exists to prevent.
+    output_glob, if given, additionally collects every top-level file
+    matching that pattern -- for a tool like jorek2_four whose output
+    filenames depend on the model (which variables it carries) and the
+    run's namelist (toroidal harmonic count), so they can't be listed in
+    `outputs` ahead of time. Collected files are keyed by name in the same
+    ToolResult.outputs mapping. Raises Jorek2Error if nothing matches -- a
+    tool that "succeeded" but produced none of its expected output is
+    exactly the silent failure this function exists to prevent.
 
-    ``env`` is merged over the parent environment for the child only. This is
-    how ``OMP_NUM_THREADS`` gets set per invocation instead of being inherited
-    from whatever the shell happens to have -- ``site.toml``'s
-    ``interactive_prelude`` exports ``OMP_NUM_THREADS=10``, which used to leak
-    into every one of the diagnostics' worker processes at once.
+    env is merged over the parent environment for the child only -- how
+    OMP_NUM_THREADS gets set per invocation instead of inherited from
+    whatever the shell has (site.toml's interactive_prelude exports
+    OMP_NUM_THREADS=10, which used to leak into every worker process at once).
 
-    ``capture_stdout`` returns the tool's stdout on the result rather than
+    capture_stdout returns the tool's stdout on the result instead of
     discarding it.
     """
     if stdin_text is None and not stdin_is_namelist:
@@ -259,31 +246,28 @@ def run_tool(
 def run_zero_d(
     run: Jorek2Run, step: int, paths: RunPaths, *, si_units: bool = True
 ) -> Path:
-    """zeroD_quantities for one step. Ports ``data_jorek.py:719``
-    ``get_zeroDs_at_t``.
+    """zeroD_quantities for one step. Ports data_jorek.py:719 get_zeroDs_at_t.
 
-    ``si_units=True`` (default, unchanged from before ``si_units`` existed)
-    runs ``jorek2_postproc`` **in place** in ``run_dir`` rather than a
-    scratch copy -- there is nothing to stage, since JOREK resolves
-    ``for step <t> do`` against the restart files already present in the run
-    folder, and the output (``postproc/zeroD_quantities_s<step>.dat``) is
-    meant to persist there as a cache, not be collected and discarded.
+    si_units=True (default) runs jorek2_postproc in place in run_dir, not a
+    scratch copy -- nothing to stage, since JOREK resolves `for step <t>
+    do` against restart files already in the run folder, and the output
+    (postproc/zeroD_quantities_s<step>.dat) is meant to persist as a
+    cache, not be collected and discarded.
 
-    The control script is written to a unique temp file rather than a fixed
-    name in ``run_dir`` -- ``analyse``'s zerod gathering now fans out across
-    processes sharing the same ``run_dir``, and a fixed name would let one
-    step's process overwrite another's script before it's read, exactly the
-    race :func:`ashen.diagnostics.poincare._write_flux_surface` was fixed for.
+    Control script is written to a unique temp file, not a fixed name in
+    run_dir -- analyse's zerod gathering fans out across processes sharing
+    run_dir, and a fixed name would let one step's process overwrite
+    another's script before it's read (same race poincare.
+    _write_flux_surface was fixed for).
 
-    ``si_units=False`` runs via :func:`run_tool`'s scratch copy instead: JOREK
-    writes to the same one fixed filename regardless of units mode
-    (``exec_commands.f90``'s ``zeroD_quantities`` hardcodes it, the units
-    toggle isn't reflected in the name), so running it in place would
-    silently clobber -- and then move away -- whatever SI cache
-    :func:`run_zero_d`'s default call already left at that path. A scratch
-    copy never touches ``run_dir/postproc/`` at all; only the final result is
-    copied out, to :meth:`ashen.paths.RunPaths.zero_d`'s ``si_units=False``
-    path, which the SI variant never uses.
+    si_units=False runs via run_tool's scratch copy instead: JOREK writes
+    the same one fixed filename regardless of units mode
+    (exec_commands.f90's zeroD_quantities hardcodes it, unaffected by the
+    units toggle), so running in place would silently clobber -- then move
+    away -- whatever SI cache the default call already left there. A
+    scratch copy never touches run_dir/postproc/ at all; only the final
+    result is copied out, to RunPaths.zero_d's si_units=False path, which
+    the SI variant never uses.
     """
     from ashen.postproc import zero_d_script
 

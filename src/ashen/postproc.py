@@ -1,14 +1,13 @@
 """Control scripts for jorek2_postproc, and parsers for JOREK's text outputs.
 
-Ports three near-identical string builders from ``basics.py``
-(``write_jorek_postproc_script:25``, ``write_postproc_get_flux_surface:79``,
-``write_postproc_get_zeroD_input:100``) and three readers from ``io.py``
-(``read_jorek_postproc:198``, ``parse_macroscopic_vars:140``,
-``read_zeroD:7``).
+Ports 3 near-identical string builders from basics.py
+(write_jorek_postproc_script:25, write_postproc_get_flux_surface:79,
+write_postproc_get_zeroD_input:100) and 3 readers from io.py
+(read_jorek_postproc:198, parse_macroscopic_vars:140, read_zeroD:7).
 
-The ``*_script`` functions here return the script text rather than writing a
-file directly -- :func:`ashen.jorek2.run_tool` stages it into the scratch
-directory itself, so building the text is a pure, testable function.
+The *_script functions return script text, not write a file directly --
+jorek2.run_tool stages it into the scratch dir itself, so building the
+text is a pure, testable function.
 """
 
 from __future__ import annotations
@@ -19,18 +18,18 @@ from pathlib import Path
 import numpy as np
 
 #: Fortran's fixed-width E/ES format drops the 'E' when a 3-digit exponent
-#: would overflow the field it budgeted for a 2-digit one -- e.g.
-#: "-1.114495214678738E-107" is written as "-1.114495214678738-107". Matches
-#: a trailing 2-3 digit signed exponent glued directly onto a preceding
-#: digit, so a real reinserted 'E' can be re-parsed by float().
+#: would overflow the field budgeted for a 2-digit one -- e.g.
+#: "-1.114495214678738E-107" is written as "-1.114495214678738-107".
+#: Matches a trailing 2-3 digit signed exponent glued onto a preceding
+#: digit, so a reinserted 'E' can be re-parsed by float().
 _MISSING_EXPONENT_RE = re.compile(r"(?<=[0-9])([+-]\d{2,3})$")
 
 
 def _parse_fortran_float(token: str) -> float:
-    """``float()``, tolerating Fortran's dropped-'E' 3-digit-exponent quirk
-    (see :data:`_MISSING_EXPONENT_RE`) -- raises the original
-    :class:`ValueError` if the token still doesn't parse after that fix-up,
-    so a genuinely malformed value isn't silently swallowed.
+    """float(), tolerating Fortran's dropped-'E' 3-digit-exponent quirk
+    (_MISSING_EXPONENT_RE) -- raises the original ValueError if the token
+    still doesn't parse after the fix-up, so a genuinely malformed value
+    isn't silently swallowed.
     """
     try:
         return float(token)
@@ -64,25 +63,22 @@ def profile_script(
     deltaphi: float = 0.3,
     nsmallsteps: int = 3,
 ) -> str:
-    """Ports ``basics.py:25`` ``write_jorek_postproc_script``.
+    """Ports basics.py:25 write_jorek_postproc_script.
 
-    **The legacy version emitted the wrong knob for ``average``.** The
-    midplane family (``midplane``/``midplane outer``/``midplane inner``,
-    and ``pol_line``/``tor_line``) reads ``linepoints``
-    (``exec_commands.f90:1330``), but ``average`` reads ``surfaces``
-    (``exec_commands.f90:1771``) plus the field-line-tracing parameters
-    ``rad_range_min``/``rad_range_max``/``nmaxsteps``/``deltaphi``/
-    ``nsmallsteps`` (``:1772-1777``). ``basics.py:25`` only ever wrote
-    ``set linepoints``, so an ``average`` run silently ignored ``n_points``
-    and traced at whatever the built-in defaults were
-    (``jorek2_postproc.f90:44-51``).
+    Fix vs. legacy, which emitted the wrong knob for "average". The
+    midplane family (midplane/midplane outer/midplane inner, pol_line/
+    tor_line) reads linepoints (exec_commands.f90:1330), but average reads
+    surfaces (:1771) plus rad_range_min/rad_range_max/nmaxsteps/deltaphi/
+    nsmallsteps (:1772-1777). basics.py:25 only ever wrote `set
+    linepoints`, so an average run silently ignored n_points and traced at
+    jorek2_postproc.f90:44-51's built-in defaults.
 
-    That matters beyond tidiness: ``rad_range_max`` defaults to 0.999, i.e.
-    tracing right up to the separatrix, which is where ``trace_fieldlines``
-    is most likely to fail -- and its failure is a hard Fortran ``stop``
-    (``mod_straight_field_line.f90:518``) that kills the whole process, not
-    an error return. Pulling ``rad_range`` in to the still-nested core is
-    the main lever for getting a flux average out of a nonlinear run at all.
+    Matters beyond tidiness: rad_range_max defaults to 0.999 (tracing to
+    the separatrix), where trace_fieldlines is most likely to fail via a
+    hard Fortran stop (mod_straight_field_line.f90:518) that kills the
+    whole process, not an error return. Pulling rad_range into the
+    still-nested core is the main lever for getting a flux average out of
+    a nonlinear run at all.
     """
     if isinstance(variables, str):
         variables = [variables]
@@ -129,12 +125,11 @@ def flux_surface_script(namelist: str, step: int, psi_n: float, *, units: int = 
 
 
 def qprofile_script(namelist: str, step: int | str, *, units: int = 1) -> str:
-    """The ``jorek2_postproc`` ``qprofile`` command, one step at a time.
+    """The jorek2_postproc qprofile command, one step at a time.
 
-    Same shape as :func:`flux_surface_script` -- ``qprofile`` writes
-    ``Psi_n``/``q`` pairs to ``postproc/qprofile_s<step>.dat``
-    (``exec_commands.f90::qprofile``), single-step naming matching
-    :meth:`ashen.paths.RunPaths.qprofile`.
+    Same shape as flux_surface_script -- qprofile writes Psi_n/q pairs to
+    postproc/qprofile_s<step>.dat (exec_commands.f90::qprofile),
+    single-step naming matching RunPaths.qprofile.
     """
     lines = [
         f"namelist {namelist}",
@@ -148,17 +143,17 @@ def qprofile_script(namelist: str, step: int | str, *, units: int = 1) -> str:
 
 
 def zero_d_script(namelist: str, step: int | str, *, si_units: bool = True) -> str:
-    """Ports ``basics.py:100`` ``write_postproc_get_zeroD_input``.
+    """Ports basics.py:100 write_postproc_get_zeroD_input.
 
-    ``step`` is passed through as-is -- the legacy caller
-    (``data_jorek.py:719`` ``get_zeroDs_at_t``) passes the zero-padded string
-    form, not the raw int, so this preserves that rather than reformatting it.
+    `step` is passed through as-is -- legacy caller data_jorek.py:719
+    get_zeroDs_at_t passes the zero-padded string form, not the raw int,
+    preserved rather than reformatted.
 
-    ``si_units=False`` emits ``jorek-units`` instead of ``si-units``
-    (``exec_commands.f90``'s explicit opposite of the default toggle) --
-    every ``0D_quantities`` column, including ``Time``, comes back in
-    JOREK's own code units instead of SI. See
-    :mod:`ashen.diagnostics.timestep` for the caller that wants both.
+    si_units=False emits jorek-units instead of si-units
+    (exec_commands.f90's explicit opposite of the default toggle) -- every
+    0D_quantities column, including Time, comes back in JOREK's own code
+    units instead of SI. See diagnostics.timestep for the caller that
+    wants both.
     """
     lines = [
         f"namelist {namelist}",
@@ -172,17 +167,17 @@ def zero_d_script(namelist: str, step: int | str, *, si_units: bool = True) -> s
 
 
 def read_zeroD(path: Path | str) -> dict[str, float]:
-    """Ports ``io.py:7`` ``read_zeroD``.
+    """Ports io.py:7 read_zeroD.
 
-    Raises :class:`ValueError` if the file doesn't carry both a header line
-    and a data row. ``jorek2_postproc`` leaves an empty or header-only file
-    behind when it's interrupted, or when it produces no output for a step --
-    and such a file is indistinguishable from a good one by existence alone,
-    so callers that probe with ``is_file()`` need this to fail loudly and
-    catchably rather than with a bare ``IndexError`` from ``lines[1]``.
+    Raises ValueError if the file lacks both a header line and a data row.
+    jorek2_postproc leaves an empty/header-only file behind when
+    interrupted, or when it produces no output for a step -- indistinguishable
+    from a good file by existence alone, so callers probing with is_file()
+    need this to fail loudly and catchably, not with a bare IndexError
+    from lines[1].
 
-    Blank lines are ignored rather than counted, so a trailing newline or a
-    blank line between the header and the data doesn't look like data.
+    Blank lines are ignored, not counted, so a trailing newline or a blank
+    line between header and data doesn't look like data.
     """
     path = Path(path)
     lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -197,10 +192,10 @@ def read_zeroD(path: Path | str) -> dict[str, float]:
 
 
 def read_postproc_profile(path: Path | str) -> tuple[list[str], dict[int, np.ndarray]]:
-    """Ports ``io.py:198`` ``read_jorek_postproc``.
+    """Ports io.py:198 read_jorek_postproc.
 
-    Returns ``(headers, {step: array})`` -- each array's columns are ordered
-    per ``headers``, so a variable is selected via ``headers.index(name)``.
+    Returns (headers, {step: array}) -- each array's columns are ordered
+    per headers, so a variable is selected via headers.index(name).
     """
     results: dict[int, np.ndarray] = {}
     with Path(path).open(encoding="utf-8") as f:
@@ -212,7 +207,7 @@ def read_postproc_profile(path: Path | str) -> tuple[list[str], dict[int, np.nda
                 for row in f:
                     if row.startswith("#") or not row.strip():
                         break
-                    block.append([float(x) for x in row.split()])
+                    block.append([_parse_fortran_float(x) for x in row.split()])
                 results[step] = np.array(block)
     return headers, results
 

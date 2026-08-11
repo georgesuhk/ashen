@@ -197,6 +197,22 @@ def test_read_postproc_profile(tmp_path):
     assert blocks[100].tolist() == [[1.0, 10.0], [1.5, 20.0]]
 
 
+def test_read_postproc_profile_tolerates_missing_exponent_e(tmp_path):
+    """Same Fortran fixed-width E-format quirk read_zeroD tolerates
+    (3-digit exponent drops the 'E') -- profile output is written by the
+    same jorek2_postproc, so it can hit the same quirk."""
+    path = tmp_path / "exprs_midplane_s000100.dat"
+    path.write_text(
+        "# R currdens\n"
+        "# time step #000100\n"
+        "1.0 -1.114495214678738-107\n"
+        "\n",
+        encoding="utf-8",
+    )
+    _, blocks = read_postproc_profile(path)
+    assert blocks[100][0, 1] == pytest.approx(-1.114495214678738e-107)
+
+
 def test_parse_macroscopic_vars(tmp_path):
     path = tmp_path / "macroscopic_vars.dat"
     path.write_text(
