@@ -1,31 +1,22 @@
-"""``plot`` entry point: figures from data ``analyse`` already gathered.
+"""`plot` entry point: figures from data `analyse` already gathered.
 
-Deliberately a separate command from ``analyse``. Gathering is slow and
-batch (minutes per step, meant to run once and be cached); plotting is fast
-and iterative (re-run constantly while tuning a figure) -- keeping them apart
-means re-plotting never risks touching the gathering path, and this CLI can
-carry flags (``--dpi``, ``--log``/``--linear``, ``--smooth``) that would only
-clutter ``analyse``.
+Separate command from `analyse` on purpose: gathering is slow/batch (run
+once, cached); plotting is fast/iterative (re-run while tuning a figure).
+Keeps re-plotting from ever touching the gathering path, and lets this CLI
+carry display-only flags (--dpi, --log/--linear, --smooth) without cluttering
+`analyse`.
 
-Reads the same ``cases.toml`` as ``analyse`` (:mod:`ashen.cases`), and mostly
-just reads what ``analyse`` already gathered -- :mod:`ashen.diagnostics.
-poincare_cache` and :mod:`ashen.postproc.read_zeroD`. Two things are
-deliberately gathered here anyway, cheaply and on demand, rather than
-requiring a separate ``analyse`` pass first: :func:`ashen.diagnostics.
-profiles.ensure_edge_toroidal_field`'s Btor reference profile (one
-``jorek2_postproc`` call, needed only by ``delta_b_over_b``), and
-:func:`_ensure_zero_d`'s per-step zeroD cache (used for every true-time
-x-axis this module draws). Both are single-valued/cheap enough that
-gathering on demand doesn't blur the slow-batch/fast-iterative split the
-rest of this module's docstring argues for -- a whole diagnostic (Poincare,
-jorek2_four) is never auto-gathered here.
+Reads the same `cases.toml` (ashen.cases) and mostly just reads what
+`analyse` already cached (ashen.diagnostics.poincare_cache,
+ashen.postproc.read_zeroD). Two things are gathered here anyway, cheaply and
+on demand, rather than requiring a prior `analyse` pass: `ensure_edge_
+toroidal_field`'s Btor profile (delta_b_over_b only) and `_ensure_zero_d`'s
+per-step zeroD cache (every true-time x-axis). Both are single-valued/cheap;
+a whole diagnostic (Poincare, jorek2_four) is never auto-gathered here.
 
-**In scope this pass**: Poincare puncture plots and the LC/LCTT
-connection-length maps -- the two that consume the field-line cache built in
-Phase 4b. Everything else the legacy ``data_jorek.py`` / ``gather_profiles.py``
-plotted (macroscopic-variable traces, field-line diffusion, radial profiles,
-stochastic factor, the never-implemented ``max_fieldline_pos``) is not ported
--- see ``ashen/KNOWN_ISSUES.md`` #4.
+Diagnostics not ported from the legacy `data_jorek.py`/`gather_profiles.py`
+(macroscopic traces, field-line diffusion, stochastic factor, the
+never-implemented max_fieldline_pos): see KNOWN_ISSUES.md #4.
 """
 
 from __future__ import annotations
@@ -215,27 +206,17 @@ def _render_poincare_step(
 def _rational_highlight_for_step(
     case: Case, paths: RunPaths, step: int, records
 ) -> dict[float, str] | None:
-    """``{psi_n: color}`` for the traced field lines nearest each of ``case``'s
-    configured rational surfaces at this step -- ``None`` if highlighting is
-    off, or this step has no qprofile cache yet.
+    """{psi_n: color} for traced field lines nearest case's rational
+    surfaces at this step. None if highlighting off or no qprofile cache yet.
 
-    **Both sides are already in JOREK's own normalised psi_n**, and are
-    compared directly with no ``real_psi_edge`` rescaling:
-
-    * ``LineKey.psi_n`` is the value handed to ``jorek2_postproc``'s
-      ``fluxsurface`` command, which rejects anything outside ``[0, 1]`` and
-      converts it internally as ``psi_axis + psi_n*(psi_bnd - psi_axis)``
-      (``exec_commands.f90:3063-3068``).
-    * the q-profile's first column is ``get_psi_n(...)``
-      (``exec_commands.f90::qprofile``) -- the exact inverse of that.
-
-    ``real_psi_edge`` converts a *plasma-fraction* psi_n into this JOREK-grid
-    psi_n (``boundary.py::extend_psi`` defines it as ``psi_plasma_edge /
-    psi_extended_edge``), and ``cli/analyse.py`` already applies it once when
-    turning ``case.psi_n_in`` into the traced positions. Dividing again here
-    applied it twice and shifted every match by exactly that factor -- the
-    same double-normalisation trap ``KNOWN_ISSUES.md`` #7 records against the
-    connection-length threshold. It is deliberately absent now.
+    DO NOT rescale by real_psi_edge here. Both sides are already JOREK-grid
+    psi_n: LineKey.psi_n is what's handed to fluxsurface (exec_commands.f90:
+    3063-3068, psi_axis+psi_n*(psi_bnd-psi_axis)); the q-profile's first
+    column is get_psi_n(...), its exact inverse. real_psi_edge (plasma-
+    fraction -> JOREK-grid, boundary.py::extend_psi) was already applied
+    once in cli/analyse.py when tracing case.psi_n_in; applying it again
+    here double-normalises and shifts every match -- same trap as
+    KNOWN_ISSUES.md #7's connection-length threshold bug.
     """
     if not case.poincare_highlight:
         return None

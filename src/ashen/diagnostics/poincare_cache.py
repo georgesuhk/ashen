@@ -1,43 +1,32 @@
 """Incremental, per-field-line storage for Poincare traces.
 
-The legacy cache (``poinc_diag.py:208-218``, carried into Phase 4's
-``poincare.py``) wrote four ``np.savez`` files per step holding dense
-``(n_psi, ang_sample_freq)`` object arrays. That shape is the reason a scan
-could never be extended: adding one ``psi_n`` changes the array's shape, so
-the whole step had to be retraced, and so did raising ``n_turns``.
+Legacy cache (poinc_diag.py:208-218) wrote 4 np.savez files/step as dense
+(n_psi, ang_sample_freq) arrays -- any shape change (new psi_n, higher
+n_turns) forced a full retrace.
 
-Here the unit of storage is **one field line**, keyed by its actual starting
-point rather than by its index in a scan::
+Unit here is one field line, keyed by its actual start point, not scan
+index: `(psi_n_start, R_start, Z_start, phi_start)`. This makes
+ang_sample_freq a position generator, not schema: `_sampled_rz`'s
+`np.linspace(0, len(fs)-1, n_sample_freq, dtype=int)` keeps endpoints/
+coincident samples when raised (e.g. 8->16), so keying on position reuses
+those and traces only what's new.
 
-    (psi_n_start, R_start, Z_start, phi_start)
+Layout, one HDF5 file per step:
+    /                  attrs: schema, step, pad_width
+    /lines/<key>/      attrs: psi_n_start, R_start, Z_start, phi_start,
+                              n_turns, terminated, n_segments
+                       datasets: R, Z, rho, theta (float32, chunked, gzip,
+                                 maxshape=(None,))
 
-That key is what makes ``ang_sample_freq`` a *generator of positions* rather
-than part of the schema. ``_sampled_rz`` picks
-``np.linspace(0, len(fs) - 1, n_sample_freq, dtype=int)``, so raising 8 -> 16
-changes every index but keeps the endpoints and any coinciding samples;
-keying on position reuses exactly those and traces only what is genuinely new.
+HDF5 over a rewritten .npz: extend_line resizes in place (tail-only write),
+append_line adds a group untouched by existing ones.
 
-Layout, one HDF5 file per step::
+Concurrency: one file per step, one process per step (poincare.
+run_poincare_scan) -- never two processes on one file. No locking/SWMR;
+that invariant must hold.
 
-    /                       attrs: schema, step, pad_width
-    /lines/<key>/           attrs: psi_n_start, R_start, Z_start, phi_start,
-                                   n_turns, terminated, n_segments
-                            datasets: R, Z, rho, theta
-                                      float32, chunked, gzip, maxshape=(None,)
-
-``maxshape=(None,)`` is the point of using HDF5 rather than a rewritten
-``.npz``: :func:`extend_line` resizes in place and writes only the tail, and
-:func:`append_line` adds a group without touching any existing one.
-
-**Concurrency**: one file per step, and the caller runs one process per step
-(see :func:`ashen.diagnostics.poincare.run_poincare_scan`), so two processes
-never open the same file. Nothing here locks or uses SWMR, and that assumption
-must hold.
-
-``rho`` is stored exactly as ``jorek2_poincare`` writes it in
-``poinc_rho-theta.dat``; ``psi_n = rho ** 2`` is derived on read. The legacy
-cache stored only the squared value, discarding the raw quantity for no
-reason.
+`rho` stored as jorek2_poincare writes it (poinc_rho-theta.dat); `psi_n =
+rho**2` derived on read (legacy cache discarded the raw value).
 """
 
 from __future__ import annotations

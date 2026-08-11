@@ -1,11 +1,8 @@
-"""Declarative case definitions for ``bin/analyse``.
+"""Declarative case definitions for `bin/analyse`.
 
-Replaces ``Columbia/NL_kinks/analysis.py:20-58`` -- ~25 successive
-reassignments of the same two variables (``restart_times, run_folders``),
-where only the last line takes effect and everything above is
-commented-out-by-overwrite history, indistinguishable from live config -- and
-its hand-edited ``diags`` list (``analysis.py:64-70``) with a ``cases.toml``
-that preserves that history as named, listable entries instead of deleting it.
+Replaces `analysis.py:20-58`'s ~25 stacked reassignments of the same two
+vars (only the last took effect; the rest were dead history indistinguishable
+from live config) with named, listable `cases.toml` entries.
 """
 
 from __future__ import annotations
@@ -32,8 +29,7 @@ _CASE_KEYS = (
     "theta_wetted_threshold",
 )
 
-#: Diag names recognised as [cases.NAME.<diag>] step-override tables -- the
-#: union of both CLIs' DIAG_CHOICES (ashen.cli.analyse, ashen.cli.plot).
+#: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
 _DIAG_NAMES = ("zerod", "poincare", "profiles", "four", "connection_length", "theta_hist")
 
 
@@ -45,145 +41,109 @@ class CasesError(RuntimeError):
 class Case:
     name: str
     steps: list[int]
-    #: Per-diag overrides of `steps`, e.g. {"four": [1000, 1200, ...]} --
-    #: populated from nested [cases.NAME.<diag>] tables in cases.toml. Read
-    #: through `steps_for`, not directly: the innermost tier of the
-    #: default -> case -> case+diag tree, `steps` itself being the middle.
+    #: Per-diag `steps` override (e.g. {"four": [1000,...]}) from nested
+    #: [cases.NAME.<diag>] tables. Read via steps_for: default -> case -> case+diag.
     diag_steps: dict[str, list[int]] = field(default_factory=dict)
     note: str = ""
-    #: Poincare requests, satisfied incrementally against the cache -- widening
-    #: psi_n_in or raising n_turns costs only the increment, not a rescan.
+    #: Poincare requests, satisfied incrementally: widening psi_n_in or
+    #: raising n_turns costs only the increment, not a rescan.
     psi_n_in: list[float] = field(default_factory=list)
     n_turns: int = 1000
     ang_sample_freq: int = 8
-    #: Toroidal angle every field line starts from, and therefore the plane the
-    #: punctures land on. Was hardcoded to 0 in the legacy diagnostic.
+    #: Toroidal start angle for every field line = puncture plane. Legacy
+    #: diagnostic hardcoded 0.
     phi_start: float = 0.0
     vars: list[str] = field(default_factory=list)
     coords_var: str = "R"
-    #: Which postproc command(s) to cut the profile with. A bare string in
-    #: cases.toml is normalised to a one-element list by ``load_cases``, so
-    #: listing two (e.g. ``["midplane outer", "average"]``) gathers the same
-    #: variables both ways for comparison. Note ``coords_var = "Psi_N"``
-    #: needs ``midplane outer``, not bare ``midplane`` -- see
-    #: ``ashen.diagnostics.profiles._TOR_MODE_PREFIX``.
+    #: Postproc cut command(s); bare string -> 1-elem list via load_cases.
+    #: >1 entries gathers the same vars multiple ways (e.g. ["midplane
+    #: outer", "average"]). coords_var="Psi_N" needs "midplane outer", not
+    #: bare "midplane" (see profiles._TOR_MODE_PREFIX).
     tor_mode: list[str] = field(default_factory=lambda: ["midplane"])
     namelist: str = "in_main"
     n_points: int = 100
-    #: jorek2_four's own defaults (jorek2_four.f90:44-50) -- an unconfigured
-    #: case reproduces exactly what a bare jorek2_four run would do.
+    #: jorek2_four's own defaults (jorek2_four.f90:44-50); unconfigured ==
+    #: bare jorek2_four run.
     nstpts: int = 30
     ntht: int = 32
     nmaxsteps: int = 2500
     deltaphi: float = 0.3
     nsmallsteps: int = 3
     rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
-    #: Which of the gathered psi_n_in to plot for LC/LCTT -- None (default)
-    #: plots every one. Plot-time only: does not affect what analyse gathers,
-    #: and can only select/reorder *already-traced* surfaces (see
-    #: _psi_from_spec's docstring) -- it cannot invent new ones.
+    #: Which gathered psi_n_in to plot for LC/LCTT. Plot-time only, None=all;
+    #: can only select/reorder already-traced surfaces (_psi_from_spec),
+    #: never invents new ones.
     lc_psi_n_in: list[float] | None = None
-    #: Which variables/modes `plot --diag four` draws -- plot-time only, does
-    #: not affect what analyse gathers via jorek2_four. Empty (default) means
-    #: every one found in the cache.
+    #: Which vars/modes `plot --diag four` draws. Plot-time only; doesn't
+    #: affect what analyse gathers. Empty=every var/mode found in cache.
     four_vars: list[str] = field(default_factory=list)
-    #: [m, n] pairs (poloidal, toroidal) -- e.g. [3, 2] is m=3, n=2.
+    #: [m, n] pairs (poloidal, toroidal), e.g. [3, 2] = m=3, n=2.
     four_modes: list[list[int]] = field(default_factory=list)
-    #: Fit + mark each drawn mode's exponential growth rate (gamma, 1/s,
-    #: from d ln|amplitude| / dt) -- plot-time only, needs the zeroD cache
-    #: for real time. Default off.
+    #: Fit+mark each mode's growth rate (gamma [1/s] = d ln|amp|/dt).
+    #: Plot-time, needs zeroD cache for real time. Default off.
     four_growth_rate: bool = False
-    #: [start_step, end_step] inclusive step range for the growth-rate fit
-    #: window -- None (default) fits every requested step. Lets you pick the
-    #: visually-linear region of the log-amplitude curve, since points near
-    #: the noise floor or past saturation bias a whole-range fit.
+    #: [start_step, end_step] inclusive fit window; None=every requested
+    #: step. Use to skip noise-floor/saturation bias in the fit.
     four_growth_steps: list[int] | None = None
-    #: Annotate the delta_b / delta_b_over_b figures with their peak value
-    #: ("max dB/B = ..." in the lower-right corner) -- plot-time only, and
-    #: only meaningful for those two derived variables. Default off, same as
-    #: four_growth_rate: it's a figure-level number, useful when quoting a
-    #: single stochasticity figure but noise on a plot read for its shape.
+    #: Caption delta_b/delta_b_over_b figures with their peak value
+    #: ("max dB/B = ..."). Plot-time only. Default off.
     four_max_delta_b: bool = False
     #: Per-variable y-axis bounds for `plot --diag four`, e.g.
-    #: {"Psi" = [1e-6, 1e-1]} -- plot-time only, keyed on the same variable
-    #: name used for four_vars/the output filename. A variable absent here
-    #: keeps matplotlib's own auto-scaling.
+    #: {"Psi" = [1e-6, 1e-1]}. Plot-time only. Unlisted var = auto-scale.
     four_ylim: dict[str, list[float]] = field(default_factory=dict)
-    #: Time step at which to draw a vertical dashed line labelled
-    #: "deconfinement step"/"deconfinement time" on the four-mode figures --
-    #: plot-time only, set manually (e.g. from a separate diagnostic), not
-    #: computed here. Drawn on the step-axis figure at this step directly,
-    #: and on the time-axis figure at this step's real time from the zeroD
-    #: cache (gathered on demand if missing, same precedent as
-    #: delta_b_over_b's Btor profile). None (default) draws nothing.
+    #: Step marked with a vline on four-mode figures: step-axis draws it
+    #: directly, time-axis draws its real time from the zeroD cache
+    #: (gathered on demand, same precedent as delta_b_over_b's Btor
+    #: profile). Manual, not computed. None (default) = no line.
     four_deconfinement_step: int | None = None
-    #: Add a "delta_b/delta_b_over_b at deconfinement" line to those figures'
-    #: boxed caption, as a percentage of that figure's own peak value -- on
-    #: by default whenever four_deconfinement_step is set (opt *out*, unlike
-    #: four_max_delta_b), and independent of that flag (both set draws both
-    #: lines). Only takes effect when four_deconfinement_step exactly
-    #: matches one of `four`'s own gathered steps (no interpolation, same
-    #: rule as connection_length's psi_n matching) -- a mismatch is silent,
-    #: not an error, same as a lc_psi_n_in value never actually traced.
+    #: Adds "delta_b[/b] at deconfinement = X% of max" to those figures'
+    #: caption. Default on whenever four_deconfinement_step is set
+    #: (opt *out*), independent of four_max_delta_b (both set = both
+    #: lines). Exact step match only vs `four`'s gathered steps (no
+    #: interpolation, same rule as connection_length's psi_n matching) --
+    #: mismatch is silent.
     four_deconfinement_caption: bool = True
-    #: Field-line-tracing knobs for the `average` tor_mode only; the midplane
-    #: family uses n_points instead. Defaults match jorek2_postproc's own
-    #: (jorek2_postproc.f90:44-51). Deliberately separate from the
-    #: identically-named nstpts/nmaxsteps/deltaphi/rad_range above, which
-    #: configure jorek2_four: same physical knobs, different consumer, and
-    #: sharing them would make a jorek2_four tweak silently move the
-    #: profiles. profile_rad_range is the main lever for keeping `average`
-    #: alive on a nonlinear run -- pulling the outer bound in off the
-    #: separatrix keeps tracing inside surfaces that still exist.
+    #: `average` tor_mode tracing knobs (midplane family uses n_points
+    #: instead). Defaults = jorek2_postproc's own (jorek2_postproc.f90:44-51).
+    #: Separate from the identically-named jorek2_four knobs above --
+    #: different consumer, so tuning one can't silently move the other.
+    #: profile_rad_range's outer bound is the main lever for keeping
+    #: `average` alive late in a nonlinear run.
     profile_surfaces: int = 100
     profile_rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
     profile_nmaxsteps: int = 2500
     profile_deltaphi: float = 0.3
-    #: Draw the Poincare plot with only the field lines nearest each chosen
-    #: rational surface in colour, everything else dimmed grey. Needs the
-    #: qprofile cache -- `analyse --diag poincare` gathers it automatically
-    #: when this is true, same as poincare implies zerod.
+    #: Colour only field lines near poincare_highlight_modes' rational
+    #: surfaces, dim the rest. Needs qprofile cache (auto-gathered, same as
+    #: poincare implies zerod).
     poincare_highlight: bool = False
-    #: [m, n] pairs, same convention as four_modes -- e.g. [3, 2] is m=3, n=2.
+    #: [m, n] pairs, same convention as four_modes.
     poincare_highlight_modes: list[list[int]] = field(default_factory=list)
-    #: Parallel to poincare_highlight_modes: poincare_highlight_colors[i] is
-    #: the colour drawn for poincare_highlight_modes[i].
+    #: Parallel to poincare_highlight_modes: colour[i] for mode[i].
     poincare_highlight_colors: list[str] = field(default_factory=list)
-    #: Marker area for each puncture, in points^2 (matplotlib's scatter `s`).
-    #: Plot-time only. The 0.1 default suits a dense scan -- a short one, or
-    #: one zoomed into a small region, usually wants this raised.
+    #: Puncture marker area (scatter `s`, pts^2). Plot-time. Raise for a
+    #: short or zoomed-in scan.
     poincare_point_size: float = 0.1
-    #: Which amplitude quantity(ies) `plot --diag four` draws. "max" is the
-    #: whole-domain max |amplitude| (today's only option); "rational_surface"
-    #: is the value pinned to each mode's q=m/n resonant surface. Both
-    #: together draws max solid with rational_surface dashed over it.
+    #: Amplitude quantity(ies) `plot --diag four` draws. "max"=domain-wide
+    #: max|amp|; "rational_surface"=value at q=m/n. Both = max solid +
+    #: rational_surface dashed overlay.
     four_quantities: list[str] = field(default_factory=lambda: ["max"])
-    #: `plot --diag theta_hist`: the user-facing (plasma-fraction) psi_n a
-    #: field line must cross to be counted -- ashen.diagnostics.
-    #: theta_histogram.crossing_angles applies real_psi_edge to this once,
-    #: at comparison time, never to the traced data (KNOWN_ISSUES.md #7).
+    #: `--diag theta_hist`: user-facing psi_n a line must cross to count.
+    #: real_psi_edge applied once at comparison time, never to traced data
+    #: (KNOWN_ISSUES.md #7).
     theta_target_psi: float = 1.05
-    #: `plot --diag theta_hist`: histogram bins over (-pi, pi].
+    #: `--diag theta_hist`: histogram bins over (-pi, pi].
     theta_bins: int = 500
-    #: `plot --diag theta_hist`: [min, max] user-facing psi_n_in bounds
-    #: restricting which *starting* flux surfaces are counted -- None (default)
-    #: counts every traced surface. Replaces the notebook's `i_lim` (a
-    #: positional index into scan order, which silently changes meaning
-    #: whenever psi_n_in is widened or reordered).
+    #: `--diag theta_hist`: [min, max] filter on starting psi_n_in. None=all
+    #: traced. Replaces the legacy positional index i_lim.
     theta_psi_n_range: list[float] | None = None
-    #: `plot --diag wetted_fraction`: the theta_hist bin-count threshold a
-    #: bin must exceed to count as "wetted" -- on the same scale as
-    #: theta_histogram's output (a fraction-of-lines-per-bin, since bin
-    #: weights sum to 1). None (default) falls back to 1/theta_bins at plot
-    #: time -- the value a perfectly uniform distribution would put in every
-    #: bin, so "wetted" means "above what uniform spreading would give".
-    #: `--theta_wetted_threshold` on the plot command line outranks this the
-    #: same way `--theta_target_psi` outranks theta_target_psi.
+    #: `--diag wetted_fraction`: bin-count threshold for "wetted" (same
+    #: scale as theta_hist's per-bin fraction output). None -> 1/theta_bins
+    #: at plot time. `--theta_wetted_threshold` CLI flag outranks this.
     theta_wetted_threshold: float | None = None
 
     def steps_for(self, diag: str) -> list[int]:
-        """`steps`, unless `diag` has its own override in `diag_steps` --
-        the case+diag tier of the default -> case -> case+diag tree."""
+        """`steps` unless `diag` overrides it in `diag_steps` (case+diag tier)."""
         return self.diag_steps.get(diag, self.steps)
 
 
@@ -198,12 +158,10 @@ def _steps_from_range_dict(spec: dict, *, case_name: str, source: Path) -> list[
 
 
 def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:
-    """A plain list, a single ``{start, stop, step}`` range table, or a list
-    mixing both -- e.g. ``[200, 400, {start = 400, stop = 2000, step = 200}]``
-    for a dense early stretch plus a coarser range after it. Entries are
-    unioned and returned sorted, so overlapping values (like the ``400``
-    both an explicit entry and a range boundary might share) collapse to
-    one rather than processing the same step twice.
+    """A plain list, a `{start, stop, step}` range table, or a mix, e.g.
+    `[200, 400, {start=400, stop=2000, step=200}]`. Unioned + sorted, so
+    overlapping values (e.g. 400 as both explicit and a range boundary)
+    collapse to one instead of duplicating the step.
     """
     if isinstance(spec, list):
         steps: set[int] = set()
@@ -228,18 +186,14 @@ def _psi_from_spec(
 ) -> list[float]:
     """Resolve a psi_n_in / lc_psi_n_in spec into explicit values.
 
-    Either an explicit list, or a ``{start, stop, step}`` / ``{start, stop,
-    n}`` table generating an evenly spaced, *inclusive-of-stop* range via
-    ``np.linspace`` -- computing the point count up front (rather than
-    ``np.arange``) avoids float-accumulation drift landing just short of
-    ``stop``. ``n`` mirrors the legacy ``np.linspace(min, max, 20))``
-    convention at ``Columbia/NL_kinks/analysis.py:81``.
+    Explicit list, or a `{start, stop, step}` / `{start, stop, n}` table ->
+    inclusive-of-stop `np.linspace` range (point count computed up front,
+    not `np.arange`, to avoid float drift landing short of `stop`; `n`
+    mirrors legacy `analysis.py:81`'s `np.linspace(min, max, 20)`).
 
-    A generated or listed value only produces real connection-length data at
-    plot time if a field line was actually traced at that (quantised) psi_n
-    during gathering -- ``connection_lengths_for_step`` matches exactly, with
-    no interpolation. A value with no match comes back ``nan``, rendered as a
-    visible black cell rather than silently missing or erroring.
+    A value only yields real connection-length data if a field line was
+    actually traced at that (quantised) psi_n -- exact match, no
+    interpolation; a miss is `nan`, shown as a black cell, not an error.
     """
     if isinstance(spec, list):
         return [float(p) for p in spec]
@@ -280,11 +234,9 @@ def _psi_from_spec(
 
 
 def load_cases(path: Path | str) -> dict[str, Case]:
-    """Parse ``cases.toml``. Every entry under ``[defaults]`` seeds every
-    case, overridable per case -- mirrors how the physics params at
-    ``analysis.py:80-104`` were shared globals with occasional per-run
-    overrides scattered inline.
-    """
+    """Parse `cases.toml`. [defaults] seeds every case, overridable per
+    case (mirrors legacy `analysis.py:80-104`'s shared-global params with
+    scattered per-run overrides)."""
     path = Path(path)
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -302,11 +254,9 @@ def load_cases(path: Path | str) -> dict[str, Case]:
     for name, raw in raw_cases.items():
         merged = {**defaults, **raw}
 
-        # [cases.NAME.<diag>] tables, if present, override `steps` for that
-        # one diag -- popped before the "steps" check below so their nested
-        # dicts never reach the flat unknown-key check further down, and
-        # before Case(**merged) since Case takes them as `diag_steps`, not
-        # as fields named "four"/"poincare"/etc.
+        # [cases.NAME.<diag>] step overrides -- popped before the unknown-key
+        # check (nested dicts aren't flat fields) and before Case(**merged)
+        # (Case takes them as diag_steps, not fields named "four"/"poincare").
         diag_steps: dict[str, list[int]] = {}
         for diag in _DIAG_NAMES:
             sub = merged.pop(diag, None)
@@ -350,11 +300,8 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                 )
 
         if "tor_mode" in merged:
-            # A bare string stays valid in cases.toml (and is what every
-            # existing config has); normalise here so downstream code only
-            # ever sees a list. Validated up front rather than deep inside a
-            # pool worker, where the traceback names neither the case nor the
-            # file it came from.
+            # Normalise bare string -> list here, not deep in a pool worker
+            # where the traceback wouldn't name the case or file.
             from ashen.diagnostics.profiles import TOR_MODES
 
             spec = merged["tor_mode"]
