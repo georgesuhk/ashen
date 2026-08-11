@@ -1,37 +1,34 @@
 """Grid of poloidal-angle exit-crossing histograms.
 
-Ports the drawing half of the notebook function ``plot_theta_histogram_matrix``
-(``Columbia/NL_kinks/prod_plots_draft0.ipynb``, cell 5) -- the physics moved to
-:mod:`ashen.diagnostics.theta_histogram`, which has no matplotlib import; this
-module is drawing only, mirroring the ``draw_*``/``plot_*`` split every other
-module in this package uses (see ``plotting/four_modes.py`` docstring).
+Ports the drawing half of the notebook function
+plot_theta_histogram_matrix (prod_plots_draft0.ipynb, cell 5) -- physics
+moved to diagnostics.theta_histogram (no matplotlib import); this module
+is drawing only, mirroring the draw_*/plot_* split every other module in
+this package uses (see plotting/four_modes.py docstring).
 
-Kept from the notebook: the grid layout itself (a shared x/y appearance,
-x-ticks only at ``[-pi, 0, pi]`` with the first/last inward-aligned so they
-don't overhang, y-label only on the left column, a shared ``supxlabel``).
+Kept from the notebook: the grid layout (shared x/y appearance, x-ticks
+only at [-pi, 0, pi] with first/last inward-aligned so they don't
+overhang, y-label only on the left column, a shared supxlabel).
 
 Changed:
-- ``sharex``/``sharey`` are applied by hand (same ``xlim``/``ylim`` set on
-  every axis) instead of via ``plt.subplots(sharex=True, sharey=True)``. A
-  true shared axis suppresses tick *labels* on non-bottom-row members keyed
-  off grid position, not "last panel actually present in this column" -- for
-  a partially-filled last row (e.g. 5 panels over 3 columns) that leaves one
-  column's real bottom axis one row up with its labels silently empty
-  (``set_xticklabels`` on it returns ``[]``, not the 3 requested). The bottom
-  axis of each column is computed explicitly here instead.
-- No import-time or call-time ``rcParams`` mutation -- drawn inside
-  :func:`ashen.plotting.style`, which deliberately keeps ``text.usetex=False``
-  (an HPC/Windows-clone LaTeX install is not assumed) with
-  ``mathtext.fontset="cm"``, so ``$\\theta$``/``$\\eta$``-style labels still
-  render.
-- The y-limit is auto-scaled from the tallest bin across every panel instead
-  of the notebook's hardcoded ``0.06`` -- George's call: panels stay
-  comparable to each other but the limit no longer needs retuning by hand
-  when ``bins`` or the underlying data changes. ``y_max`` can still be pinned
-  explicitly to reproduce an older figure.
-- The ``show_threshold``/``threshold_percentile`` horizontal-line overlay and
-  its ``counts_compare`` companion are dropped, not ported (George, this
-  session) -- not carried forward at all.
+- sharex/sharey applied by hand (same xlim/ylim set on every axis) instead
+  of plt.subplots(sharex=True, sharey=True). A true shared axis suppresses
+  tick labels on non-bottom-row members keyed off grid position, not "last
+  panel actually present in this column" -- for a partially-filled last
+  row (e.g. 5 panels over 3 columns) that leaves one column's real bottom
+  axis one row up with labels silently empty (set_xticklabels returns []
+  there, not the 3 requested). Bottom axis of each column computed
+  explicitly here instead.
+- No import-time or call-time rcParams mutation -- drawn inside
+  plotting.style, which deliberately keeps text.usetex=False (no HPC/
+  Windows-clone LaTeX install assumed) with mathtext.fontset="cm", so
+  $\\theta$/$\\eta$-style labels still render.
+- y-limit auto-scaled from the tallest bin across every panel instead of
+  the notebook's hardcoded 0.06 -- George's call: panels stay comparable
+  but the limit no longer needs retuning when bins/data changes. y_max
+  can still be pinned explicitly to reproduce an older figure.
+- show_threshold/threshold_percentile's horizontal-line overlay and its
+  counts_compare companion are dropped entirely, not ported.
 """
 
 from __future__ import annotations
@@ -48,12 +45,12 @@ __all__ = ["draw_theta_histogram", "plot_theta_histogram_grid"]
 
 
 def draw_theta_histogram(ax, angles: np.ndarray, *, bins: int) -> np.ndarray:
-    """Draw one panel's histogram onto ``ax``. Returns the bin counts, so a
-    caller can compute a shared y-limit across several panels before drawing
-    any of them.
+    """Draw one panel's histogram onto ax. Returns the bin counts, so a
+    caller can compute a shared y-limit across several panels before
+    drawing any of them.
 
-    Draws a centred "No data" note instead of an empty axes when ``angles``
-    is empty -- distinguishable from a genuinely flat/empty distribution
+    Draws a centred "No data" note instead of an empty axes when angles is
+    empty -- distinguishable from a genuinely flat/empty distribution
     drawn at zero height.
     """
     counts, _ = theta_histogram(angles, bins=bins)
@@ -79,14 +76,14 @@ def plot_theta_histogram_grid(
     dpi: int = 200,
 ) -> Path:
     """Draw and save a grid of theta-crossing histograms, one panel per
-    ``(label, angles)`` pair in ``panels`` -- the file-owning counterpart to
-    :func:`draw_theta_histogram`.
+    (label, angles) pair in panels -- the file-owning counterpart to
+    draw_theta_histogram.
 
-    ``panels`` order fixes grid order (row-major). What each panel represents
-    is the caller's choice: one panel per step for a single case (``ashen.cli.
-    plot``'s per-case mode), or one panel per case for a cross-case comparison
-    (``ashen.cli.plot``'s ``--compare`` mode) -- this function draws the grid
-    either way, agnostic to which.
+    panels order fixes grid order (row-major). What each panel represents
+    is the caller's choice: one panel per step for a single case
+    (cli.plot's per-case mode), or one panel per case for a cross-case
+    comparison (cli.plot's --compare mode) -- this function draws the
+    grid either way, agnostic to which.
     """
     import math
 
@@ -100,26 +97,25 @@ def plot_theta_histogram_grid(
     figsize = (figsize_per_panel[0] * n_cols, figsize_per_panel[1] * n_rows)
 
     # The bottom-of-column axis for column c is the last visible (idx <
-    # n_panels) axis with idx % n_cols == c -- NOT simply the last row of the
-    # n_rows x n_cols grid, since a partially-filled last row leaves some
-    # columns' true bottom in the row above. sharex/sharey are deliberately
-    # off (unlike every other grid in this package): matplotlib suppresses
-    # tick labels on a shared axis's non-bottom-row members via its own
-    # `label_outer`-style bookkeeping, keyed off grid position rather than
-    # "last panel present in this column" -- calling set_xticklabels on one
-    # of those returns an empty list, not the 3 labels requested. x/y limits
-    # are instead applied uniformly by hand below, which is what sharex/
-    # sharey would have done anyway.
+    # n_panels) axis with idx % n_cols == c -- NOT simply the last row of
+    # the n_rows x n_cols grid, since a partially-filled last row leaves
+    # some columns' true bottom in the row above. sharex/sharey are
+    # deliberately off (unlike every other grid in this package):
+    # matplotlib's label_outer-style bookkeeping suppresses tick labels on
+    # non-bottom-row members keyed off grid position, not "last panel
+    # present in this column" -- set_xticklabels on one of those returns []
+    # not the 3 labels requested. x/y limits are applied uniformly by hand
+    # below instead, what sharex/sharey would have done anyway.
     bottom_of_column = {}
     for idx in range(n_panels):
         bottom_of_column[idx % n_cols] = idx
 
     with style():
-        # layout="constrained" instead of a plain fig.tight_layout() call
-        # below: tight_layout does not reserve room for a figure-level
-        # supxlabel, so at this figure's aspect ratio the label collided with
-        # the bottom row's own "$\pi$" tick label. constrained_layout treats
-        # supxlabel as a layout participant and keeps it clear.
+        # layout="constrained", not fig.tight_layout(): tight_layout doesn't
+        # reserve room for a figure-level supxlabel, so at this figure's
+        # aspect ratio the label collided with the bottom row's "$\pi$"
+        # tick label. constrained_layout treats supxlabel as a layout
+        # participant and keeps it clear.
         fig, axes = plt.subplots(
             n_rows, n_cols, figsize=figsize, layout="constrained",
             gridspec_kw={"wspace": 0.1, "hspace": 0.45}, squeeze=False,

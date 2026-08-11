@@ -1,13 +1,13 @@
 """LC / LCTT connection-length colour maps.
 
-Ports ``castor3d/util/data_jorek.py:597 color_con_length_plot``. The physics
-(the matrix itself) has moved to :mod:`ashen.diagnostics.connection_length`,
-which has no matplotlib import -- this module is drawing only.
+Ports data_jorek.py:597 color_con_length_plot. The matrix itself moved to
+diagnostics.connection_length (no matplotlib import) -- this module is
+drawing only.
 
-Legacy filename convention preserved: ``LCTT_`` for the true-time x-axis,
-``LC_`` for the step-index x-axis (``data_jorek.py:663,666``) -- the *other*
-sub-plotter, ``connection_length_line_plot`` (the ``L2_``/``L2TT_`` line
-plots), is out of scope for this pass; see ``KNOWN_ISSUES.md`` #4.
+Legacy filename convention preserved: LCTT_ for the true-time x-axis, LC_
+for the step-index x-axis (data_jorek.py:663,666) -- the other
+sub-plotter, connection_length_line_plot (L2_/L2TT_ line plots), is out
+of scope; KNOWN_ISSUES.md #4.
 """
 
 from __future__ import annotations

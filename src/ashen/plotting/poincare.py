@@ -1,17 +1,17 @@
 """Poincare puncture plots.
 
-Ports ``castor3d/util/data_jorek.py:354 plot_poincare``, redrawn against the
-per-line cache from Phase 4b (:mod:`ashen.diagnostics.poincare_cache`) instead
-of the three dense ``.npz`` files it used to load. The legacy version indexed
-colour by scan position (``contrast_colors[i]``); here colour comes from each
-line's actual ``psi_n`` via :mod:`ashen.plotting.colors`, which survives a
-scan being extended or widened without needing re-indexing.
+Ports data_jorek.py:354 plot_poincare, redrawn against the per-line cache
+from Phase 4b (poincare_cache) instead of the three dense .npz files it
+used to load. Legacy indexed colour by scan position
+(contrast_colors[i]); here colour comes from each line's actual psi_n via
+plotting.colors, surviving a scan being extended/widened without
+re-indexing.
 
-``draw_poincare`` takes an ``ax`` and draws onto it -- unlike every legacy
-plotting function, none of which accepted one (``castor3d/util/data_jorek.py``
-inventory: zero `ax=` parameters anywhere). That is what lets a case's
-punctures be composed into a grid, or reused from a notebook, instead of each
-call owning its own figure and file.
+draw_poincare takes an ax and draws onto it -- unlike every legacy
+plotting function (data_jorek.py inventory: zero ax= parameters
+anywhere). That's what lets a case's punctures be composed into a grid,
+or reused from a notebook, instead of each call owning its own figure
+and file.
 """
 
 from __future__ import annotations
@@ -39,15 +39,14 @@ def draw_poincare(
     highlight: Mapping[float, str] | None = None,
     title: str | None = None,
 ) -> None:
-    """Scatter every cached puncture of ``records`` onto ``ax``, coloured by
-    each line's starting ``psi_n``.
+    """Scatter every cached puncture of records onto ax, coloured by each
+    line's starting psi_n.
 
-    ``highlight`` maps a ``psi_n`` value to the colour it should draw in at
-    full opacity, with everything else dimmed to light grey -- ports the
-    legacy ``highlight`` / ``highlight_idx`` pair
-    (``data_jorek.py:354,376-380``), extended so each highlighted surface can
-    carry its own colour (e.g. one per rational surface) instead of a single
-    shared one.
+    highlight maps a psi_n value to the colour it draws at full opacity,
+    everything else dimmed to light grey -- ports the legacy highlight/
+    highlight_idx pair (data_jorek.py:354,376-380), extended so each
+    highlighted surface can carry its own colour (e.g. one per rational
+    surface) instead of a single shared one.
     """
     grouped: dict[float, list[LineRecord]] = {}
     for key, record in records.items():

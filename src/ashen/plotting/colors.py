@@ -1,22 +1,21 @@
 """Colouring field lines by their starting flux surface.
 
-The legacy code indexed a hand-written 135-line list literal
-(``contrast_colors``, ``data_jorek.py:27-135`` -- the same ~19-colour block
-copy-pasted four times with drifting values) positionally by a field line's
-index in the scan. The new cache has no such index: it is a flat dict keyed
-by starting position (see :mod:`ashen.diagnostics.poincare_cache`), so
-"index 7" is not a stable or even meaningful concept once a scan has been
-extended incrementally.
+Legacy code indexed a hand-written 135-line list literal (contrast_colors,
+data_jorek.py:27-135 -- the same ~19-colour block copy-pasted 4x with
+drifting values) positionally by a field line's index in the scan. The new
+cache has no such index: a flat dict keyed by starting position
+(poincare_cache), so "index 7" isn't stable or meaningful once a scan has
+been extended incrementally.
 
-Colour is assigned from **the line's actual ``psi_n``** instead, through a
-perceptually uniform colormap (default), which is also what
-``gather_profiles.py:142`` already does for time series and is the only
-sensible colouring in the legacy tree. A colour then means the same radial
-position across every plot and every case, a legend becomes an honest
-colourbar, and there is no line count that can overflow it.
+Colour is assigned from the line's actual psi_n instead, through a
+perceptually uniform colormap (default) -- what gather_profiles.py:142
+already does for time series, the only sensible colouring in the legacy
+tree. A colour then means the same radial position across every plot/case,
+a legend becomes an honest colourbar, and no line count can overflow it.
 
-A small discrete palette is also provided for a categorical look, deduplicated
-from the legacy list (its four copies did not actually agree with each other).
+A small discrete palette is also provided for a categorical look,
+deduplicated from the legacy list (its 4 copies didn't actually agree
+with each other).
 """
 
 from __future__ import annotations

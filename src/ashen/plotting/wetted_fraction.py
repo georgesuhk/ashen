@@ -1,24 +1,21 @@
 """One scalar per case, plotted against a scan parameter.
 
-Ports the core of the notebook's ``eta_plot`` (``Columbia/NL_kinks/
-prod_plots_draft0.ipynb``, cell 0), stripped to what George asked to keep:
-a single series, log-x by default, markers connected by a line. The
-notebook's dual y-axis, highlight-point circles, vertical fading band,
-``\\textbf{}`` figure-corner label and vline/annotation machinery are not
-ported -- add them back here if a future comparison actually needs one, not
-speculatively.
+Ports the core of the notebook's eta_plot (prod_plots_draft0.ipynb, cell
+0), stripped to what George asked to keep: a single series, log-x by
+default, markers connected by a line. The notebook's dual y-axis,
+highlight-point circles, vertical fading band, \\textbf{} figure-corner
+label and vline/annotation machinery are not ported -- add back only if a
+future comparison actually needs one.
 
-Deliberately generic over what ``y`` is, not specific to wetted fraction --
-:mod:`ashen.diagnostics.theta_histogram`'s ``wetted_fraction`` is the first
-consumer, not the only intended one (see the "scan-vs-x plots" pattern George
-flagged as recurring). ``draw_*``/``plot_*`` split, matching every other
-module in this package.
+Deliberately generic over what `y` is, not specific to wetted fraction --
+diagnostics.theta_histogram's wetted_fraction is the first consumer, not
+the only intended one (the recurring "scan-vs-x plots" pattern). draw_*/
+plot_* split, matching every other module in this package.
 
-:func:`plot_wetted_fraction_vs_x` draws one series (one comparison's flat
-``cases``). :func:`plot_wetted_fraction_datasets` draws several named series
-on the same axes with a legend -- for a ``datasets``-style comparison
-(:class:`ashen.comparisons.Comparison`), e.g. the same resistivity scan
-repeated under two profile assumptions.
+plot_wetted_fraction_vs_x draws one series (one comparison's flat cases).
+plot_wetted_fraction_datasets draws several named series on the same axes
+with a legend -- for a datasets-style Comparison, e.g. the same
+resistivity scan repeated under two profile assumptions.
 """
 
 from __future__ import annotations
@@ -47,13 +44,12 @@ def draw_wetted_fraction_vs_x(
     label: str | None = None,
     color: str = "tab:blue",
 ) -> None:
-    """Draw one ``y`` vs. ``x`` series onto ``ax``, one marker per case.
+    """Draw one y vs. x series onto ax, one marker per case.
 
-    ``label``/``color`` let a caller draw more than one series onto the same
-    ``ax`` (e.g. :func:`plot_wetted_fraction_datasets`, one call per
-    dataset) and tell them apart -- ``label`` is only passed to ``ax.plot``
-    when given, so a single-series caller doesn't pick up an unwanted legend
-    entry.
+    label/color let a caller draw more than one series onto the same ax
+    (e.g. plot_wetted_fraction_datasets, one call per dataset) and tell
+    them apart -- label is only passed to ax.plot when given, so a
+    single-series caller doesn't pick up an unwanted legend entry.
     """
     ax.plot(x, y, marker="o", linestyle="-", color=color, **({"label": label} if label else {}))
     if log_x:
@@ -102,15 +98,14 @@ def plot_wetted_fraction_datasets(
     dpi: int = 200,
     colors: Sequence[str | None] | None = None,
 ) -> Path:
-    """Overlay several named series on one axes -- e.g. the same resistivity
-    scan repeated under two profile assumptions ("normal" vs "rho19") -- with
-    a legend distinguishing them.
+    """Overlay several named series on one axes -- e.g. the same
+    resistivity scan repeated under two profile assumptions ("normal" vs
+    "rho19") -- with a legend distinguishing them.
 
-    ``series`` is ``[(label, x, y), ...]``, one entry per dataset, drawn via
-    :func:`draw_wetted_fraction_vs_x` in order. ``colors`` is parallel to
-    ``series``; a ``None`` entry (or ``colors`` omitted entirely) assigns
-    from :data:`ashen.plotting.colors.DISCRETE_PALETTE`, cycling by
-    position.
+    series is [(label, x, y), ...], one entry per dataset, drawn via
+    draw_wetted_fraction_vs_x in order. colors is parallel to series; a
+    None entry (or colors omitted entirely) assigns from
+    DISCRETE_PALETTE, cycling by position.
     """
     import matplotlib.pyplot as plt
 

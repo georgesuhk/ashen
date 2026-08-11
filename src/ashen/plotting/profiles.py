@@ -1,25 +1,22 @@
 """Radial profile families -- one curve per restart step, coloured by time.
 
-Draws the ``.npz`` caches :mod:`ashen.diagnostics.profiles` writes, read back
-through :func:`~ashen.diagnostics.profiles.read_profile_series`. Ports the
-plotting half of ``castor3d/util/diagnostics/gather_profiles.py::
-plot_postproc_profs`` (``KNOWN_ISSUES.md`` #8), minus its derived q-profile,
+Draws the .npz caches diagnostics.profiles writes, read back through
+read_profile_series. Ports the plotting half of gather_profiles.py::
+plot_postproc_profs (KNOWN_ISSUES.md #8), minus its derived q-profile,
 which stays unported.
 
-Colour is by **step or time**, not by the radial coordinate, which is the one
-difference from :mod:`ashen.plotting.poincare`: here the radial coordinate is
-the x-axis, so the free dimension a colourmap can carry is when the profile
-was taken. :class:`~ashen.plotting.colors.PsiColorer` is reused as-is for
-that -- despite the name it is a plain ``float -> colour`` map over a fixed
-``[vmin, vmax]`` with a :meth:`~ashen.plotting.colors.PsiColorer.
-scalar_mappable` for the colourbar, so a near-duplicate class would buy
-nothing.
+Colour is by step or time, not radial coordinate -- the one difference
+from plotting.poincare: here the radial coordinate is the x-axis, so the
+free dimension a colourmap can carry is when the profile was taken.
+PsiColorer is reused as-is for that -- despite the name it's a plain
+float->colour map over a fixed [vmin, vmax] with a scalar_mappable for
+the colourbar, so a near-duplicate class would buy nothing.
 
-Several ``tor_mode``s are drawn as **separate panels sharing a y-axis**, not
-overlaid: a flux-surface ``average`` and a ``midplane outer`` cut of the same
+Several tor_modes are drawn as separate panels sharing a y-axis, not
+overlaid: a flux-surface average and a midplane outer cut of the same
 variable are different quantities that happen to share units, and the
-interesting comparison is where one stops having curves at all (see
-``KNOWN_ISSUES.md`` #9) rather than a point-by-point difference.
+interesting comparison is where one stops having curves at all
+(KNOWN_ISSUES.md #9), not a point-by-point difference.
 """
 
 from __future__ import annotations
@@ -45,13 +42,13 @@ def draw_profile_family(
     ylabel: str = "",
     title: str = "",
 ) -> PsiColorer:
-    """Draw one line per step in ``series`` onto ``ax``, in step order.
+    """Draw one line per step in series onto ax, in step order.
 
-    ``color_by`` maps a step to the scalar it should be coloured by (true
-    time, say); it defaults to the step index itself. ``colors`` lets a
-    caller share one colourer -- and therefore one colour scale and one
-    colourbar -- across several axes; when omitted, one is built spanning
-    just this axes' own values. Returns whichever colourer was used, so a
+    color_by maps a step to the scalar it should be coloured by (true
+    time, say); defaults to the step index itself. colors lets a caller
+    share one colourer -- and therefore one colour scale/colourbar --
+    across several axes; when omitted, one is built spanning just this
+    axes' own values. Returns whichever colourer was used, so a
     single-panel caller can attach a colourbar without rebuilding it.
     """
     steps = sorted(series)
@@ -84,11 +81,12 @@ def plot_profile_comparison(
     figsize: tuple[float, float] | None = None,
     dpi: int = 150,
 ) -> Path:
-    """One panel per ``tor_mode``, sharing the y-axis, with a shared colourbar.
+    """One panel per tor_mode, sharing the y-axis, with a shared colourbar.
 
-    Modes are drawn in the order given. A mode whose series is empty still
-    gets its (empty) panel, labelled as such -- that a mode produced nothing
-    is the result worth seeing, not a reason to silently renumber the panels.
+    Modes are drawn in the order given. A mode whose series is empty
+    still gets its (empty) panel, labelled as such -- that a mode
+    produced nothing is the result worth seeing, not a reason to
+    silently renumber the panels.
     """
     import matplotlib.pyplot as plt
 
