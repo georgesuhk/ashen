@@ -1,17 +1,17 @@
 """Plasma boundary geometry and psi-grid extension.
 
-Ports, from ``castor3d/util/run_jorek_util.py``: ``downsample_boundary:106``,
-``extend_psi:214``, ``extend_prof:232``, ``get_bnd_from_castor:293``; and from
-``castor3d/util/data.py``: ``expand_boundary:54``.
+Ports from castor3d/util/run_jorek_util.py: downsample_boundary:106,
+extend_psi:214, extend_prof:232, get_bnd_from_castor:293; and from
+castor3d/util/data.py: expand_boundary:54.
 
-**Extension, not just the boundary.** ``extend_psi``/``extend_prof`` live here
-rather than in :mod:`ashen.profiles` because the psi grid they build is shared
-by the boundary write (the `psi_boundary` values) and every profile -- the
-boundary and the extended grid are one design, not two.
+Extension, not just the boundary: extend_psi/extend_prof live here, not
+in ashen.profiles, because the psi grid they build is shared by the
+boundary write (psi_boundary values) and every profile -- boundary and
+extended grid are one design, not two.
 
-**Suffix threaded explicitly.** The old code hardcoded the machine suffix
-``"DIIID"`` into five filenames across this module and `profiles.py`. Every
-function here takes ``suffix`` as a required argument instead.
+Suffix threaded explicitly: old code hardcoded machine suffix "DIIID"
+into 5 filenames across this module and profiles.py. Every function here
+takes `suffix` as a required argument instead.
 """
 
 from __future__ import annotations
@@ -83,15 +83,14 @@ class ExtendedPsi(NamedTuple):
 def extend_psi(psi: np.ndarray, extend_ratio: float, extend_reso: int) -> ExtendedPsi:
     """Extend a psi grid past the plasma edge by fitting its saturating shape.
 
-    JOREK's free-boundary solver wants vacuum region beyond the last closed
-    flux surface. This fits ``psi(index)`` as a saturating exponential, then
-    extrapolates ``extend_reso`` points out to where the fit reaches
-    ``psi[-1] * extend_ratio``.
+    JOREK's free-boundary solver wants vacuum region beyond the last
+    closed flux surface. Fits psi(index) as a saturating exponential, then
+    extrapolates extend_reso points out to where the fit reaches
+    psi[-1] * extend_ratio.
 
-    ``real_psi_edge`` is the ratio of the true plasma edge to the new
-    (extended) edge -- callers rescale physical ``psi_n`` values against it
-    (e.g. `Columbia/NL_kinks/analysis.py:143`,
-    `psi_n_in_adjusted = psi_n_in * real_psi_edge`).
+    real_psi_edge is the ratio of the true plasma edge to the new
+    (extended) edge -- callers rescale physical psi_n values against it
+    (e.g. analysis.py:143, psi_n_in_adjusted = psi_n_in * real_psi_edge).
     """
     psi = np.asarray(psi, dtype=float)
     psi_target = psi[-1] * extend_ratio

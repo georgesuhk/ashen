@@ -1,30 +1,28 @@
 """Loading and validating a shotfile.
 
-A shotfile stays exactly what it always was: a plain Python module of module
--level globals, executed and read back as attributes -- this is what lets a
-shotfile compute values inline (``rho_const = n0``), which is why it was kept
-in this form rather than moved to a declarative format (see the refactor
-plan's scope decisions).
+A shotfile stays exactly what it always was: a plain Python module of
+module-level globals, executed and read back as attributes -- this is what
+lets a shotfile compute values inline (rho_const = n0), the reason it was
+kept in this form rather than moved to declarative config (refactor plan's
+scope decisions).
 
-What changes is *loading*. The old ``run_jorek.py`` read each optional
-attribute inside a bare ``try/except: pass`` (four of them, `run_jorek.py:76
--108`), which silently absorbed genuine typos along with missing-but-optional
-fields. Loading here goes through :class:`ShotParams`: required fields raise
-by name if missing (which already catches a typo of a *required* field --
-mistype ``eta`` and it simply shows up as missing), and defaults apply where
-the old code had them.
+What changes is loading. Old run_jorek.py read each optional attribute
+inside a bare try/except: pass (4x, run_jorek.py:76-108), silently
+absorbing genuine typos along with missing-but-optional fields. Loading
+here goes through ShotParams: required fields raise by name if missing
+(already catches a typo of a required field -- mistype `eta` and it shows
+up as missing), defaults apply where old code had them.
 
-A typo of an *optional* field is different: since it has a default, a
-misspelled ``freebondary = False`` would otherwise be silently ignored and
-``freeboundary`` would quietly stay at its default. The real shotfile
-`qa2.1_g2.3/eta1e-3_RE/shotfile.py` also defines `n0` purely as a local
-stepping stone for `rho_const = n0` -- exactly the "compute inline" pattern
-that's the whole reason shotfiles stayed plain Python rather than becoming
-declarative config. So an unrecognised attribute is **not** an error by
-default (that would break `n0`); it is only flagged when it is a close
-spelling match to a real field name (`difflib`), which is precisely the
-"did you mean...?" signal a typo produces without rejecting legitimate scratch
-variables.
+A typo of an optional field is different: since it has a default, a
+misspelled `freebondary = False` would otherwise silently leave
+`freeboundary` at its default. The real shotfile
+qa2.1_g2.3/eta1e-3_RE/shotfile.py also defines `n0` purely as a local
+stepping stone for `rho_const = n0` -- exactly the "compute inline"
+pattern that's the whole reason shotfiles stayed plain Python. So an
+unrecognised attribute is NOT an error by default (that would break `n0`);
+it's flagged only when it's a close spelling match to a real field name
+(difflib) -- the "did you mean...?" signal a typo produces without
+rejecting legitimate scratch variables.
 """
 
 from __future__ import annotations
@@ -88,11 +86,11 @@ class ShotParams:
     allow_other_starwall: bool = False
     namelist_options: dict = field(default_factory=dict)
 
-    #: Machine suffix for CASTOR3D filenames (`xn_fpol_stor0_<suffix>`, etc).
-    #: The old code hardcoded "DIIID" into five filenames across
-    #: run_jorek_util.py; every shotfile so far has implicitly meant DIIID,
-    #: so that stays the default -- but it is now a real, overridable field
-    #: rather than a silent assumption. See boundary.py / profiles.py.
+    #: Machine suffix for CASTOR3D filenames (xn_fpol_stor0_<suffix>, etc).
+    #: Old code hardcoded "DIIID" into 5 filenames across run_jorek_util.py;
+    #: every shotfile so far has implicitly meant DIIID, so that stays the
+    #: default -- now a real, overridable field, not a silent assumption.
+    #: See boundary.py / profiles.py.
     castor_suffix: str = "DIIID"
 
     # --- required only for certain methods ---------------------------------
@@ -142,11 +140,11 @@ class ShotParams:
 
 
 def load_shotfile(path: Path | str) -> ShotParams:
-    """Execute a shotfile module and validate it into a :class:`ShotParams`.
+    """Execute a shotfile module and validate it into a ShotParams.
 
-    Raises :class:`ShotfileError` naming the offending field for a missing
-    required field, an unknown field (the typo-catcher the old code lacked),
-    or an unmet cross-field requirement (see :meth:`ShotParams.__post_init__`).
+    Raises ShotfileError naming the offending field for a missing required
+    field, an unknown field (the typo-catcher old code lacked), or an
+    unmet cross-field requirement (ShotParams.__post_init__).
     """
     path = Path(path)
     spec = importlib.util.spec_from_file_location("shotfile", path)
