@@ -1,11 +1,10 @@
-"""``timestep`` entry point: simulation time at one or two restart steps, in
+"""`timestep` entry point: simulation time at one or two restart steps, in
 both SI seconds and JOREK's own code units.
 
-Run from inside a prepared run folder (like ``run_jorek --show-config``),
-not driven by ``cases.toml`` -- this is a one-off lookup, not a campaign-wide
-gather. Runs ``jorek2_postproc`` directly (via
-:mod:`ashen.diagnostics.timestep`), so it needs the same environment
-``analyse``/``plot`` do (a run folder with the tool symlinked in).
+Run from inside a prepared run folder (like `run_jorek --show-config`),
+not driven by cases.toml -- a one-off lookup, not a campaign-wide gather.
+Runs jorek2_postproc directly (diagnostics.timestep), so needs the same
+environment analyse/plot do (a run folder with the tool symlinked in).
 """
 
 from __future__ import annotations

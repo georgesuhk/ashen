@@ -1,11 +1,11 @@
 """Simulation time at a restart step, in both SI seconds and JOREK's own
 code units.
 
-A one-off inspection tool, not a batch diagnostic to keep warm: it always
-re-runs ``jorek2_postproc``'s ``zeroD_quantities`` (in each unit system)
-rather than trusting whatever ``zeroD_quantities_s<step>.dat`` cache
-``analyse --diag zerod`` may have already left behind, since that cache is
-SI-only and may be stale relative to a `--force` re-run here.
+A one-off inspection tool, not a batch diagnostic to keep warm: always
+re-runs jorek2_postproc's zeroD_quantities (in each unit system) rather
+than trusting whatever zeroD_quantities_s<step>.dat cache `analyse --diag
+zerod` may have left, since that cache is SI-only and may be stale
+relative to a --force re-run here.
 """
 
 from __future__ import annotations

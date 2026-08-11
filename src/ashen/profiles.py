@@ -1,19 +1,19 @@
 """CASTOR3D -> JOREK profile translation: psi, ffprime, T, and resampling.
 
-Ports, from ``castor3d/util/run_jorek_util.py``: ``get_psi_from_castor:206``,
-``get_ffprime_prof_from_castor:238``, ``get_T_prof_from_castor:257``,
-``create_profiles_from_castor:281``; and from ``castor3d/util/data.py``:
-``resample_profile:17``, ``smooth_profile_preserve_center:76``.
+Ports, from castor3d/util/run_jorek_util.py: get_psi_from_castor:206,
+get_ffprime_prof_from_castor:238, get_T_prof_from_castor:257,
+create_profiles_from_castor:281; and from castor3d/util/data.py:
+resample_profile:17, smooth_profile_preserve_center:76.
 
-**Faithfully replicated, not yet fixed -- see ``KNOWN_ISSUES.md`` at the repo
-root before changing anything in ``get_t_profile_from_castor`` or
-``get_ffprime_profile_from_castor``.** Both contain behaviour preserved
-deliberately pending George's physics judgement (a wrong-grid bug and a
-formula that cancels out density entirely in T; a half-mesh alignment
-question in ffprime). That file is the single source of truth for these --
-this docstring intentionally does not duplicate the detail.
+Faithfully replicated, not yet fixed -- see KNOWN_ISSUES.md at the repo
+root before changing anything in get_t_profile_from_castor or
+get_ffprime_profile_from_castor. Both preserve behaviour deliberately
+pending George's physics judgement (a wrong-grid bug and a formula that
+cancels out density entirely in T; a half-mesh alignment question in
+ffprime). KNOWN_ISSUES.md is the single source of truth for these --
+this docstring intentionally doesn't duplicate the detail.
 
-**Suffix threaded explicitly** rather than hardcoded, same as `boundary.py`.
+Suffix threaded explicitly, not hardcoded, same as boundary.py.
 """
 
 from __future__ import annotations
@@ -85,14 +85,14 @@ def get_ffprime_profile_from_castor(
 ) -> np.ndarray:
     """The ff' profile JOREK's Grad-Shafranov solver needs.
 
-    ``psi_n`` is not an argument here (unlike the old
-    ``get_ffprime_prof_from_castor(psi_n, psi, ...)``) because it was only
-    ever used for the smoothing call below, computed as ``psi / psi[-1]``;
-    passing ``psi`` alone removes the chance of it disagreeing with the grid
-    ``psi`` describes -- a tighter version of the "wrong grid" problem
-    documented on `get_t_profile_from_castor` below, fixed here because it
-    does not change any numerical output (it is the exact same computation,
-    just with one fewer redundant argument).
+    psi_n is not an argument here (unlike old
+    get_ffprime_prof_from_castor(psi_n, psi, ...)) because it was only
+    ever used for the smoothing call below, computed as psi/psi[-1];
+    passing psi alone removes the chance of it disagreeing with the grid
+    psi describes -- a tighter version of the "wrong grid" problem
+    documented on get_t_profile_from_castor below, fixed here since it
+    doesn't change any numerical output (same computation, one fewer
+    redundant argument).
     """
     jpol = load_two_col_data(f"{cotrans_dir}/xn_hjpol_stor0_{suffix}")[:, 1][1:]
     Ipol = jpol
@@ -110,17 +110,17 @@ def get_t_profile_from_castor(
 ) -> np.ndarray:
     """The temperature profile JOREK needs.
 
-    Preserves two behaviours deliberately, pending George's physics judgement
-    -- see ``KNOWN_ISSUES.md`` #1 and #2 at the repo root for the full
+    Preserves two behaviours deliberately, pending George's physics
+    judgement -- KNOWN_ISSUES.md #1, #2 at the repo root for full
     explanation and verification:
 
-    1. Recomputes its own psi grid from file instead of using the caller's,
-       so T sits on the unextended grid even when the boundary is extended.
-    2. ``rho_profile`` cancels out of the output algebraically and has no
+    1. Recomputes its own psi grid from file instead of using the
+       caller's, so T sits on the unextended grid even when the boundary
+       is extended.
+    2. rho_profile cancels out of the output algebraically and has no
        effect on the result, verified against the real fixture.
 
-    Do not change either without confirming first -- both alter published
-    numbers.
+    Do not change either without confirming first -- both alter published numbers.
     """
     rho_profile = np.asarray(rho_profile, dtype=float)
     psi = np.abs(load_two_col_data(f"{cotrans_dir}/xn_fpol_stor0_{suffix}")[:, 1])

@@ -1,13 +1,12 @@
 """Populating a run folder: copying and symlinking template files.
 
-Ports ``castor3d/util/io.py:23-138`` (``copy_all_files``, ``symlink_folder``,
-``symlink_folder_files``, ``symlink_file``).
+Ports castor3d/util/io.py:23-138 (copy_all_files, symlink_folder,
+symlink_folder_files, symlink_file).
 
-**One asymmetry preserved from the original, not fixed:** :func:`symlink_dir`
-creates an **absolute** symlink target; :func:`symlink_file` creates a
-**relative** one (via `os.path.relpath`). Nothing in the refactor plan flags
-this as a bug to fix, so it is kept exactly as-is rather than invented as a
-new behaviour change.
+One asymmetry preserved, not fixed: symlink_dir creates an ABSOLUTE
+symlink target; symlink_file creates a RELATIVE one (os.path.relpath).
+Not flagged as a bug in the refactor plan, so kept as-is rather than
+invented as a new behaviour change.
 """
 
 from __future__ import annotations
