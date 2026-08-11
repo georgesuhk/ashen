@@ -1,9 +1,9 @@
-"""HDF5 cache for ``jorek2_four`` output -- one file per step.
+"""HDF5 cache for jorek2_four output -- one file per step.
 
-Unlike :mod:`ashen.diagnostics.poincare_cache`, this is written whole, not
-incrementally: a Fourier decomposition of a single restart file isn't
-resumable the way field-line tracing is, so there is nothing to "extend".
-``--force`` is the only way to redo a step that already has a cache.
+Unlike poincare_cache, written whole, not incrementally: a Fourier
+decomposition of a single restart file isn't resumable like field-line
+tracing, so nothing to "extend". --force is the only way to redo a
+cached step.
 """
 
 from __future__ import annotations

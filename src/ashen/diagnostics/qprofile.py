@@ -1,17 +1,16 @@
-"""q-profile gathering (``jorek2_postproc``'s ``qprofile`` command) and
+"""q-profile gathering (jorek2_postproc's qprofile command) and
 rational-surface lookup.
 
-Exists to answer, for a given ``(n, m)`` toroidal/poloidal mode pair, *where*
-in the domain (as ``psi_n``) the safety factor satisfies ``q = m/n`` -- the
-resonant surface a tearing/kink mode of that helicity actually grows on.
-:mod:`ashen.diagnostics.four_modes` uses this to pin its amplitude time
-series to that surface instead of an unlocalised domain-wide max.
+Answers, for a given (n, m) toroidal/poloidal mode pair, where in the
+domain (as psi_n) the safety factor satisfies q=m/n -- the resonant
+surface a tearing/kink mode of that helicity actually grows on.
+diagnostics.four_modes uses this to pin its amplitude time series to that
+surface instead of an unlocalised domain-wide max.
 
-**Gathering.** ``run_qprofile_step`` runs ``jorek2_postproc`` **in place**
-in ``run_dir``, the same pattern as :func:`ashen.jorek2.run_zero_d` and
-:func:`ashen.diagnostics.poincare._write_flux_surface`: nothing needs
-staging, and the output is meant to persist under ``run_dir/postproc/`` as a
-cache keyed by step, not be collected into a scratch dir and discarded.
+Gathering: run_qprofile_step runs jorek2_postproc in place in run_dir,
+same pattern as jorek2.run_zero_d and poincare._write_flux_surface --
+nothing to stage, output persists under run_dir/postproc/ as a
+step-keyed cache, not collected into a scratch dir and discarded.
 """
 
 from __future__ import annotations
@@ -37,13 +36,12 @@ POSTPROC_TOOL = "jorek2_postproc"
 
 
 def run_qprofile_step(run: Jorek2Run, step: int, paths: RunPaths) -> Path:
-    """q-profile for one step. Ports the shape of
-    :func:`ashen.jorek2.run_zero_d`, swapping in
-    :func:`ashen.postproc.qprofile_script`.
+    """q-profile for one step. Ports the shape of jorek2.run_zero_d,
+    swapping in postproc.qprofile_script.
 
-    The control script is a unique per-call temp file (not a fixed name),
-    for the same reason ``run_zero_d``'s is: concurrent steps against the
-    same ``run_dir`` must not race on it.
+    Control script is a unique per-call temp file, not a fixed name, same
+    reason as run_zero_d's: concurrent steps against the same run_dir
+    must not race on it.
     """
     exe = run.exe_dir / POSTPROC_TOOL
     if not exe.is_file():
@@ -83,24 +81,23 @@ def run_qprofile_step(run: Jorek2Run, step: int, paths: RunPaths) -> Path:
 
 
 def read_qprofile(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
-    """``(psi_n, q)`` from one step's ``qprofile_s<step>.dat``.
+    """(psi_n, q) from one step's qprofile_s<step>.dat.
 
-    A single-step ``for step`` loop always writes exactly one block, so this
-    takes whichever one block :func:`ashen.postproc.read_postproc_profile`
-    found rather than requiring the caller to know the step number the file
-    was written with.
+    A single-step `for step` loop always writes exactly one block, so
+    this takes whichever one block postproc.read_postproc_profile found,
+    not requiring the caller to know the step number the file was
+    written with.
 
-    Columns are selected **positionally**, not by the ``headers`` name list
-    ``read_postproc_profile`` returns. ``exec_commands.f90::qprofile`` sets
-    ``tmp_expr_list%n_expr = 0`` immediately before assigning
-    ``expr(1)%name = 'Psi_n'`` / ``expr(2)%name = 'q'``
-    (``exec_commands.f90:2368-2370``) without ever incrementing it back up,
-    so ``write_ascii_header``'s ``do i = 1, expr_list%n_expr`` loop runs zero
-    times and the header line it writes carries no column names at all --
-    only ``# `` followed by nothing. A real bug in vendored JOREK
-    (``Columbia/jorek_RE``, never to be edited here), but the column *order*
-    (``Psi_n`` then ``q``, from ``res1d(k2,:) = (/ get_psi_n(...), q(k) /)``
-    a few lines below) is unaffected, so position is what's reliable.
+    Columns selected POSITIONALLY, not by the `headers` name list
+    read_postproc_profile returns. exec_commands.f90::qprofile sets
+    tmp_expr_list%n_expr=0 immediately before assigning
+    expr(1)%name='Psi_n' / expr(2)%name='q' (exec_commands.f90:2368-2370)
+    without ever incrementing it back up, so write_ascii_header's
+    `do i=1,expr_list%n_expr` loop runs zero times and the header line
+    carries no column names -- just "# " and nothing. Real bug in
+    vendored JOREK (Columbia/jorek_RE, never edited here), but column
+    ORDER (Psi_n then q, from res1d(k2,:) = (/get_psi_n(...), q(k)/) a
+    few lines below) is unaffected, so position is what's reliable.
     """
     _headers, blocks = read_postproc_profile(path)
     data = next(iter(blocks.values()))
@@ -110,13 +107,13 @@ def read_qprofile(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
 def find_rational_surfaces(
     psi_n: np.ndarray, q: np.ndarray, q_target: float
 ) -> list[float]:
-    """Every ``psi_n`` where ``q(psi_n)`` crosses ``q_target``, linearly
-    interpolated between adjacent samples.
+    """Every psi_n where q(psi_n) crosses q_target, linearly interpolated
+    between adjacent samples.
 
-    Ports the crossing search in ``exec_commands.f90::find_q_surface``
-    (``(q(i)-qvalue)*(q(i+1)-qvalue) < 0``). Returns every crossing, not just
-    the first -- reversed-shear profiles cross a given q more than once, and
-    each is a distinct physical rational surface.
+    Ports the crossing search in exec_commands.f90::find_q_surface
+    ((q(i)-qvalue)*(q(i+1)-qvalue) < 0). Returns every crossing, not just
+    the first -- reversed-shear profiles cross a given q more than once,
+    each a distinct physical rational surface.
     """
     crossings: list[float] = []
     for i in range(len(q) - 1):
@@ -136,21 +133,19 @@ def rational_surface_matches(
     modes: Sequence[tuple[int, int, str]],
     traced_psi_n: Sequence[float],
 ) -> dict[float, str]:
-    """Snap each requested ``(n, m, color)``'s ``q = m/n`` rational surface(s)
-    onto the nearest value in ``traced_psi_n`` -- the discrete grid a Poincare
-    scan actually traced, since a computed crossing essentially never lands
-    exactly on one of those. All arguments are in the same (normalised
-    ``psi_n``) units; the caller owns any conversion to/from the physical
-    units :class:`~ashen.diagnostics.poincare_cache.LineKey` stores.
+    """Snap each requested (n, m, color)'s q=m/n rational surface(s) onto
+    the nearest value in traced_psi_n -- the discrete grid a Poincare scan
+    actually traced, since a computed crossing essentially never lands
+    exactly on one. All arguments share the same (normalised psi_n)
+    units; the caller owns any conversion to/from the physical units
+    poincare_cache.LineKey stores.
 
-    A reversed-shear profile can cross a given ``q`` more than once; every
-    crossing is matched and coloured the same, since each is a distinct
-    physical resonance for that mode (same precedent as
-    :func:`ashen.diagnostics.four_modes.rational_surface_series`). ``n == 0``
-    entries are skipped (``m/0`` is undefined) rather than erroring, so a
-    mixed list of resonant and non-resonant modes doesn't need filtering by
-    the caller. Returns ``{}`` if ``traced_psi_n`` is empty -- nothing to
-    snap onto.
+    A reversed-shear profile can cross a given q more than once; every
+    crossing is matched and coloured the same, each a distinct physical
+    resonance for that mode (same precedent as four_modes.
+    rational_surface_series). n==0 entries are skipped (m/0 undefined),
+    not errored, so a mixed resonant/non-resonant mode list needs no
+    caller-side filtering. Returns {} if traced_psi_n is empty.
     """
     traced = list(traced_psi_n)
     matches: dict[float, str] = {}
