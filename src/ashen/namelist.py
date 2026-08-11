@@ -1,24 +1,19 @@
 """Reading and editing Fortran namelists.
 
-Replaces three independent implementations that had drifted apart:
+Replaces 3 independent implementations that had drifted apart:
+run_jorek_util.py:9 replace_field_in_files, basics.py:220
+update_field_in_file, io.py:266 update_bracket_value (plus io.py:220
+extract_from_file on the read side).
 
-* ``run_jorek_util.py:9   replace_field_in_files``
-* ``basics.py:220         update_field_in_file``
-* ``io.py:266             update_bracket_value``
-
-plus ``io.py:220 extract_from_file`` on the read side.
-
-Two behaviours are deliberately different from all of them:
-
-**Edits must match exactly once.** The old code replaced every match silently,
-so a duplicated key was edited in several places at once with no warning. This
-mirrors the guard in JOREK's own ``util/setinput.sh``, which refuses to write
-unless the match count is one.
-
-**Numbers are formatted properly.** The old ``f"{v:.16g}".replace("e", ".d")``
-produced malformed Fortran whenever the mantissa had a decimal point --
-``1.5e20`` became ``1.5.d+20`` -- and silently emitted single-precision
-literals (``0.03``) or integers (``100``) into double-precision fields.
+Two deliberate behaviour changes:
+- Edits must match exactly once. Old code replaced every match silently, so
+  a duplicated key was edited in several places with no warning. Mirrors
+  JOREK's own util/setinput.sh, which refuses to write unless match count
+  is 1.
+- Numbers are formatted properly. Old f"{v:.16g}".replace("e", ".d")
+  produced malformed Fortran for any mantissa with a decimal point
+  (1.5e20 -> 1.5.d+20), and silently wrote single-precision literals
+  (0.03) or integers (100) into double-precision fields.
 """
 
 from __future__ import annotations
@@ -52,12 +47,12 @@ class NamelistError(RuntimeError):
 def fortran_literal(value: Any) -> str:
     """Render a Python value as a Fortran namelist literal.
 
-    Floats always become double-precision exponent form (``1.5d20``), which is
-    what the old ``.replace("e", ".d")`` was reaching for but got wrong for any
-    mantissa containing a decimal point.
+    Floats always become double-precision exponent form (1.5d20) -- what
+    the old .replace("e", ".d") was reaching for but got wrong for any
+    mantissa with a decimal point.
 
-    Strings pass through untouched: callers legitimately supply raw Fortran
-    such as ``.t.`` or ``'in_bnd.dat'``.
+    Strings pass through untouched: callers legitimately supply raw
+    Fortran (.t., 'in_bnd.dat').
     """
     if isinstance(value, bool):
         return ".t." if value else ".f."
@@ -66,9 +61,8 @@ def fortran_literal(value: Any) -> str:
     if isinstance(value, float):
         if value != value or value in (float("inf"), float("-inf")):
             raise NamelistError(f"cannot write non-finite value {value!r}")
-        # repr() gives the shortest string that round-trips exactly. Formatting
-        # to a fixed precision instead would surface representation noise
-        # (1e-6 -> 9.9999999999999995e-07) and bloat every diff.
+        # repr() = shortest round-tripping string; fixed precision would
+        # surface noise (1e-6 -> 9.9999999999999995e-07) and bloat diffs.
         mantissa, _, exponent = repr(value).partition("e")
         if "." not in mantissa:
             mantissa += ".0"
@@ -81,9 +75,9 @@ def fortran_literal(value: Any) -> str:
 def parse_value(text: str) -> Any:
     """Parse a namelist value into a Python object.
 
-    Handles Fortran doubles (``1.d-6``), logicals (``.t.``), quoted strings and
-    comma-separated lists. Anything unrecognised is returned as a stripped
-    string, so the parser never loses information it cannot interpret.
+    Handles Fortran doubles (1.d-6), logicals (.t.), quoted strings, and
+    comma-separated lists. Unrecognised input returns as a stripped string
+    -- never loses information it can't interpret.
     """
     text = text.strip().rstrip(",").strip()
     if not text:
@@ -131,10 +125,10 @@ def _strip_comment(line: str) -> str:
 def effective_fields(path: Path | str) -> dict[str, Any]:
     """The key/value mapping a Fortran reader would actually see.
 
-    Duplicate keys resolve **last-wins**, matching Fortran namelist semantics.
-    That makes this the right comparator for the golden tests: the shipped
-    ``in_eq`` template carries seven stacked ``n_boundary`` blocks, so byte
-    comparison is meaningless, while the effective mapping is exact.
+    Duplicate keys resolve last-wins, matching Fortran namelist semantics
+    -- the right comparator for golden tests: the shipped in_eq template
+    carries 7 stacked n_boundary blocks, so byte comparison is meaningless
+    while the effective mapping is exact.
     """
     fields: dict[str, Any] = {}
     text = Path(path).read_text(encoding="utf-8", errors="replace")
@@ -259,10 +253,10 @@ def format_boundary_block(
     psi: Sequence[float],
     float_fmt: str = ".6f",
 ) -> list[str]:
-    """Render a boundary block as namelist lines, without the trailing newline.
+    """Render a boundary block as namelist lines, no trailing newline.
 
-    Single source of truth for a layout that ``write_boundary_file`` and
-    ``write_boundary_to_namelist`` previously produced with two independent
+    Single source of truth for a layout write_boundary_file and
+    write_boundary_to_namelist previously produced with two independent
     implementations and two different default precisions.
     """
     if not (len(R) == len(Z) == len(psi)):
@@ -295,12 +289,12 @@ def set_boundary_block(
     psi: Sequence[float],
     float_fmt: str = ".6f",
 ) -> None:
-    """Write a boundary block into a namelist, **replacing** any existing one.
+    """Write a boundary block into a namelist, replacing any existing one.
 
-    The old ``write_boundary_to_namelist`` appended, which is why the shipped
-    ``template/copy/in_eq`` accumulated seven stacked ``n_boundary`` blocks.
-    Fortran's last-wins rule made that harmless but unreadable, and it grew by
-    one block every time the template was regenerated from an output.
+    Old write_boundary_to_namelist appended -- why shipped
+    template/copy/in_eq accumulated 7 stacked n_boundary blocks. Fortran's
+    last-wins rule made that harmless but unreadable, growing by one block
+    every regeneration.
     """
     path = Path(path)
     lines = path.read_text(encoding="utf-8").splitlines()
