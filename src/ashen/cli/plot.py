@@ -81,9 +81,8 @@ COMPARISON_ONLY_DIAGS = ("wetted_fraction",)
 
 
 def _dpi_kwargs(dpi: int | None) -> dict:
-    """``{"dpi": dpi}`` if the CLI overrode it, else ``{}`` so the plotting
-    function's own default applies -- repeated across every per-diag
-    renderer below."""
+    """{"dpi": dpi} if the CLI overrode it, else {} so the plotting
+    function's own default applies -- reused by every per-diag renderer."""
     return {} if dpi is None else {"dpi": dpi}
 
 
@@ -324,14 +323,13 @@ def _plot_connection_length(
 
 
 def _zero_d_is_usable(path: Path) -> bool:
-    """Whether this step's zeroD cache exists *and* actually parses.
+    """Whether this step's zeroD cache exists AND actually parses.
 
-    An existence check alone isn't enough: an interrupted ``jorek2_postproc``
-    leaves an empty or header-only file behind, which then blocks its own
-    re-gathering forever -- the file is there, so nothing regenerates it, and
-    every true-time figure for the run silently loses its x-axis (or, before
-    :func:`~ashen.postproc.read_zeroD` learned to raise, crashed on it).
-    Treating an unparseable cache as absent makes that self-healing.
+    Existence alone isn't enough: an interrupted jorek2_postproc leaves an
+    empty/header-only file, blocking its own re-gathering forever (the
+    file is there, so nothing regenerates it) and silently losing every
+    true-time figure's x-axis. Treating an unparseable cache as absent
+    makes that self-healing.
     """
     if not path.is_file():
         return False
@@ -343,29 +341,22 @@ def _zero_d_is_usable(path: Path) -> bool:
 
 
 def _ensure_zero_d(case: Case, paths: RunPaths, steps: list[int]) -> None:
-    """Gather the zeroD cache for whichever of ``steps`` don't have a usable
-    one yet -- absent, or present but unparseable (:func:`_zero_d_is_usable`).
+    """Gather the zeroD cache for whichever `steps` lack a usable one --
+    absent or unparseable (_zero_d_is_usable).
 
-    Every true-time x-axis this module draws goes through
-    :func:`_read_true_times`, which used to just report "no zeroD cache for
-    one or more steps" and skip -- meaning a true-time figure needed a
-    separate ``analyse --diag zerod`` pass first. zeroD is cheap (one
-    ``jorek2_postproc`` call per step, no field-line tracing), so it is
-    gathered here on demand instead, the same precedent as
-    :func:`~ashen.diagnostics.profiles.ensure_edge_toroidal_field`'s Btor
-    profile -- printed concisely: which steps were missing, then one line per
-    step as it's gathered.
+    Every true-time x-axis goes through _read_true_times, which used to
+    just skip on "no zeroD cache", needing a separate `analyse --diag
+    zerod` pass first. zeroD is cheap (one jorek2_postproc call/step, no
+    tracing), so it's gathered here on demand instead, same precedent as
+    ensure_edge_toroidal_field's Btor profile.
 
-    A step whose restart file doesn't exist (:class:`MissingRestartError`,
-    a :class:`FileNotFoundError` subclass -- the same tolerance ``analyse``'s
-    own zerod gathering has for a run still in progress) or whose
-    ``jorek2_postproc`` call fails for another reason (:class:`Jorek2Error`,
-    or a bare :class:`FileNotFoundError` if the executable itself isn't
-    symlinked into this run folder) is reported and skipped, not raised --
-    same catch as :func:`ensure_edge_toroidal_field`'s call site below, so
-    one step's gathering failure only leaves that step out of the eventual
-    true-time axis rather than aborting every other diag this invocation
-    was also asked to draw.
+    A step whose restart doesn't exist (MissingRestartError, a
+    FileNotFoundError subclass -- same tolerance analyse's own zerod
+    gathering has for a run in progress) or whose jorek2_postproc call
+    fails otherwise (Jorek2Error, or bare FileNotFoundError if the exe
+    isn't symlinked in) is reported and skipped, not raised -- one step's
+    failure only drops that step from the eventual axis, doesn't abort
+    every other diag this invocation also asked for.
     """
     missing = [step for step in steps if not _zero_d_is_usable(paths.zero_d(step))]
     if not missing:
@@ -387,17 +378,14 @@ def _ensure_zero_d(case: Case, paths: RunPaths, steps: list[int]) -> None:
 
 def _read_true_times(case: Case, paths: RunPaths, steps: list[int]) -> list[float] | None:
     """Each step's true time (seconds) from the zeroD cache, gathering
-    whichever steps are missing one first (:func:`_ensure_zero_d`). Still
-    returns ``None`` if any requested step's cache is missing or unreadable
-    after that -- a step whose restart genuinely doesn't exist can't be
-    gathered, and a partial time axis is worse than none, so this stays
-    all-or-nothing.
+    missing ones first (_ensure_zero_d). Still None if any requested
+    step's cache is missing/unreadable after that -- a genuinely-missing
+    restart can't be gathered, and a partial time axis is worse than none.
 
-    ``ValueError`` covers a cache that exists but is empty/truncated, or
-    carries a value that won't parse (:func:`~ashen.postproc.read_zeroD`) --
-    the same "present but unusable" case :func:`_zero_d_is_usable` already
-    tried to re-gather, kept here so a failed re-gather degrades to skipping
-    the time axis rather than aborting every other diag.
+    ValueError covers a cache that's empty/truncated or unparseable
+    (postproc.read_zeroD) -- the same case _zero_d_is_usable already tried
+    to re-gather; kept here so a failed re-gather degrades to skipping the
+    time axis rather than aborting every other diag.
     """
     _ensure_zero_d(case, paths, steps)
     true_times = []
@@ -1049,14 +1037,13 @@ def _compare_wetted_fraction(
 
 
 def _resolve_n_workers(args) -> int:
-    """``--n-workers`` if given, else ``site.toml``'s ``[diagnostics]
-    n_workers`` if that's explicitly set, else 1 (serial).
+    """--n-workers if given, else site.toml's [diagnostics] n_workers if
+    explicitly set, else 1 (serial).
 
-    Unlike ``cli/analyse.py``'s ``_resolve_parallelism``, an *unset*
-    ``[diagnostics]`` (or no ``site.toml`` at all) does not derive a worker
-    count from the machine's core count: rendering a handful of PNGs is cheap
-    enough that auto-parallelising by default would just spawn processes for
-    no measurable benefit, so plotting stays serial unless asked otherwise.
+    Unlike cli/analyse.py's _resolve_parallelism, an unset [diagnostics]
+    (or no site.toml) does NOT derive a worker count from core count --
+    rendering a handful of PNGs is cheap enough that auto-parallelising by
+    default would spawn processes for no measurable benefit.
     """
     if args.n_workers is not None:
         return max(1, args.n_workers)
