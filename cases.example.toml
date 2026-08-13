@@ -70,10 +70,12 @@ n_points        = 100
 # lc_psi_n_in = { min = 0.2, max = 0.8 }
 # Which variables/modes `plot --diag four` draws as time series -- plot-time
 # only, doesn't affect what analyse gathers. Empty (default, as below) draws
-# every variable/mode found in the four_dir/*.h5 caches. four_modes entries
-# are [m, n] pairs (poloidal, toroidal) -- [3, 2] is m=3, n=2.
-# four_vars  = ["Psi", "T"]
-# four_modes = [[2, 1], [3, 2], [1, 1]]   # [m, n] pairs
+# every variable/mode found in the four_dir/*.h5 caches. `modes` is shared
+# with poincare_highlight and mark_rational below -- one list, one
+# convention. Entries are [m, n] pairs (poloidal, toroidal) -- [3, 2] is
+# m=3, n=2.
+# four_vars = ["Psi", "T"]
+# modes     = [[2, 1], [3, 2], [1, 1]]   # [m, n] pairs
 # Fit + mark each drawn mode's exponential growth rate (gamma, 1/s) --
 # needs the zeroD cache for real time. Appended to the legend label and
 # written to four_dir/growth_rates.txt. four_growth_steps restricts the fit
@@ -133,11 +135,17 @@ n_points        = 100
 # essentially never lands exactly on a traced psi_n_in, so each mode's
 # crossing(s) snap to the nearest surface actually traced -- which line that
 # is can shift step to step as the q-profile evolves; that's the resonance
-# moving, not a bug. poincare_highlight_modes are [m, n] pairs, same
-# convention as four_modes; poincare_highlight_colors is parallel to it.
-# poincare_highlight        = true
-# poincare_highlight_modes  = [[3, 2], [2, 1]]
-# poincare_highlight_colors = ["red", "blue"]
+# moving, not a bug. Uses `modes` (above, same [m, n] convention as four) --
+# colour is auto-assigned per mode, not configured separately.
+# poincare_highlight = true
+# modes = [[3, 2], [2, 1]]
+
+# Mark `modes`' q=m/n rational surfaces as vertical dashed lines on `plot
+# --diag profiles` figures -- needs coords_var = "Psi_N". Auto-gathers the
+# qprofile cache for any requested step missing one, in parallel under
+# --n-workers. `--mark_rational` on the command line turns this on for one
+# invocation without editing the file.
+# mark_rational = true
 
 # Marker area per puncture (matplotlib scatter `s`, points^2). Plot-time
 # only. The 0.1 default suits a dense scan; a short one, or a plot zoomed

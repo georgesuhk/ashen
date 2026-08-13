@@ -20,11 +20,10 @@ _CASE_KEYS = (
     "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
-    "lc_psi_n_in", "four_vars", "four_modes", "four_growth_rate", "four_growth_steps",
+    "lc_psi_n_in", "four_vars", "modes", "four_growth_rate", "four_growth_steps",
     "four_max_delta_b", "four_ylim", "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
-    "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
-    "poincare_point_size", "mark_rational",
+    "poincare_highlight", "poincare_point_size", "mark_rational",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
     "theta_wetted_threshold",
 )
@@ -74,11 +73,19 @@ class Case:
     #: can only select/reorder already-traced surfaces (_psi_from_spec),
     #: never invents new ones.
     lc_psi_n_in: list[float] | None = None
-    #: Which vars/modes `plot --diag four` draws. Plot-time only; doesn't
-    #: affect what analyse gathers. Empty=every var/mode found in cache.
+    #: Which vars `plot --diag four` draws. Plot-time only; doesn't affect
+    #: what analyse gathers. Empty=every var found in cache.
     four_vars: list[str] = field(default_factory=list)
-    #: [m, n] pairs (poloidal, toroidal), e.g. [3, 2] = m=3, n=2.
-    four_modes: list[list[int]] = field(default_factory=list)
+    #: [m, n] pairs (poloidal, toroidal), e.g. [3, 2] = m=3, n=2. Shared by
+    #: every mode-aware diag: which modes `plot --diag four` draws, which
+    #: rational surfaces `poincare_highlight` colours in Poincare plots, and
+    #: which `mark_rational` marks on radial profiles. One list, one
+    #: convention -- where a colour is needed (poincare_highlight,
+    #: mark_rational), it's auto-assigned from plotting.colors.
+    #: DISCRETE_PALETTE by each mode's sorted (n, m) position, so the same
+    #: mode gets the same colour on every figure that draws it, the same way
+    #: `four`'s own mode-amplitude lines already are.
+    modes: list[list[int]] = field(default_factory=list)
     #: Fit+mark each mode's growth rate (gamma [1/s] = d ln|amp|/dt).
     #: Plot-time, needs zeroD cache for real time. Default off.
     four_growth_rate: bool = False
@@ -113,23 +120,17 @@ class Case:
     profile_rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
     profile_nmaxsteps: int = 2500
     profile_deltaphi: float = 0.3
-    #: Mark poincare_highlight_modes' q=m/n rational surfaces as vertical
-    #: lines on `plot --diag profiles` (needs coords_var = "Psi_N"; skipped
-    #: with a message otherwise, same as poincare_highlight it reuses the
-    #: modes/colours of). Auto-gathers the qprofile cache (jorek2_postproc)
-    #: for any requested step that lacks one, in parallel under
-    #: --n-workers -- same on-demand precedent as _ensure_zero_d. Default
-    #: off; `--mark_rational` turns it on for this invocation regardless of
-    #: the case's own setting.
+    #: Mark `modes`' q=m/n rational surfaces as vertical lines on `plot
+    #: --diag profiles` (needs coords_var = "Psi_N"; skipped with a message
+    #: otherwise). Auto-gathers the qprofile cache (jorek2_postproc) for any
+    #: requested step that lacks one, in parallel under --n-workers -- same
+    #: on-demand precedent as _ensure_zero_d. Default off; `--mark_rational`
+    #: turns it on for this invocation regardless of the case's own setting.
     mark_rational: bool = False
-    #: Colour only field lines near poincare_highlight_modes' rational
-    #: surfaces, dim the rest. Needs qprofile cache (auto-gathered, same as
-    #: poincare implies zerod).
+    #: Colour only field lines near `modes`' rational surfaces, dim the
+    #: rest. Needs qprofile cache (auto-gathered, same as poincare implies
+    #: zerod).
     poincare_highlight: bool = False
-    #: [m, n] pairs, same convention as four_modes.
-    poincare_highlight_modes: list[list[int]] = field(default_factory=list)
-    #: Parallel to poincare_highlight_modes: colour[i] for mode[i].
-    poincare_highlight_colors: list[str] = field(default_factory=list)
     #: Puncture marker area (scatter `s`, pts^2). Plot-time. Raise for a
     #: short or zoomed-in scan.
     poincare_point_size: float = 0.1
@@ -338,51 +339,25 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                 )
             merged["profile_rad_range"] = [lo, hi]
 
-        if "four_modes" in merged:
-            for mode in merged["four_modes"]:
+        if "modes" in merged:
+            for mode in merged["modes"]:
                 if not (isinstance(mode, list) and len(mode) == 2):
                     raise CasesError(
-                        f"{path}: case {name!r} four_modes entries must be "
+                        f"{path}: case {name!r} modes entries must be "
                         f"[m, n] pairs, got {mode!r}"
                     )
-            merged["four_modes"] = [[int(m), int(n)] for m, n in merged["four_modes"]]
+            merged["modes"] = [[int(m), int(n)] for m, n in merged["modes"]]
 
-        if "poincare_highlight_modes" in merged:
-            for mode in merged["poincare_highlight_modes"]:
-                if not (isinstance(mode, list) and len(mode) == 2):
-                    raise CasesError(
-                        f"{path}: case {name!r} poincare_highlight_modes entries "
-                        f"must be [m, n] pairs, got {mode!r}"
-                    )
-            modes = [[int(m), int(n)] for m, n in merged["poincare_highlight_modes"]]
-            zero_n = [mode for mode in modes if mode[1] == 0]
-            if zero_n:
-                raise CasesError(
-                    f"{path}: case {name!r} poincare_highlight_modes has n=0 "
-                    f"entries {zero_n}; q=m/n is undefined for n=0"
-                )
-            merged["poincare_highlight_modes"] = modes
-
-        if "poincare_highlight_colors" in merged or "poincare_highlight_modes" in merged:
-            modes = merged.get("poincare_highlight_modes", [])
-            colors = merged.get("poincare_highlight_colors", [])
-            if len(colors) != len(modes):
-                raise CasesError(
-                    f"{path}: case {name!r} poincare_highlight_colors "
-                    f"({len(colors)}) must have the same length as "
-                    f"poincare_highlight_modes ({len(modes)})"
-                )
-
-        if merged.get("poincare_highlight") and not merged.get("poincare_highlight_modes"):
+        if merged.get("poincare_highlight") and not merged.get("modes"):
             raise CasesError(
                 f"{path}: case {name!r} has poincare_highlight = true but no "
-                "poincare_highlight_modes/poincare_highlight_colors configured"
+                "modes configured"
             )
 
-        if merged.get("mark_rational") and not merged.get("poincare_highlight_modes"):
+        if merged.get("mark_rational") and not merged.get("modes"):
             raise CasesError(
                 f"{path}: case {name!r} has mark_rational = true but no "
-                "poincare_highlight_modes/poincare_highlight_colors configured"
+                "modes configured"
             )
 
         if "four_quantities" in merged:

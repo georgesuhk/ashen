@@ -197,15 +197,14 @@ def _write_qprofile_cache(run_dir, step, *, psi_n, q, pad_width=6):
     paths.qprofile(step).write_text("\n".join(lines) + "\n\n", encoding="utf-8")
 
 
-def _add_highlight_case(tmp_path, *, modes, colors):
+def _add_highlight_case(tmp_path, *, modes):
     cases_toml = tmp_path / "cases.toml"
     cases_toml.write_text(
         '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
         'psi_n_in = [0.2, 0.5]\n'
         'poincare_highlight = true\n'
-        f'poincare_highlight_modes = {modes}\n'
-        f'poincare_highlight_colors = {colors}\n',
+        f'modes = {modes}\n',
         encoding="utf-8",
     )
 
@@ -219,7 +218,10 @@ def test_poincare_highlight_colors_the_matched_line(campaign, monkeypatch):
     _write_qprofile_cache(
         campaign, 200, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
     )
-    _add_highlight_case(campaign.parent.parent, modes=[[2, 1]], colors=["red"])
+    _add_highlight_case(campaign.parent.parent, modes=[[2, 1]])
+    # A single mode is sorted-index 0 -- DISCRETE_PALETTE[0], auto-assigned
+    # rather than user-specified now that colors are derived from `modes`.
+    expected_color = plot_cli.DISCRETE_PALETTE[0]
 
     captured = {}
     real_draw = plot_cli.plot_poincare_step
@@ -231,8 +233,8 @@ def test_poincare_highlight_colors_the_matched_line(campaign, monkeypatch):
     monkeypatch.setattr(plot_cli, "plot_poincare_step", spy)
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
-    assert captured["100_poincare.png"] == {0.5: "red"}
-    assert captured["200_poincare.png"] == {0.5: "red"}
+    assert captured["100_poincare.png"] == {0.5: expected_color}
+    assert captured["200_poincare.png"] == {0.5: expected_color}
 
 
 def test_poincare_highlight_is_not_rescaled_by_real_psi_edge(campaign, monkeypatch):
@@ -251,7 +253,8 @@ def test_poincare_highlight_is_not_rescaled_by_real_psi_edge(campaign, monkeypat
     write_float(campaign / "real_psi_edge.dat", 0.5)
     _write_qprofile_cache(campaign, 100, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
     _write_qprofile_cache(campaign, 200, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
-    _add_highlight_case(campaign.parent.parent, modes=[[2, 1]], colors=["red"])
+    _add_highlight_case(campaign.parent.parent, modes=[[2, 1]])
+    expected_color = plot_cli.DISCRETE_PALETTE[0]
 
     captured = {}
     real_draw = plot_cli.plot_poincare_step
@@ -263,15 +266,15 @@ def test_poincare_highlight_is_not_rescaled_by_real_psi_edge(campaign, monkeypat
     monkeypatch.setattr(plot_cli, "plot_poincare_step", spy)
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
-    assert captured["100_poincare.png"] == {0.5: "red"}
-    assert captured["200_poincare.png"] == {0.5: "red"}
+    assert captured["100_poincare.png"] == {0.5: expected_color}
+    assert captured["200_poincare.png"] == {0.5: expected_color}
 
 
 def test_poincare_highlight_missing_qprofile_cache_is_skipped_not_crashed(
     campaign, capsys
 ):
     # No qprofile cache written for either step.
-    _add_highlight_case(campaign.parent.parent, modes=[[2, 1]], colors=["red"])
+    _add_highlight_case(campaign.parent.parent, modes=[[2, 1]])
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare"]) == 0
     assert (campaign / "poinc_dir" / "100_poincare.png").is_file()
@@ -535,7 +538,7 @@ def test_four_diag_skips_time_variant_without_zerod_cache(campaign, capsys):
 
 
 def test_four_modes_are_m_n_pairs_not_n_m(campaign, monkeypatch):
-    """case.four_modes entries are [m, n] (poloidal, toroidal) -- [3, 2]
+    """case.modes entries are [m, n] (poloidal, toroidal) -- [3, 2]
     means m=3, n=2. The diagnostics layer's modes= filter is (n, m), so the
     CLI must swap the pair, not pass it through as-is."""
     captured = {}
@@ -551,7 +554,7 @@ def test_four_modes_are_m_n_pairs_not_n_m(campaign, monkeypatch):
     cases_toml.write_text(
         '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
         'steps = [100, 200]\n'
-        'four_modes = [[3, 2]]\n',  # m=3, n=2
+        'modes = [[3, 2]]\n',  # m=3, n=2
         encoding="utf-8",
     )
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 2, 3, real_peak=1.0)])

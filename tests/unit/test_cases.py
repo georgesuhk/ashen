@@ -300,7 +300,7 @@ def test_four_vars_and_modes_default_empty(tmp_path):
     path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     case = load_cases(path)["a"]
     assert case.four_vars == []
-    assert case.four_modes == []
+    assert case.modes == []
 
 
 def test_four_vars_and_modes_are_settable(tmp_path):
@@ -310,18 +310,18 @@ def test_four_vars_and_modes_are_settable(tmp_path):
         [cases.a]
         steps = [1]
         four_vars = ["Psi", "u"]
-        four_modes = [[0, 1], [1, 0]]
+        modes = [[0, 1], [1, 0]]
         """,
     )
     case = load_cases(path)["a"]
     assert case.four_vars == ["Psi", "u"]
-    assert case.four_modes == [[0, 1], [1, 0]]
+    assert case.modes == [[0, 1], [1, 0]]
 
 
-def test_four_modes_rejects_non_pair_entries(tmp_path):
+def test_modes_rejects_non_pair_entries(tmp_path):
     path = _write(
         tmp_path,
-        '[cases.a]\nsteps = [1]\nfour_modes = [[0, 1, 2]]\n',
+        '[cases.a]\nsteps = [1]\nmodes = [[0, 1, 2]]\n',
     )
     with pytest.raises(CasesError, match="\\[m, n\\] pairs"):
         load_cases(path)
@@ -420,58 +420,25 @@ def test_four_ylim_rejects_min_not_less_than_max(tmp_path):
 # --- poincare_highlight ---------------------------------------------------------
 
 
-def test_poincare_highlight_defaults_off_and_empty(tmp_path):
+def test_poincare_highlight_defaults_off(tmp_path):
     path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     case = load_cases(path)["a"]
     assert case.poincare_highlight is False
-    assert case.poincare_highlight_modes == []
-    assert case.poincare_highlight_colors == []
 
 
-def test_poincare_highlight_modes_and_colors_are_settable(tmp_path):
+def test_poincare_highlight_with_modes_is_settable(tmp_path):
     path = _write(
         tmp_path,
         """
         [cases.a]
         steps = [1]
         poincare_highlight = true
-        poincare_highlight_modes = [[3, 2], [2, 1]]
-        poincare_highlight_colors = ["red", "blue"]
+        modes = [[3, 2], [2, 1]]
         """,
     )
     case = load_cases(path)["a"]
     assert case.poincare_highlight is True
-    assert case.poincare_highlight_modes == [[3, 2], [2, 1]]
-    assert case.poincare_highlight_colors == ["red", "blue"]
-
-
-def test_poincare_highlight_modes_rejects_non_pair_entries(tmp_path):
-    path = _write(
-        tmp_path,
-        '[cases.a]\nsteps = [1]\npoincare_highlight_modes = [[3, 2, 1]]\n',
-    )
-    with pytest.raises(CasesError, match="\\[m, n\\] pairs"):
-        load_cases(path)
-
-
-def test_poincare_highlight_modes_rejects_n_equals_zero(tmp_path):
-    path = _write(
-        tmp_path,
-        '[cases.a]\nsteps = [1]\npoincare_highlight_modes = [[3, 0]]\n'
-        'poincare_highlight_colors = ["red"]\n',
-    )
-    with pytest.raises(CasesError, match="n=0"):
-        load_cases(path)
-
-
-def test_poincare_highlight_colors_length_mismatch_raises(tmp_path):
-    path = _write(
-        tmp_path,
-        '[cases.a]\nsteps = [1]\npoincare_highlight_modes = [[3, 2], [2, 1]]\n'
-        'poincare_highlight_colors = ["red"]\n',
-    )
-    with pytest.raises(CasesError, match="same length"):
-        load_cases(path)
+    assert case.modes == [[3, 2], [2, 1]]
 
 
 def test_poincare_highlight_true_without_modes_raises(tmp_path):
@@ -479,7 +446,7 @@ def test_poincare_highlight_true_without_modes_raises(tmp_path):
         tmp_path,
         '[cases.a]\nsteps = [1]\npoincare_highlight = true\n',
     )
-    with pytest.raises(CasesError, match="poincare_highlight_modes"):
+    with pytest.raises(CasesError, match="modes"):
         load_cases(path)
 
 

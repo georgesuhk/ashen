@@ -155,8 +155,7 @@ def test_poincare_highlight_gathers_qprofile_alongside_poincare(
     run_dir = poincare_case_and_run_dir
     case = Case(
         name="myrun", steps=[100], psi_n_in=[0.5],
-        poincare_highlight=True, poincare_highlight_modes=[[2, 1]],
-        poincare_highlight_colors=["red"],
+        poincare_highlight=True, modes=[[2, 1]],
     )
 
     calls = []

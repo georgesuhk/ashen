@@ -264,7 +264,7 @@ def growth_rate_series(
 
 def format_growth_rates(fits: Mapping[ModeKey, GrowthFit]) -> str:
     """Human-readable table, sorted by (variable, m, n) -- m before n to
-    match cases.toml's four_modes [m, n] convention. Written by
+    match cases.toml's modes [m, n] convention. Written by
     `plot --diag four` to four_dir/growth_rates.txt."""
     header = f"{'variable':<12}{'m':>4}{'n':>4}{'gamma [1/s]':>18}{'n_points':>10}"
     lines = [header]

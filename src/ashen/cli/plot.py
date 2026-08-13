@@ -63,6 +63,7 @@ from ashen.diagnostics.theta_histogram import (
 from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_zero_d
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
+from ashen.plotting.colors import DISCRETE_PALETTE
 from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes
 from ashen.plotting.poincare import plot_poincare_step
@@ -94,6 +95,18 @@ def _dpi_kwargs(dpi: int | None) -> dict:
 #: four_vars entries that are derived from "Psi" at plot time rather than
 #: read directly from the jorek2_four cache -- see _plot_four_modes.
 PSI_DERIVED = {DELTA_B, DELTA_B_OVER_B}
+
+
+def _mode_colors(modes: list[list[int]]) -> dict[tuple[int, int], str]:
+    """{(n, m): color} for case.modes, sorted by (n, m) so the same mode
+    gets the same colour on every figure that draws it -- poincare_highlight
+    and mark_rational both need a colour per mode; `four` doesn't (its own
+    draw_mode_amplitudes assigns colour from whatever's actually in its
+    cache), but this sorted-index-into-DISCRETE_PALETTE convention matches
+    it, same "same mode, same colour" intent.
+    """
+    ordered = sorted((n, m) for m, n in modes)
+    return {(n, m): DISCRETE_PALETTE[i % len(DISCRETE_PALETTE)] for i, (n, m) in enumerate(ordered)}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -175,10 +188,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mark_rational", action="store_true",
-        help="profiles: mark poincare_highlight_modes' q=m/n rational surfaces as "
-        "vertical lines (needs coords_var = 'Psi_N'); auto-gathers the qprofile "
-        "cache for any step missing one, in parallel under --n-workers; turns "
-        "this on for every case plotted, regardless of the case's own "
+        help="profiles: mark case.modes' q=m/n rational surfaces as vertical "
+        "lines (needs coords_var = 'Psi_N'); auto-gathers the qprofile cache "
+        "for any step missing one, in parallel under --n-workers; turns this "
+        "on for every case plotted, regardless of the case's own "
         "mark_rational setting",
     )
     parser.add_argument(
@@ -243,10 +256,8 @@ def _rational_highlight_for_step(
         return None
 
     psi_n_q, q = read_qprofile(q_path)
-    modes = [
-        (n, m, color)
-        for (m, n), color in zip(case.poincare_highlight_modes, case.poincare_highlight_colors)
-    ]
+    colors = _mode_colors(case.modes)
+    modes = [(n, m, colors[(n, m)]) for m, n in case.modes]
     return rational_surface_matches(psi_n_q, q, modes, traced_psi_n)
 
 
@@ -459,16 +470,21 @@ def _ensure_qprofile(
 def _rational_lines_for_step(
     case: Case, paths: RunPaths, step: int
 ) -> list[tuple[float, str]] | None:
-    """[(psi_n, color), ...] for case.poincare_highlight_modes' q=m/n
-    crossings in this step's qprofile cache. None if the cache is
-    missing (caller already tried _ensure_qprofile).
+    """[(psi_n, color), ...] for case.modes' q=m/n crossings in this step's
+    qprofile cache. None if the cache is missing (caller already tried
+    _ensure_qprofile). n=0 entries are skipped (m/0 undefined) -- `modes`
+    is shared with `four`, where an n=0 axisymmetric component is valid.
     """
     q_path = paths.qprofile(step)
     if not q_path.is_file():
         return None
     psi_n_q, q = read_qprofile(q_path)
+    colors = _mode_colors(case.modes)
     lines: list[tuple[float, str]] = []
-    for (m, n), color in zip(case.poincare_highlight_modes, case.poincare_highlight_colors):
+    for m, n in case.modes:
+        if n == 0:
+            continue
+        color = colors[(n, m)]
         for crossing in find_rational_surfaces(psi_n_q, q, m / n):
             lines.append((crossing, color))
     return lines
@@ -548,7 +564,7 @@ def _plot_four_modes(
         if "Psi" not in fetch_vars:
             fetch_vars.append("Psi")
 
-    # case.four_modes entries are [m, n] pairs (user-facing); the diagnostics
+    # case.modes entries are [m, n] pairs (user-facing); the diagnostics
     # layer's ModeKey/modes filter is (n, m), matching FourRecord's own
     # (variable, n, m) field order -- swap here, at the one point they meet.
     # Computed unconditionally: it's the only place mode/variable keys are
@@ -557,7 +573,7 @@ def _plot_four_modes(
     series = max_amplitude_series(
         paths, steps,
         variables=fetch_vars,
-        modes=[(n, m) for m, n in case.four_modes] if case.four_modes else None,
+        modes=[(n, m) for m, n in case.modes] if case.modes else None,
     )
     if not series:
         print("  no jorek2_four cache found for any requested step/variable/mode "
@@ -785,9 +801,8 @@ def _plot_profiles(
         if case.coords_var != "Psi_N":
             print("  mark_rational needs coords_var = 'Psi_N', skipping "
                   f"(this case's coords_var is {case.coords_var!r})")
-        elif not case.poincare_highlight_modes:
-            print("  mark_rational is on but no poincare_highlight_modes/"
-                  "poincare_highlight_colors configured, skipping")
+        elif not case.modes:
+            print("  mark_rational is on but no modes configured, skipping")
         else:
             _ensure_qprofile(case, paths, steps, n_workers=n_workers)
             rational_lines = _rational_lines_for_step(case, paths, steps[0])

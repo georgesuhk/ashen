@@ -321,16 +321,25 @@ data, only `analyse --diag poincare` with a wider/denser `psi_n_in` does.
 
 ### Highlighting rational surfaces in Poincare plots
 
-Setting `poincare_highlight = true` (plus `poincare_highlight_modes`,
-`[m, n]` pairs like `four_modes`, and a parallel `poincare_highlight_colors`)
-colours the field lines nearest each mode's `q = m/n` resonant surface,
-dimming everything else to grey. It needs the q-profile cache -- `analyse
---diag poincare` gathers it automatically once this is set, the same way it
-already force-includes `zerod`. Because Poincare only traces the discrete
-`psi_n_in` grid requested, a computed rational surface is snapped to the
-*nearest actually-traced* line rather than requiring an exact match; which
-physical line that is can shift step to step as the q-profile evolves --
-that tracks the real resonance moving, not a bug.
+Setting `poincare_highlight = true` (plus `modes`, the same `[m, n]` pairs
+used by `four`) colours the field lines nearest each mode's `q = m/n`
+resonant surface, dimming everything else to grey. Colour is auto-assigned
+per mode (sorted `(n, m)` order into `plotting.colors.DISCRETE_PALETTE`), not
+user-specified -- the same mode always gets the same colour on every figure
+that draws it. It needs the q-profile cache -- `analyse --diag poincare`
+gathers it automatically once this is set, the same way it already
+force-includes `zerod`. Because Poincare only traces the discrete `psi_n_in`
+grid requested, a computed rational surface is snapped to the *nearest
+actually-traced* line rather than requiring an exact match; which physical
+line that is can shift step to step as the q-profile evolves -- that tracks
+the real resonance moving, not a bug.
+
+**Marking rational surfaces on radial profiles.** `mark_rational = true`
+(case field, or `--mark_rational` for one invocation) draws the same
+`modes`' `q = m/n` crossings as vertical dashed lines on `plot --diag
+profiles` figures -- needs `coords_var = "Psi_N"`. Auto-gathers the
+q-profile cache for any requested step that's missing one, in parallel under
+`--n-workers`.
 
 **Puncture size.** `poincare_point_size` (case field, plot-time only, default
 `0.1`) sets each puncture's marker area -- matplotlib's scatter `s`, in
@@ -552,14 +561,16 @@ LC/LCTT split: `four_dir/<variable>_modes_step.png` (raw step index) and
 zeroD cache). The time variant is skipped -- with a printed note, not an
 error -- if the zeroD cache doesn't cover every requested step.
 
-`four_vars` and `four_modes` (case fields, plot-time only) restrict which
+`four_vars` and `modes` (case fields, plot-time only) restrict which
 variables/modes get drawn; empty (default) draws everything found in the
-cache. `four_modes` entries are `[m, n]` pairs (poloidal, toroidal) -- `[3,
-2]` is `m=3, n=2`, matching how a mode is normally written (`m/n`):
+cache. `modes` is shared with `poincare_highlight` and `mark_rational`
+(below) -- one list, one convention. Entries are `[m, n]` pairs (poloidal,
+toroidal) -- `[3, 2]` is `m=3, n=2`, matching how a mode is normally written
+(`m/n`):
 
 ```toml
-four_vars  = ["Psi", "T"]
-four_modes = [[2, 1], [3, 2], [1, 1]]   # [m, n] pairs
+four_vars = ["Psi", "T"]
+modes     = [[2, 1], [3, 2], [1, 1]]   # [m, n] pairs
 ```
 
 A step or `(variable, n, m)` combination missing from the cache shows as a
