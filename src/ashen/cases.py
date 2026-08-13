@@ -24,7 +24,7 @@ _CASE_KEYS = (
     "four_max_delta_b", "four_ylim", "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_highlight_modes", "poincare_highlight_colors",
-    "poincare_point_size",
+    "poincare_point_size", "mark_rational",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
     "theta_wetted_threshold",
 )
@@ -113,6 +113,15 @@ class Case:
     profile_rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
     profile_nmaxsteps: int = 2500
     profile_deltaphi: float = 0.3
+    #: Mark poincare_highlight_modes' q=m/n rational surfaces as vertical
+    #: lines on `plot --diag profiles` (needs coords_var = "Psi_N"; skipped
+    #: with a message otherwise, same as poincare_highlight it reuses the
+    #: modes/colours of). Auto-gathers the qprofile cache (jorek2_postproc)
+    #: for any requested step that lacks one, in parallel under
+    #: --n-workers -- same on-demand precedent as _ensure_zero_d. Default
+    #: off; `--mark_rational` turns it on for this invocation regardless of
+    #: the case's own setting.
+    mark_rational: bool = False
     #: Colour only field lines near poincare_highlight_modes' rational
     #: surfaces, dim the rest. Needs qprofile cache (auto-gathered, same as
     #: poincare implies zerod).
@@ -367,6 +376,12 @@ def load_cases(path: Path | str) -> dict[str, Case]:
         if merged.get("poincare_highlight") and not merged.get("poincare_highlight_modes"):
             raise CasesError(
                 f"{path}: case {name!r} has poincare_highlight = true but no "
+                "poincare_highlight_modes/poincare_highlight_colors configured"
+            )
+
+        if merged.get("mark_rational") and not merged.get("poincare_highlight_modes"):
+            raise CasesError(
+                f"{path}: case {name!r} has mark_rational = true but no "
                 "poincare_highlight_modes/poincare_highlight_colors configured"
             )
 

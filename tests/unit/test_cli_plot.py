@@ -1297,8 +1297,8 @@ def test_profiles_diag_writes_one_file_per_var(campaign):
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
 
-    assert (campaign / "poinc_dir" / "Psi_N_currdens_profile.png").is_file()
-    assert (campaign / "poinc_dir" / "Psi_N_T_profile.png").is_file()
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.png").is_file()
+    assert (campaign / "profiles" / "Psi_N_T_profile.png").is_file()
 
 
 def test_profiles_diag_with_no_cache_reports_and_does_not_crash(campaign, capsys):
@@ -1369,7 +1369,7 @@ def test_profiles_diag_jgrad_expands_to_its_components(campaign):
         )
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
-    assert (campaign / "poinc_dir" / "Psi_N_currdens_profile.png").is_file()
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.png").is_file()
 
 
 def test_profiles_diag_colors_by_true_time_when_zerod_available(campaign, monkeypatch):

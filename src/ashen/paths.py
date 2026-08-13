@@ -199,11 +199,22 @@ class RunPaths:
 
     @property
     def figures_dir(self) -> Path:
-        """Where plotting output lands. Mirrors the legacy convention of
-        saving Poincare and connection-length figures alongside the traces
-        that produced them, in ``poinc_dir``, rather than inventing a new
-        top-level output folder."""
+        """Where Poincare/connection_length/theta_hist plotting output
+        lands. Mirrors the legacy convention of saving Poincare and
+        connection-length figures alongside the traces that produced
+        them, in ``poinc_dir``, rather than inventing a new top-level
+        output folder. Radial profile figures use ``profile_figures_dir``
+        instead -- they aren't Poincare-derived, so they don't belong
+        under ``poinc_dir``."""
         return self.poinc_dir
+
+    @property
+    def profile_figures_dir(self) -> Path:
+        """Where radial-profile figures (``plot --diag profiles``) land --
+        a top-level ``profiles/`` folder, separate from ``figures_dir``
+        since these figures come from ``postproc_dir``'s caches, not a
+        Poincare trace."""
+        return self.run_dir / "profiles"
 
     @property
     def in_eq(self) -> Path:

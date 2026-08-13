@@ -49,13 +49,18 @@ from ashen.diagnostics.profiles import (
     expand_compound_vars,
     read_profile_series,
 )
-from ashen.diagnostics.qprofile import rational_surface_matches, read_qprofile
+from ashen.diagnostics.qprofile import (
+    find_rational_surfaces,
+    rational_surface_matches,
+    read_qprofile,
+    run_qprofile_step,
+)
 from ashen.diagnostics.theta_histogram import (
     pooled_crossing_angles,
     theta_histogram,
     wetted_fraction,
 )
-from ashen.jorek2 import Jorek2Error, Jorek2Run, run_zero_d
+from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_zero_d
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.connection_length import plot_connection_length_map
@@ -167,6 +172,14 @@ def build_parser() -> argparse.ArgumentParser:
         "theta_wetted_threshold (default per case: theta_wetted_threshold, "
         "or 1/theta_bins if that's unset -- the value a uniform distribution "
         "would put in every bin)",
+    )
+    parser.add_argument(
+        "--mark_rational", action="store_true",
+        help="profiles: mark poincare_highlight_modes' q=m/n rational surfaces as "
+        "vertical lines (needs coords_var = 'Psi_N'); auto-gathers the qprofile "
+        "cache for any step missing one, in parallel under --n-workers; turns "
+        "this on for every case plotted, regardless of the case's own "
+        "mark_rational setting",
     )
     parser.add_argument(
         "--compare", action="append", dest="comparisons",
@@ -396,6 +409,69 @@ def _ensure_zero_d(
                 print(f"  zerod: step {step} skipped ({exc})")
                 continue
             print(f"  zerod: step {step} done")
+
+
+def _ensure_qprofile(
+    case: Case, paths: RunPaths, steps: list[int], *, n_workers: int = 1
+) -> None:
+    """Gather the qprofile cache (jorek2_postproc) for whichever `steps`
+    lack one -- same on-demand shape as _ensure_zero_d, swapping in
+    qprofile.run_qprofile_step.
+
+    A step whose restart doesn't exist, or whose jorek2_postproc call
+    otherwise fails, is reported and skipped rather than raised: one
+    step missing its rational-surface line shouldn't abort the whole
+    profile figure.
+    """
+    missing = [step for step in steps if not paths.qprofile(step).is_file()]
+    if not missing:
+        return
+
+    print(f"  qprofile: missing for step(s) {missing}, gathering")
+    jrun = Jorek2Run(
+        run_dir=paths.run_dir, exe_dir=paths.run_dir,
+        namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
+    )
+
+    if n_workers <= 1 or len(missing) <= 1:
+        for step in missing:
+            try:
+                run_qprofile_step(jrun, step, paths)
+            except (MissingRestartError, Jorek2Error) as exc:
+                print(f"  qprofile: step {step} skipped ({exc})")
+            else:
+                print(f"  qprofile: step {step} done")
+        return
+
+    one = partial(run_qprofile_step, jrun, paths=paths)
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(one, step): step for step in missing}
+        for future in as_completed(futures):
+            step = futures[future]
+            try:
+                future.result()
+            except (MissingRestartError, Jorek2Error) as exc:
+                print(f"  qprofile: step {step} skipped ({exc})")
+                continue
+            print(f"  qprofile: step {step} done")
+
+
+def _rational_lines_for_step(
+    case: Case, paths: RunPaths, step: int
+) -> list[tuple[float, str]] | None:
+    """[(psi_n, color), ...] for case.poincare_highlight_modes' q=m/n
+    crossings in this step's qprofile cache. None if the cache is
+    missing (caller already tried _ensure_qprofile).
+    """
+    q_path = paths.qprofile(step)
+    if not q_path.is_file():
+        return None
+    psi_n_q, q = read_qprofile(q_path)
+    lines: list[tuple[float, str]] = []
+    for (m, n), color in zip(case.poincare_highlight_modes, case.poincare_highlight_colors):
+        for crossing in find_rational_surfaces(psi_n_q, q, m / n):
+            lines.append((crossing, color))
+    return lines
 
 
 def _read_true_times(
@@ -676,7 +752,8 @@ def _plot_four_modes(
 
 
 def _plot_profiles(
-    case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1
+    case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1,
+    mark_rational: bool = False,
 ) -> None:
     """One figure per variable: a panel per ``tor_mode``, a curve per step.
 
@@ -700,6 +777,23 @@ def _plot_profiles(
         print("  no zeroD cache for one or more steps (run analyse --diag zerod); "
               "colouring profiles by step index")
 
+    # One reference step's rational-surface positions, shared across every
+    # variable's figure -- q shifts only slightly step to step, and a single
+    # consistent set of lines is more legible than one line set per figure.
+    rational_lines: list[tuple[float, str]] | None = None
+    if mark_rational:
+        if case.coords_var != "Psi_N":
+            print("  mark_rational needs coords_var = 'Psi_N', skipping "
+                  f"(this case's coords_var is {case.coords_var!r})")
+        elif not case.poincare_highlight_modes:
+            print("  mark_rational is on but no poincare_highlight_modes/"
+                  "poincare_highlight_colors configured, skipping")
+        else:
+            _ensure_qprofile(case, paths, steps, n_workers=n_workers)
+            rational_lines = _rational_lines_for_step(case, paths, steps[0])
+            if rational_lines is None:
+                print(f"  mark_rational: no qprofile cache for step {steps[0]}, skipping")
+
     kwargs = _dpi_kwargs(dpi)
     for var in variables:
         series_by_mode = {
@@ -710,11 +804,11 @@ def _plot_profiles(
             print(f"  no cached {var!r} profiles (run analyse --diag profiles)")
             continue
 
-        out = paths.figures_dir / f"{case.coords_var}_{var}_profile.png"
+        out = paths.profile_figures_dir / f"{case.coords_var}_{var}_profile.png"
         plot_profile_comparison(
             series_by_mode, var, out,
             color_by=color_by, color_label=color_label,
-            xlabel=case.coords_var, **kwargs,
+            xlabel=case.coords_var, rational_lines=rational_lines, **kwargs,
         )
         print(f"  {out}")
 
@@ -1100,6 +1194,7 @@ def _run_case(
     theta_psi_range: tuple[float, float] | None = None,
     n_cols: int | None = None,
     point_size: float | None = None,
+    mark_rational: bool = False,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -1133,6 +1228,7 @@ def _run_case(
     if "profiles" in diags:
         _plot_profiles(
             case, paths, steps or case.steps_for("profiles"), dpi=dpi, n_workers=n_workers,
+            mark_rational=mark_rational or case.mark_rational,
         )
     if "theta_hist" in diags:
         _plot_theta_hist(
@@ -1278,6 +1374,7 @@ def main(argv: list[str] | None = None) -> int:
                 theta_psi_range=theta_psi_range,
                 n_cols=n_cols,
                 point_size=args.point_size,
+                mark_rational=args.mark_rational,
             )
         except FileNotFoundError as exc:
             print(f"error: {exc}")

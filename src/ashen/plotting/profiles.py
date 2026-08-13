@@ -41,6 +41,7 @@ def draw_profile_family(
     xlabel: str = "",
     ylabel: str = "",
     title: str = "",
+    rational_lines: list[tuple[float, str]] | None = None,
 ) -> PsiColorer:
     """Draw one line per step in series onto ax, in step order.
 
@@ -50,6 +51,10 @@ def draw_profile_family(
     across several axes; when omitted, one is built spanning just this
     axes' own values. Returns whichever colourer was used, so a
     single-panel caller can attach a colourbar without rebuilding it.
+
+    rational_lines, if given, is a [(psi_n, color), ...] list drawn as
+    dashed vertical lines -- q=m/n rational-surface positions, same
+    (psi_n, color) shape cli/plot.py's mark_rational computes.
     """
     steps = sorted(series)
     values = {step: float(step) for step in steps} if color_by is None else color_by
@@ -60,6 +65,9 @@ def draw_profile_family(
     for step in steps:
         x, y = series[step]
         ax.plot(x, y, color=colors(values.get(step, float(step))), linewidth=1.0)
+
+    for psi_n, color in rational_lines or []:
+        ax.axvline(psi_n, color=color, linestyle="--", linewidth=1.0, alpha=0.7)
 
     if xlabel:
         ax.set_xlabel(xlabel)
@@ -80,6 +88,7 @@ def plot_profile_comparison(
     xlabel: str = "",
     figsize: tuple[float, float] | None = None,
     dpi: int = 150,
+    rational_lines: list[tuple[float, str]] | None = None,
 ) -> Path:
     """One panel per tor_mode, sharing the y-axis, with a shared colourbar.
 
@@ -87,6 +96,9 @@ def plot_profile_comparison(
     still gets its (empty) panel, labelled as such -- that a mode
     produced nothing is the result worth seeing, not a reason to
     silently renumber the panels.
+
+    rational_lines, if given, is drawn on every panel -- see
+    draw_profile_family.
     """
     import matplotlib.pyplot as plt
 
@@ -113,6 +125,7 @@ def plot_profile_comparison(
             draw_profile_family(
                 ax, series, color_by=values, colors=colors,
                 xlabel=xlabel, title=mode if series else f"{mode} (no data)",
+                rational_lines=rational_lines,
             )
         row[0].set_ylabel(var)
 
