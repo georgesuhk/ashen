@@ -29,7 +29,7 @@ import numpy as np
 from ashen.plotting import style
 from ashen.plotting.colors import PsiColorer, colorer
 
-__all__ = ["draw_profile_family", "plot_profile_comparison"]
+__all__ = ["animate_profile_comparison", "draw_profile_family", "plot_profile_comparison"]
 
 
 def draw_profile_family(
@@ -99,7 +99,7 @@ def plot_profile_comparison(
     figsize: tuple[float, float] | None = None,
     dpi: int = 150,
     rational_lines: list[tuple[float, str, str]] | None = None,
-    cmap: str = "viridis",
+    cmap: str = "turbo",
 ) -> Path:
     """One panel per tor_mode, sharing the y-axis, with a shared colourbar.
 
@@ -147,5 +147,107 @@ def plot_profile_comparison(
         if all_steps:
             fig.colorbar(colors.scalar_mappable(), ax=list(row), label=color_label)
         fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def animate_profile_comparison(
+    series_by_mode: Mapping[str, Mapping[int, tuple[np.ndarray, np.ndarray]]],
+    var: str,
+    out_path: Path | str,
+    *,
+    color_by: Mapping[int, float] | None = None,
+    color_label: str = "Time step",
+    xlabel: str = "",
+    figsize: tuple[float, float] | None = None,
+    dpi: int = 150,
+    rational_lines: list[tuple[float, str, str]] | None = None,
+    cmap: str = "turbo",
+    fps: float = 2.0,
+) -> Path | None:
+    """The animated counterpart to plot_profile_comparison -- a GIF with one
+    frame per restart step, each panel showing that step's curve alone
+    (not the whole family at once), so the profile's time evolution is
+    watched directly rather than read off a static colourbar.
+
+    Same panel-per-tor_mode layout and colour convention as
+    plot_profile_comparison, but axis limits are fixed up front to the full
+    data range across every step, so panels don't rescale frame to frame.
+    rational_lines (mark_rational's vertical lines + one legend entry per
+    mode) are drawn once and held static across every frame, same as on the
+    static figure.
+
+    Returns None (no file written) if there are fewer than two steps across
+    every mode -- a one-frame "animation" isn't one. Uses matplotlib's
+    Pillow-backed GIF writer; Pillow is already a hard matplotlib dependency
+    (image I/O), not an extra one ashen introduces.
+    """
+    import matplotlib.animation as animation
+    import matplotlib.pyplot as plt
+
+    out_path = Path(out_path)
+    modes = list(series_by_mode)
+    all_steps = sorted({step for series in series_by_mode.values() for step in series})
+    if len(all_steps) < 2:
+        return None
+
+    if figsize is None:
+        figsize = (1 + 4.5 * max(len(modes), 1), 4.5)
+
+    values = {s: float(s) for s in all_steps} if color_by is None else color_by
+    colors = colorer([values[s] for s in all_steps if s in values], cmap=cmap)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with style():
+        fig, axes = plt.subplots(
+            1, max(len(modes), 1), figsize=figsize, sharey=True, squeeze=False
+        )
+        row = axes[0]
+        lines = []
+        for ax, mode in zip(row, modes):
+            series = series_by_mode[mode]
+            ax.set_title(mode if series else f"{mode} (no data)")
+            if xlabel:
+                ax.set_xlabel(xlabel)
+            if series:
+                xs = np.concatenate([x for x, _ in series.values()])
+                ys = np.concatenate([y for _, y in series.values()])
+                y_pad = (float(ys.max()) - float(ys.min())) * 0.05 or 1.0
+                ax.set_xlim(float(xs.min()), float(xs.max()))
+                ax.set_ylim(float(ys.min()) - y_pad, float(ys.max()) + y_pad)
+            (line,) = ax.plot([], [], linewidth=1.5)
+            lines.append(line)
+
+            seen_labels: set[str] = set()
+            for psi_n, color, label in rational_lines or []:
+                ax.axvline(
+                    psi_n, color=color, linestyle="--", linewidth=1.0, alpha=0.7,
+                    label=None if label in seen_labels else label,
+                )
+                seen_labels.add(label)
+            if seen_labels:
+                ax.legend(fontsize=8, loc="best")
+        row[0].set_ylabel(var)
+
+        fig.colorbar(colors.scalar_mappable(), ax=list(row), label=color_label)
+        suptitle = fig.suptitle("")
+
+        def _update(step):
+            for line, mode in zip(lines, modes):
+                series = series_by_mode[mode]
+                if step in series:
+                    x, y = series[step]
+                    line.set_data(x, y)
+                    line.set_color(colors(values.get(step, float(step))))
+                else:
+                    line.set_data([], [])
+            suptitle.set_text(
+                f"{color_label} = {values[step]:.4g}" if step in values else f"step {step}"
+            )
+            return [*lines, suptitle]
+
+        anim = animation.FuncAnimation(fig, _update, frames=all_steps, blit=False)
+        anim.save(out_path, writer="pillow", fps=fps, dpi=dpi)
     plt.close(fig)
     return out_path

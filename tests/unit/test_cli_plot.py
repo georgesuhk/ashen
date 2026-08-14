@@ -1430,7 +1430,7 @@ def _spy_profile_cmap(monkeypatch, captured):
     monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
 
 
-def test_profile_cmap_defaults_to_viridis(campaign, monkeypatch):
+def test_profile_cmap_defaults_to_turbo(campaign, monkeypatch):
     _write_profile_case(campaign)
     _write_profile_cache(campaign, "Psi_N", "currdens", 100, "midplane", [0.1], [1.0])
     _write_profile_cache(campaign, "Psi_N", "currdens", 200, "midplane", [0.1], [1.0])
@@ -1439,7 +1439,7 @@ def test_profile_cmap_defaults_to_viridis(campaign, monkeypatch):
     _spy_profile_cmap(monkeypatch, captured)
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
-    assert captured["cmap"] == "viridis"
+    assert captured["cmap"] == "turbo"
 
 
 def test_profile_cmap_case_setting_is_honored(campaign, monkeypatch):
@@ -1466,6 +1466,70 @@ def test_profile_cmap_cli_flag_overrides_case_setting(campaign, monkeypatch):
         ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles", "--profile-cmap", "magma"]
     ) == 0
     assert captured["cmap"] == "magma"
+
+
+# --- animate: GIF of the profile's time evolution alongside the PNG ---------------
+
+
+def _write_animate_case(campaign, *, animate=True):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n'
+        f'animate = {"true" if animate else "false"}\n',
+        encoding="utf-8",
+    )
+
+
+def test_animate_case_setting_writes_a_gif_alongside_the_png(campaign):
+    _write_animate_case(campaign)
+    _write_profile_cache(campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0])
+    _write_profile_cache(campaign, "Psi_N", "currdens", 200, "midplane", [0.1, 0.5, 0.9], [1.5, 2.5, 1.5])
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.png").is_file()
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.gif").is_file()
+
+
+def test_animate_off_by_default_writes_no_gif(campaign):
+    _write_animate_case(campaign, animate=False)
+    _write_profile_cache(campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0])
+    _write_profile_cache(campaign, "Psi_N", "currdens", 200, "midplane", [0.1, 0.5, 0.9], [1.5, 2.5, 1.5])
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.png").is_file()
+    assert not (campaign / "profiles" / "Psi_N_currdens_profile.gif").exists()
+
+
+def test_animate_cli_flag_overrides_case_setting(campaign):
+    _write_animate_case(campaign, animate=False)
+    _write_profile_cache(campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0])
+    _write_profile_cache(campaign, "Psi_N", "currdens", 200, "midplane", [0.1, 0.5, 0.9], [1.5, 2.5, 1.5])
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles", "--animate"]
+    ) == 0
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.gif").is_file()
+
+
+def test_animate_with_a_single_step_is_reported_and_skipped(campaign, capsys):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n'
+        'animate = true\n',
+        encoding="utf-8",
+    )
+    _write_profile_cache(campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0])
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.png").is_file()
+    assert not (campaign / "profiles" / "Psi_N_currdens_profile.gif").exists()
+    assert "fewer than two steps, skipping animation" in capsys.readouterr().out
 
 
 # --- mark_rational: rational-surface vlines + legend on profile plots -------------

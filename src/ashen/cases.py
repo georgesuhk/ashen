@@ -23,7 +23,7 @@ _CASE_KEYS = (
     "lc_psi_n_in", "four_vars", "modes", "mode_colors", "four_growth_rate", "four_growth_steps",
     "four_max_delta_b", "four_ylim", "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
-    "profile_cmap",
+    "profile_cmap", "animate",
     "poincare_highlight", "poincare_point_size", "mark_rational",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
     "theta_wetted_threshold",
@@ -130,9 +130,22 @@ class Case:
     profile_nmaxsteps: int = 2500
     profile_deltaphi: float = 0.3
     #: Colourmap for `plot --diag profiles`' time/step colourbar -- any
-    #: matplotlib colormap name. Plot-time only. `--profile-cmap` overrides
-    #: it for one invocation without editing the file.
-    profile_cmap: str = "viridis"
+    #: matplotlib colormap name. Defaults to "turbo" (a perceptually-improved
+    #: rainbow), not "viridis" like the rest of the package's colourbars --
+    #: profiles are read by eye for "which step is this line", a task a
+    #: rainbow's larger hue range makes easier than viridis's narrower one,
+    #: even though viridis is the more broadly "correct" choice for a
+    #: continuous quantity a reader might measure off the colour. Plot-time
+    #: only. `--profile-cmap` overrides it for one invocation without
+    #: editing the file.
+    profile_cmap: str = "turbo"
+    #: Also write an animated GIF of `plot --diag profiles`' time evolution
+    #: alongside the static PNG -- one frame per restart step, each panel
+    #: showing that step's curve alone. Skipped (with a message) for a
+    #: figure with fewer than two steps, since a one-frame "animation"
+    #: isn't one. Plot-time only, default off; `--animate` turns it on for
+    #: this invocation regardless of the case's own setting.
+    animate: bool = False
     #: Mark `modes`' q=m/n rational surfaces as vertical lines on `plot
     #: --diag profiles` (needs coords_var = "Psi_N"; skipped with a message
     #: otherwise). Auto-gathers the qprofile cache (jorek2_postproc) for any

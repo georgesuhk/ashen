@@ -10,7 +10,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from ashen.plotting.profiles import draw_profile_family, plot_profile_comparison
+from ashen.plotting.profiles import (
+    animate_profile_comparison,
+    draw_profile_family,
+    plot_profile_comparison,
+)
 
 
 @pytest.fixture
@@ -136,7 +140,7 @@ def test_custom_color_by_is_honored(series, tmp_path):
     assert out.is_file()
 
 
-def test_cmap_defaults_to_viridis(series, monkeypatch, tmp_path):
+def test_cmap_defaults_to_turbo(series, monkeypatch, tmp_path):
     captured = {}
     from ashen.plotting import profiles as profiles_mod
 
@@ -149,7 +153,7 @@ def test_cmap_defaults_to_viridis(series, monkeypatch, tmp_path):
     monkeypatch.setattr(profiles_mod, "colorer", spy)
 
     plot_profile_comparison({"midplane": series}, "currdens", tmp_path / "profile.png")
-    assert captured["cmap"] == "viridis"
+    assert captured["cmap"] == "turbo"
 
 
 def test_cmap_is_passed_through_to_colorer(series, monkeypatch, tmp_path):
@@ -168,3 +172,74 @@ def test_cmap_is_passed_through_to_colorer(series, monkeypatch, tmp_path):
         {"midplane": series}, "currdens", tmp_path / "profile.png", cmap="plasma",
     )
     assert captured["cmap"] == "plasma"
+
+
+# --- animate_profile_comparison ------------------------------------------------------
+
+
+def test_animate_writes_a_gif(series, tmp_path):
+    out = animate_profile_comparison(
+        {"midplane": series}, "currdens", tmp_path / "profile.gif",
+    )
+    assert out is not None
+    assert out.is_file()
+    assert out.suffix == ".gif"
+
+
+def test_animate_returns_none_for_a_single_step(tmp_path):
+    single_step = {100: (np.array([0.1, 0.5]), np.array([1.0, 2.0]))}
+    out = animate_profile_comparison(
+        {"midplane": single_step}, "currdens", tmp_path / "profile.gif",
+    )
+    assert out is None
+    assert not (tmp_path / "profile.gif").exists()
+
+
+def test_animate_returns_none_when_every_mode_is_empty(tmp_path):
+    out = animate_profile_comparison(
+        {"midplane": {}, "average": {}}, "currdens", tmp_path / "profile.gif",
+    )
+    assert out is None
+
+
+def test_animate_output_directory_is_created(series, tmp_path):
+    out_dir = tmp_path / "figures"
+    out = animate_profile_comparison(
+        {"midplane": series}, "currdens", out_dir / "profile.gif",
+    )
+    assert out.parent == out_dir
+    assert out.is_file()
+
+
+def test_animate_one_panel_per_mode_does_not_crash(series, tmp_path):
+    out = animate_profile_comparison(
+        {"midplane": series, "average": series, "midplane outer": {}},
+        "currdens", tmp_path / "profile.gif",
+    )
+    assert out.is_file()
+
+
+def test_animate_cmap_is_passed_through_to_colorer(series, monkeypatch, tmp_path):
+    captured = {}
+    from ashen.plotting import profiles as profiles_mod
+
+    original = profiles_mod.colorer
+
+    def spy(values, **kwargs):
+        captured["cmap"] = kwargs.get("cmap")
+        return original(values, **kwargs)
+
+    monkeypatch.setattr(profiles_mod, "colorer", spy)
+
+    animate_profile_comparison(
+        {"midplane": series}, "currdens", tmp_path / "profile.gif", cmap="plasma",
+    )
+    assert captured["cmap"] == "plasma"
+
+
+def test_animate_with_rational_lines_does_not_crash(series, tmp_path):
+    out = animate_profile_comparison(
+        {"midplane": series}, "currdens", tmp_path / "profile.gif",
+        rational_lines=[(0.5, "red", "n=1, m=2")],
+    )
+    assert out.is_file()

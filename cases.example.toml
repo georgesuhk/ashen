@@ -48,9 +48,18 @@ n_points        = 100
 # profile_nmaxsteps = 2500
 # profile_deltaphi  = 0.3
 # Colourmap for `plot --diag profiles`' time/step colourbar -- any
-# matplotlib colormap name. Plot-time only. `--profile-cmap NAME` overrides
-# it for one invocation without editing this file.
+# matplotlib colormap name. Defaults to "turbo" (a rainbow-style map, not
+# the package's usual "viridis") since a wider hue range makes "which step
+# is this line" easier to read by eye. Plot-time only. `--profile-cmap
+# NAME` overrides it for one invocation without editing this file.
 # profile_cmap = "plasma"
+# Also write an animated GIF of the profile's time evolution alongside the
+# static PNG -- one frame per restart step, each panel showing only that
+# step's curve, fixed axis limits so panels don't rescale frame to frame.
+# Skipped (with a message) for fewer than two steps. Plot-time only,
+# default off. `--animate` turns it on for one invocation without editing
+# this file.
+# animate = true
 # jorek2_four's own field-line-tracing (magnetic-coordinate) parameters,
 # normally supplied by a hand-written four_params.nml -- `analyse` generates
 # that file itself per step from these. Commented values below are

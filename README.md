@@ -555,10 +555,22 @@ the step sequence) *is* the result: it shows directly where the flux-surface
 average stopped being computable, rather than requiring a run through the
 warnings `analyse` printed at gather time. See `KNOWN_ISSUES.md` #9.
 
-`profile_cmap` (case field, plot-time only, default `"viridis"`) sets the
+`profile_cmap` (case field, plot-time only, default `"turbo"`) sets the
 colourmap for the time/step colourbar -- any matplotlib colormap name.
-`--profile-cmap NAME` overrides it for one invocation without editing
+Defaults to a rainbow-style map rather than the package's usual `viridis`,
+since a profile figure is read by eye for "which step is this line", and a
+rainbow's wider hue range makes that easier to track than viridis's narrower
+one. `--profile-cmap NAME` overrides it for one invocation without editing
 `cases.toml`.
+
+**Animating the time evolution.** `animate = true` (case field, or
+`--animate` for one invocation) additionally writes
+`<coords_var>_<var>_profile.gif` alongside the PNG -- one frame per restart
+step, each panel showing only that step's curve (not the whole family at
+once), coloured the same way as the static figure, with fixed axis limits
+so panels don't rescale frame to frame. `mark_rational`'s lines/legend, if
+on, are drawn once and held static across every frame. Skipped, with a
+printed note, for a figure with fewer than two steps.
 
 ### jorek2_four mode-amplitude time series
 

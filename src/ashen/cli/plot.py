@@ -67,7 +67,7 @@ from ashen.plotting.colors import DISCRETE_PALETTE
 from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes
 from ashen.plotting.poincare import plot_poincare_step
-from ashen.plotting.profiles import plot_profile_comparison
+from ashen.plotting.profiles import animate_profile_comparison, plot_profile_comparison
 from ashen.plotting.theta_histogram import plot_theta_histogram_grid
 from ashen.plotting.wetted_fraction import plot_wetted_fraction_datasets, plot_wetted_fraction_vs_x
 from ashen.postproc import read_zeroD
@@ -210,7 +210,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--profile-cmap", type=str, default=None,
         help="profiles: matplotlib colormap for the time/step colourbar "
-        "(default: the case's profile_cmap, or 'viridis' if unset)",
+        "(default: the case's profile_cmap, or 'turbo' if unset)",
+    )
+    parser.add_argument(
+        "--animate", action="store_true",
+        help="profiles: also write an animated GIF of the time evolution "
+        "alongside the static PNG, one frame per restart step (skipped, "
+        "with a message, for fewer than two steps); turns this on for "
+        "every case plotted, regardless of the case's own animate setting",
     )
     parser.add_argument(
         "--compare", action="append", dest="comparisons",
@@ -794,7 +801,7 @@ def _plot_four_modes(
 
 def _plot_profiles(
     case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1,
-    mark_rational: bool = False, cmap: str | None = None,
+    mark_rational: bool = False, cmap: str | None = None, animate: bool = False,
 ) -> None:
     """One figure per variable: a panel per ``tor_mode``, a curve per step.
 
@@ -844,14 +851,28 @@ def _plot_profiles(
             print(f"  no cached {var!r} profiles (run analyse --diag profiles)")
             continue
 
+        resolved_cmap = cmap if cmap is not None else case.profile_cmap
         out = paths.profile_figures_dir / f"{case.coords_var}_{var}_profile.png"
         plot_profile_comparison(
             series_by_mode, var, out,
             color_by=color_by, color_label=color_label,
             xlabel=case.coords_var, rational_lines=rational_lines,
-            cmap=cmap if cmap is not None else case.profile_cmap, **kwargs,
+            cmap=resolved_cmap, **kwargs,
         )
         print(f"  {out}")
+
+        if animate:
+            gif_out = out.with_suffix(".gif")
+            animated = animate_profile_comparison(
+                series_by_mode, var, gif_out,
+                color_by=color_by, color_label=color_label,
+                xlabel=case.coords_var, rational_lines=rational_lines,
+                cmap=resolved_cmap, **kwargs,
+            )
+            if animated is None:
+                print(f"  {var!r}: fewer than two steps, skipping animation")
+            else:
+                print(f"  {gif_out}")
 
 
 def _plot_theta_hist(
@@ -1237,6 +1258,7 @@ def _run_case(
     point_size: float | None = None,
     mark_rational: bool = False,
     profile_cmap: str | None = None,
+    animate: bool = False,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -1271,6 +1293,7 @@ def _run_case(
         _plot_profiles(
             case, paths, steps or case.steps_for("profiles"), dpi=dpi, n_workers=n_workers,
             mark_rational=mark_rational or case.mark_rational, cmap=profile_cmap,
+            animate=animate or case.animate,
         )
     if "theta_hist" in diags:
         _plot_theta_hist(
@@ -1418,6 +1441,7 @@ def main(argv: list[str] | None = None) -> int:
                 point_size=args.point_size,
                 mark_rational=args.mark_rational,
                 profile_cmap=args.profile_cmap,
+                animate=args.animate,
             )
         except FileNotFoundError as exc:
             print(f"error: {exc}")
