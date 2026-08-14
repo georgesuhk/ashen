@@ -60,7 +60,7 @@ from ashen.diagnostics.theta_histogram import (
     theta_histogram,
     wetted_fraction,
 )
-from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_zero_d
+from ashen.jorek2 import Jorek2Error, Jorek2Run, run_zero_d
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.colors import DISCRETE_PALETTE
@@ -97,16 +97,29 @@ def _dpi_kwargs(dpi: int | None) -> dict:
 PSI_DERIVED = {DELTA_B, DELTA_B_OVER_B}
 
 
-def _mode_colors(modes: list[list[int]]) -> dict[tuple[int, int], str]:
+def _mode_colors(
+    modes: list[list[int]], overrides: dict[str, str] | None = None
+) -> dict[tuple[int, int], str]:
     """{(n, m): color} for case.modes, sorted by (n, m) so the same mode
     gets the same colour on every figure that draws it -- poincare_highlight
     and mark_rational both need a colour per mode; `four` doesn't (its own
     draw_mode_amplitudes assigns colour from whatever's actually in its
     cache), but this sorted-index-into-DISCRETE_PALETTE convention matches
     it, same "same mode, same colour" intent.
+
+    overrides (case.mode_colors, "m,n" -> colour) replaces the
+    auto-assigned colour for the modes it names; every other mode keeps its
+    DISCRETE_PALETTE slot. cases.load_cases already validated every key
+    names a mode actually in `modes` and is a parseable "m,n" pair.
     """
     ordered = sorted((n, m) for m, n in modes)
-    return {(n, m): DISCRETE_PALETTE[i % len(DISCRETE_PALETTE)] for i, (n, m) in enumerate(ordered)}
+    colors = {
+        (n, m): DISCRETE_PALETTE[i % len(DISCRETE_PALETTE)] for i, (n, m) in enumerate(ordered)
+    }
+    for key, color in (overrides or {}).items():
+        m, n = (int(part) for part in key.split(","))
+        colors[(n, m)] = color
+    return colors
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -256,7 +269,7 @@ def _rational_highlight_for_step(
         return None
 
     psi_n_q, q = read_qprofile(q_path)
-    colors = _mode_colors(case.modes)
+    colors = _mode_colors(case.modes, case.mode_colors)
     modes = [(n, m, colors[(n, m)]) for m, n in case.modes]
     return rational_surface_matches(psi_n_q, q, modes, traced_psi_n)
 
@@ -448,7 +461,7 @@ def _ensure_qprofile(
         for step in missing:
             try:
                 run_qprofile_step(jrun, step, paths)
-            except (MissingRestartError, Jorek2Error) as exc:
+            except (FileNotFoundError, Jorek2Error) as exc:
                 print(f"  qprofile: step {step} skipped ({exc})")
             else:
                 print(f"  qprofile: step {step} done")
@@ -461,7 +474,7 @@ def _ensure_qprofile(
             step = futures[future]
             try:
                 future.result()
-            except (MissingRestartError, Jorek2Error) as exc:
+            except (FileNotFoundError, Jorek2Error) as exc:
                 print(f"  qprofile: step {step} skipped ({exc})")
                 continue
             print(f"  qprofile: step {step} done")
@@ -469,24 +482,31 @@ def _ensure_qprofile(
 
 def _rational_lines_for_step(
     case: Case, paths: RunPaths, step: int
-) -> list[tuple[float, str]] | None:
-    """[(psi_n, color), ...] for case.modes' q=m/n crossings in this step's
-    qprofile cache. None if the cache is missing (caller already tried
-    _ensure_qprofile). n=0 entries are skipped (m/0 undefined) -- `modes`
-    is shared with `four`, where an n=0 axisymmetric component is valid.
+) -> list[tuple[float, str, str]] | None:
+    """[(psi_n, color, label), ...] for case.modes' q=m/n crossings in this
+    step's qprofile cache. None if the cache is missing (caller already
+    tried _ensure_qprofile). n=0 entries are skipped (m/0 undefined) --
+    `modes` is shared with `four`, where an n=0 axisymmetric component is
+    valid.
+
+    label is "n=<n>, m=<m>" (same convention as draw_mode_amplitudes'
+    legend labels) -- draw_profile_family shows one legend entry per label,
+    even though a reversed-shear q-profile can produce several crossings
+    (and therefore several lines) for the same mode.
     """
     q_path = paths.qprofile(step)
     if not q_path.is_file():
         return None
     psi_n_q, q = read_qprofile(q_path)
-    colors = _mode_colors(case.modes)
-    lines: list[tuple[float, str]] = []
+    colors = _mode_colors(case.modes, case.mode_colors)
+    lines: list[tuple[float, str, str]] = []
     for m, n in case.modes:
         if n == 0:
             continue
         color = colors[(n, m)]
+        label = f"n={n}, m={m}"
         for crossing in find_rational_surfaces(psi_n_q, q, m / n):
-            lines.append((crossing, color))
+            lines.append((crossing, color, label))
     return lines
 
 
@@ -796,7 +816,7 @@ def _plot_profiles(
     # One reference step's rational-surface positions, shared across every
     # variable's figure -- q shifts only slightly step to step, and a single
     # consistent set of lines is more legible than one line set per figure.
-    rational_lines: list[tuple[float, str]] | None = None
+    rational_lines: list[tuple[float, str, str]] | None = None
     if mark_rational:
         if case.coords_var != "Psi_N":
             print("  mark_rational needs coords_var = 'Psi_N', skipping "

@@ -1404,6 +1404,128 @@ def test_profiles_diag_colors_by_true_time_when_zerod_available(campaign, monkey
     assert captured["color_by"] == {100: 100.0, 200: 200.0}  # 1e-4 s, 2e-4 s -> us
 
 
+# --- mark_rational: rational-surface vlines + legend on profile plots -------------
+
+
+def _write_mark_rational_case(campaign, *, modes, mode_colors=None, mark_rational=True):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    lines = [
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n',
+        'steps = [100, 200]\n',
+        'coords_var = "Psi_N"\n',
+        'vars = ["currdens"]\n',
+        f'modes = {modes}\n',
+        f'mark_rational = {"true" if mark_rational else "false"}\n',
+    ]
+    if mode_colors:
+        table = ", ".join(f'"{k}" = "{v}"' for k, v in mode_colors.items())
+        lines.append(f'mode_colors = {{ {table} }}\n')
+    cases_toml.write_text("".join(lines), encoding="utf-8")
+
+
+def test_mark_rational_draws_labelled_lines_with_auto_colors(campaign, monkeypatch):
+    # q = 1 + 2*psi_n crosses q=2.0 (m=2, n=1) at psi_n=0.5.
+    _write_qprofile_cache(
+        campaign, 100, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 200, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+    )
+    _write_mark_rational_case(campaign, modes=[[2, 1]])
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["rational_lines"] = kwargs.get("rational_lines")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["rational_lines"] == [(0.5, plot_cli.DISCRETE_PALETTE[0], "n=1, m=2")]
+
+
+def test_mark_rational_respects_mode_colors_override(campaign, monkeypatch):
+    _write_qprofile_cache(
+        campaign, 100, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 200, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+    )
+    _write_mark_rational_case(campaign, modes=[[2, 1]], mode_colors={"2,1": "hotpink"})
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["rational_lines"] = kwargs.get("rational_lines")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["rational_lines"] == [(0.5, "hotpink", "n=1, m=2")]
+
+
+def test_mark_rational_off_draws_no_lines(campaign, monkeypatch):
+    _write_qprofile_cache(
+        campaign, 100, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 200, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+    )
+    _write_mark_rational_case(campaign, modes=[[2, 1]], mark_rational=False)
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["rational_lines"] = kwargs.get("rational_lines")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["rational_lines"] is None
+
+
+def test_mark_rational_cli_flag_overrides_case_setting(campaign, monkeypatch):
+    _write_qprofile_cache(
+        campaign, 100, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+    )
+    _write_profile_cache(
+        campaign, "Psi_N", "currdens", 200, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+    )
+    _write_mark_rational_case(campaign, modes=[[2, 1]], mark_rational=False)
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["rational_lines"] = kwargs.get("rational_lines")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles", "--mark_rational"]
+    ) == 0
+    assert captured["rational_lines"] == [(0.5, plot_cli.DISCRETE_PALETTE[0], "n=1, m=2")]
+
+
 # --- theta_hist: field-line theta-crossing histograms -----------------------------
 
 

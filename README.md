@@ -324,20 +324,29 @@ data, only `analyse --diag poincare` with a wider/denser `psi_n_in` does.
 Setting `poincare_highlight = true` (plus `modes`, the same `[m, n]` pairs
 used by `four`) colours the field lines nearest each mode's `q = m/n`
 resonant surface, dimming everything else to grey. Colour is auto-assigned
-per mode (sorted `(n, m)` order into `plotting.colors.DISCRETE_PALETTE`), not
-user-specified -- the same mode always gets the same colour on every figure
-that draws it. It needs the q-profile cache -- `analyse --diag poincare`
-gathers it automatically once this is set, the same way it already
-force-includes `zerod`. Because Poincare only traces the discrete `psi_n_in`
-grid requested, a computed rational surface is snapped to the *nearest
-actually-traced* line rather than requiring an exact match; which physical
-line that is can shift step to step as the q-profile evolves -- that tracks
-the real resonance moving, not a bug.
+per mode (sorted `(n, m)` order into `plotting.colors.DISCRETE_PALETTE`) --
+the same mode always gets the same colour on every figure that draws it.
+Override individual modes with `mode_colors`, a table keyed `"m,n"` matching
+a `modes` entry; any mode left out keeps its auto-assigned colour:
+
+```toml
+modes       = [[3, 2], [2, 1]]
+mode_colors = { "3,2" = "red", "2,1" = "blue" }
+```
+
+It needs the q-profile cache -- `analyse --diag poincare` gathers it
+automatically once this is set, the same way it already force-includes
+`zerod`. Because Poincare only traces the discrete `psi_n_in` grid requested,
+a computed rational surface is snapped to the *nearest actually-traced* line
+rather than requiring an exact match; which physical line that is can shift
+step to step as the q-profile evolves -- that tracks the real resonance
+moving, not a bug.
 
 **Marking rational surfaces on radial profiles.** `mark_rational = true`
 (case field, or `--mark_rational` for one invocation) draws the same
 `modes`' `q = m/n` crossings as vertical dashed lines on `plot --diag
-profiles` figures -- needs `coords_var = "Psi_N"`. Auto-gathers the
+profiles` figures, with a legend labelling each mode (`mode_colors`
+overrides apply here too) -- needs `coords_var = "Psi_N"`. Auto-gathers the
 q-profile cache for any requested step that's missing one, in parallel under
 `--n-workers`.
 

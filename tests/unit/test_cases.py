@@ -327,6 +327,54 @@ def test_modes_rejects_non_pair_entries(tmp_path):
         load_cases(path)
 
 
+def test_mode_colors_defaults_empty(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.mode_colors == {}
+
+
+def test_mode_colors_overrides_settable_modes(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [1]
+        modes = [[3, 2], [2, 1]]
+        mode_colors = { "3,2" = "red", "2,1" = "blue" }
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.mode_colors == {"3,2": "red", "2,1": "blue"}
+
+
+def test_mode_colors_rejects_mode_not_in_modes(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [1]
+        modes = [[3, 2]]
+        mode_colors = { "2,1" = "blue" }
+        """,
+    )
+    with pytest.raises(CasesError, match="no matching entry in modes"):
+        load_cases(path)
+
+
+def test_mode_colors_rejects_malformed_key(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [1]
+        modes = [[3, 2]]
+        mode_colors = { "3-2" = "red" }
+        """,
+    )
+    with pytest.raises(CasesError, match="'m,n'"):
+        load_cases(path)
+
+
 def test_four_growth_rate_defaults_off(tmp_path):
     path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     case = load_cases(path)["a"]

@@ -136,15 +136,18 @@ n_points        = 100
 # crossing(s) snap to the nearest surface actually traced -- which line that
 # is can shift step to step as the q-profile evolves; that's the resonance
 # moving, not a bug. Uses `modes` (above, same [m, n] convention as four) --
-# colour is auto-assigned per mode, not configured separately.
+# colour is auto-assigned per mode (sorted (n, m) into DISCRETE_PALETTE),
+# unless overridden per mode via mode_colors -- keyed "m,n" matching a
+# modes entry; any mode left out keeps its auto-assigned colour.
 # poincare_highlight = true
 # modes = [[3, 2], [2, 1]]
+# mode_colors = { "3,2" = "red", "2,1" = "blue" }
 
 # Mark `modes`' q=m/n rational surfaces as vertical dashed lines on `plot
-# --diag profiles` figures -- needs coords_var = "Psi_N". Auto-gathers the
-# qprofile cache for any requested step missing one, in parallel under
-# --n-workers. `--mark_rational` on the command line turns this on for one
-# invocation without editing the file.
+# --diag profiles` figures, with a legend labelling each mode -- needs
+# coords_var = "Psi_N". Auto-gathers the qprofile cache for any requested
+# step missing one, in parallel under --n-workers. `--mark_rational` on the
+# command line turns this on for one invocation without editing the file.
 # mark_rational = true
 
 # Marker area per puncture (matplotlib scatter `s`, points^2). Plot-time

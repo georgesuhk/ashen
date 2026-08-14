@@ -20,7 +20,7 @@ _CASE_KEYS = (
     "note", "psi_n_in", "n_turns", "ang_sample_freq", "phi_start",
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
-    "lc_psi_n_in", "four_vars", "modes", "four_growth_rate", "four_growth_steps",
+    "lc_psi_n_in", "four_vars", "modes", "mode_colors", "four_growth_rate", "four_growth_steps",
     "four_max_delta_b", "four_ylim", "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "poincare_highlight", "poincare_point_size", "mark_rational",
@@ -84,8 +84,16 @@ class Case:
     #: mark_rational), it's auto-assigned from plotting.colors.
     #: DISCRETE_PALETTE by each mode's sorted (n, m) position, so the same
     #: mode gets the same colour on every figure that draws it, the same way
-    #: `four`'s own mode-amplitude lines already are.
+    #: `four`'s own mode-amplitude lines already are -- override individual
+    #: modes via mode_colors below.
     modes: list[list[int]] = field(default_factory=list)
+    #: Optional per-mode colour override, keyed "m,n" matching a `modes`
+    #: entry, e.g. {"3,2" = "red"}. Only overrides the modes listed; every
+    #: other mode keeps its auto-assigned DISCRETE_PALETTE colour. Affects
+    #: poincare_highlight and mark_rational only -- `four`'s own
+    #: mode-amplitude lines colour from whatever's actually in the jorek2_
+    #: four cache, not from this.
+    mode_colors: dict[str, str] = field(default_factory=dict)
     #: Fit+mark each mode's growth rate (gamma [1/s] = d ln|amp|/dt).
     #: Plot-time, needs zeroD cache for real time. Default off.
     four_growth_rate: bool = False
@@ -347,6 +355,37 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                         f"[m, n] pairs, got {mode!r}"
                     )
             merged["modes"] = [[int(m), int(n)] for m, n in merged["modes"]]
+
+        if "mode_colors" in merged:
+            spec = merged["mode_colors"]
+            if not isinstance(spec, dict):
+                raise CasesError(
+                    f"{path}: case {name!r} mode_colors must be a table of "
+                    f"'m,n' -> colour, got {spec!r}"
+                )
+            configured_modes = {tuple(mode) for mode in merged.get("modes", [])}
+            parsed: dict[str, str] = {}
+            for key, color in spec.items():
+                parts = key.split(",")
+                if len(parts) != 2:
+                    raise CasesError(
+                        f"{path}: case {name!r} mode_colors key {key!r} must be "
+                        "'m,n' matching a modes entry, e.g. '3,2'"
+                    )
+                try:
+                    m, n = int(parts[0].strip()), int(parts[1].strip())
+                except ValueError:
+                    raise CasesError(
+                        f"{path}: case {name!r} mode_colors key {key!r} must be "
+                        "'m,n' matching a modes entry, e.g. '3,2'"
+                    ) from None
+                if (m, n) not in configured_modes:
+                    raise CasesError(
+                        f"{path}: case {name!r} mode_colors key {key!r} has no "
+                        f"matching entry in modes ({merged.get('modes', [])})"
+                    )
+                parsed[f"{m},{n}"] = str(color)
+            merged["mode_colors"] = parsed
 
         if merged.get("poincare_highlight") and not merged.get("modes"):
             raise CasesError(

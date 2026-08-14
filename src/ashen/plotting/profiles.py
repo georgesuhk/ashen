@@ -41,7 +41,7 @@ def draw_profile_family(
     xlabel: str = "",
     ylabel: str = "",
     title: str = "",
-    rational_lines: list[tuple[float, str]] | None = None,
+    rational_lines: list[tuple[float, str, str]] | None = None,
 ) -> PsiColorer:
     """Draw one line per step in series onto ax, in step order.
 
@@ -52,9 +52,12 @@ def draw_profile_family(
     axes' own values. Returns whichever colourer was used, so a
     single-panel caller can attach a colourbar without rebuilding it.
 
-    rational_lines, if given, is a [(psi_n, color), ...] list drawn as
-    dashed vertical lines -- q=m/n rational-surface positions, same
-    (psi_n, color) shape cli/plot.py's mark_rational computes.
+    rational_lines, if given, is a [(psi_n, color, label), ...] list drawn
+    as dashed vertical lines -- q=m/n rational-surface positions, same
+    shape cli/plot.py's mark_rational computes. A reversed-shear q-profile
+    can produce several crossings (several lines) sharing one mode's label;
+    only the first per label is added to the legend, so the legend has one
+    entry per mode, not one per crossing.
     """
     steps = sorted(series)
     values = {step: float(step) for step in steps} if color_by is None else color_by
@@ -66,8 +69,15 @@ def draw_profile_family(
         x, y = series[step]
         ax.plot(x, y, color=colors(values.get(step, float(step))), linewidth=1.0)
 
-    for psi_n, color in rational_lines or []:
-        ax.axvline(psi_n, color=color, linestyle="--", linewidth=1.0, alpha=0.7)
+    seen_labels: set[str] = set()
+    for psi_n, color, label in rational_lines or []:
+        ax.axvline(
+            psi_n, color=color, linestyle="--", linewidth=1.0, alpha=0.7,
+            label=None if label in seen_labels else label,
+        )
+        seen_labels.add(label)
+    if seen_labels:
+        ax.legend(fontsize=8, loc="best")
 
     if xlabel:
         ax.set_xlabel(xlabel)
@@ -88,7 +98,7 @@ def plot_profile_comparison(
     xlabel: str = "",
     figsize: tuple[float, float] | None = None,
     dpi: int = 150,
-    rational_lines: list[tuple[float, str]] | None = None,
+    rational_lines: list[tuple[float, str, str]] | None = None,
 ) -> Path:
     """One panel per tor_mode, sharing the y-axis, with a shared colourbar.
 
