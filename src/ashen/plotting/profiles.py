@@ -99,6 +99,7 @@ def plot_profile_comparison(
     figsize: tuple[float, float] | None = None,
     dpi: int = 150,
     rational_lines: list[tuple[float, str, str]] | None = None,
+    cmap: str = "viridis",
 ) -> Path:
     """One panel per tor_mode, sharing the y-axis, with a shared colourbar.
 
@@ -109,6 +110,10 @@ def plot_profile_comparison(
 
     rational_lines, if given, is drawn on every panel -- see
     draw_profile_family.
+
+    cmap is any matplotlib colormap name -- passed straight through to
+    colorer, unvalidated here (an invalid name surfaces as matplotlib's own
+    error at draw time).
     """
     import matplotlib.pyplot as plt
 
@@ -123,7 +128,7 @@ def plot_profile_comparison(
     # the same colour means the same time in all of them.
     all_steps = sorted({step for series in series_by_mode.values() for step in series})
     values = {s: float(s) for s in all_steps} if color_by is None else color_by
-    colors = colorer([values[s] for s in all_steps if s in values])
+    colors = colorer([values[s] for s in all_steps if s in values], cmap=cmap)
 
     with style():
         fig, axes = plt.subplots(

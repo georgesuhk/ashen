@@ -134,3 +134,37 @@ def test_custom_color_by_is_honored(series, tmp_path):
         color_by={100: 1e-4, 200: 2e-4, 300: 3e-4}, color_label=r"t [$\mu s$]",
     )
     assert out.is_file()
+
+
+def test_cmap_defaults_to_viridis(series, monkeypatch, tmp_path):
+    captured = {}
+    from ashen.plotting import profiles as profiles_mod
+
+    original = profiles_mod.colorer
+
+    def spy(values, **kwargs):
+        captured["cmap"] = kwargs.get("cmap")
+        return original(values, **kwargs)
+
+    monkeypatch.setattr(profiles_mod, "colorer", spy)
+
+    plot_profile_comparison({"midplane": series}, "currdens", tmp_path / "profile.png")
+    assert captured["cmap"] == "viridis"
+
+
+def test_cmap_is_passed_through_to_colorer(series, monkeypatch, tmp_path):
+    captured = {}
+    from ashen.plotting import profiles as profiles_mod
+
+    original = profiles_mod.colorer
+
+    def spy(values, **kwargs):
+        captured["cmap"] = kwargs.get("cmap")
+        return original(values, **kwargs)
+
+    monkeypatch.setattr(profiles_mod, "colorer", spy)
+
+    plot_profile_comparison(
+        {"midplane": series}, "currdens", tmp_path / "profile.png", cmap="plasma",
+    )
+    assert captured["cmap"] == "plasma"

@@ -23,6 +23,7 @@ _CASE_KEYS = (
     "lc_psi_n_in", "four_vars", "modes", "mode_colors", "four_growth_rate", "four_growth_steps",
     "four_max_delta_b", "four_ylim", "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
+    "profile_cmap",
     "poincare_highlight", "poincare_point_size", "mark_rational",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
     "theta_wetted_threshold",
@@ -128,6 +129,10 @@ class Case:
     profile_rad_range: list[float] = field(default_factory=lambda: [0.001, 0.999])
     profile_nmaxsteps: int = 2500
     profile_deltaphi: float = 0.3
+    #: Colourmap for `plot --diag profiles`' time/step colourbar -- any
+    #: matplotlib colormap name. Plot-time only. `--profile-cmap` overrides
+    #: it for one invocation without editing the file.
+    profile_cmap: str = "viridis"
     #: Mark `modes`' q=m/n rational surfaces as vertical lines on `plot
     #: --diag profiles` (needs coords_var = "Psi_N"; skipped with a message
     #: otherwise). Auto-gathers the qprofile cache (jorek2_postproc) for any

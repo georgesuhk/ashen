@@ -1404,6 +1404,70 @@ def test_profiles_diag_colors_by_true_time_when_zerod_available(campaign, monkey
     assert captured["color_by"] == {100: 100.0, 200: 200.0}  # 1e-4 s, 2e-4 s -> us
 
 
+# --- profile_cmap: colourmap for the time/step colourbar --------------------------
+
+
+def _write_profile_case(campaign, *, profile_cmap=None):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    lines = [
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n',
+        'steps = [100, 200]\n',
+        'coords_var = "Psi_N"\n',
+        'vars = ["currdens"]\n',
+    ]
+    if profile_cmap is not None:
+        lines.append(f'profile_cmap = "{profile_cmap}"\n')
+    cases_toml.write_text("".join(lines), encoding="utf-8")
+
+
+def _spy_profile_cmap(monkeypatch, captured):
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["cmap"] = kwargs.get("cmap")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+
+
+def test_profile_cmap_defaults_to_viridis(campaign, monkeypatch):
+    _write_profile_case(campaign)
+    _write_profile_cache(campaign, "Psi_N", "currdens", 100, "midplane", [0.1], [1.0])
+    _write_profile_cache(campaign, "Psi_N", "currdens", 200, "midplane", [0.1], [1.0])
+
+    captured = {}
+    _spy_profile_cmap(monkeypatch, captured)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["cmap"] == "viridis"
+
+
+def test_profile_cmap_case_setting_is_honored(campaign, monkeypatch):
+    _write_profile_case(campaign, profile_cmap="plasma")
+    _write_profile_cache(campaign, "Psi_N", "currdens", 100, "midplane", [0.1], [1.0])
+    _write_profile_cache(campaign, "Psi_N", "currdens", 200, "midplane", [0.1], [1.0])
+
+    captured = {}
+    _spy_profile_cmap(monkeypatch, captured)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["cmap"] == "plasma"
+
+
+def test_profile_cmap_cli_flag_overrides_case_setting(campaign, monkeypatch):
+    _write_profile_case(campaign, profile_cmap="plasma")
+    _write_profile_cache(campaign, "Psi_N", "currdens", 100, "midplane", [0.1], [1.0])
+    _write_profile_cache(campaign, "Psi_N", "currdens", 200, "midplane", [0.1], [1.0])
+
+    captured = {}
+    _spy_profile_cmap(monkeypatch, captured)
+
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles", "--profile-cmap", "magma"]
+    ) == 0
+    assert captured["cmap"] == "magma"
+
+
 # --- mark_rational: rational-surface vlines + legend on profile plots -------------
 
 

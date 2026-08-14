@@ -780,6 +780,20 @@ def test_profile_rad_range_rejects_min_not_less_than_max(tmp_path):
         load_cases(path)
 
 
+def test_profile_cmap_defaults_to_viridis(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.profile_cmap == "viridis"
+
+
+def test_profile_cmap_is_settable(tmp_path):
+    path = _write(
+        tmp_path, '[cases.a]\nsteps = [1]\nprofile_cmap = "plasma"\n',
+    )
+    case = load_cases(path)["a"]
+    assert case.profile_cmap == "plasma"
+
+
 def test_profile_rad_range_rejects_out_of_unit_range(tmp_path):
     path = _write(
         tmp_path,

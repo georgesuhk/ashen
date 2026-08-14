@@ -555,6 +555,11 @@ the step sequence) *is* the result: it shows directly where the flux-surface
 average stopped being computable, rather than requiring a run through the
 warnings `analyse` printed at gather time. See `KNOWN_ISSUES.md` #9.
 
+`profile_cmap` (case field, plot-time only, default `"viridis"`) sets the
+colourmap for the time/step colourbar -- any matplotlib colormap name.
+`--profile-cmap NAME` overrides it for one invocation without editing
+`cases.toml`.
+
 ### jorek2_four mode-amplitude time series
 
 `--diag four` draws one figure per variable, one coloured line per `(n, m)`

@@ -208,6 +208,11 @@ def build_parser() -> argparse.ArgumentParser:
         "mark_rational setting",
     )
     parser.add_argument(
+        "--profile-cmap", type=str, default=None,
+        help="profiles: matplotlib colormap for the time/step colourbar "
+        "(default: the case's profile_cmap, or 'viridis' if unset)",
+    )
+    parser.add_argument(
         "--compare", action="append", dest="comparisons",
         help="draw a [comparisons.NAME] figure instead of per-case figures "
         "(repeatable; only diags with a comparison renderer are valid here)",
@@ -789,7 +794,7 @@ def _plot_four_modes(
 
 def _plot_profiles(
     case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1,
-    mark_rational: bool = False,
+    mark_rational: bool = False, cmap: str | None = None,
 ) -> None:
     """One figure per variable: a panel per ``tor_mode``, a curve per step.
 
@@ -843,7 +848,8 @@ def _plot_profiles(
         plot_profile_comparison(
             series_by_mode, var, out,
             color_by=color_by, color_label=color_label,
-            xlabel=case.coords_var, rational_lines=rational_lines, **kwargs,
+            xlabel=case.coords_var, rational_lines=rational_lines,
+            cmap=cmap if cmap is not None else case.profile_cmap, **kwargs,
         )
         print(f"  {out}")
 
@@ -1230,6 +1236,7 @@ def _run_case(
     n_cols: int | None = None,
     point_size: float | None = None,
     mark_rational: bool = False,
+    profile_cmap: str | None = None,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -1263,7 +1270,7 @@ def _run_case(
     if "profiles" in diags:
         _plot_profiles(
             case, paths, steps or case.steps_for("profiles"), dpi=dpi, n_workers=n_workers,
-            mark_rational=mark_rational or case.mark_rational,
+            mark_rational=mark_rational or case.mark_rational, cmap=profile_cmap,
         )
     if "theta_hist" in diags:
         _plot_theta_hist(
@@ -1410,6 +1417,7 @@ def main(argv: list[str] | None = None) -> int:
                 n_cols=n_cols,
                 point_size=args.point_size,
                 mark_rational=args.mark_rational,
+                profile_cmap=args.profile_cmap,
             )
         except FileNotFoundError as exc:
             print(f"error: {exc}")

@@ -47,6 +47,10 @@ n_points        = 100
 # profile_rad_range = [0.001, 0.999]
 # profile_nmaxsteps = 2500
 # profile_deltaphi  = 0.3
+# Colourmap for `plot --diag profiles`' time/step colourbar -- any
+# matplotlib colormap name. Plot-time only. `--profile-cmap NAME` overrides
+# it for one invocation without editing this file.
+# profile_cmap = "plasma"
 # jorek2_four's own field-line-tracing (magnetic-coordinate) parameters,
 # normally supplied by a hand-written four_params.nml -- `analyse` generates
 # that file itself per step from these. Commented values below are
