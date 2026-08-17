@@ -75,7 +75,9 @@ def _install(directory: Path, name: str, payload: str) -> None:
 def run(tmp_path, monkeypatch):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    _install(run_dir, "jorek2_four", _FOUR)
+    exe_dir = run_dir / "exe"
+    exe_dir.mkdir()
+    _install(exe_dir, "jorek2_four", _FOUR)
     monkeypatch.setattr(four, "FOUR_TOOL", f"jorek2_four{_EXT}")
 
     (run_dir / "in_main").write_text("&in1\n&end\n", encoding="utf-8")
@@ -172,7 +174,7 @@ def test_cached_step_is_skipped_without_force(run, paths):
     four.run_four_step(run, paths, 100, nstpts=5, ntht=4)
     # Break the stub so a second real invocation would fail -- proves the
     # cache gate actually skipped running the tool, not just re-ran it quietly.
-    (run.run_dir / f"jorek2_four{_EXT}").unlink()
+    (run.run_dir / "exe" / f"jorek2_four{_EXT}").unlink()
 
     report = four.run_four_step(run, paths, 100, nstpts=5, ntht=4)
     assert report.cached is True

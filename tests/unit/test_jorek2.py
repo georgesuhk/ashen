@@ -165,6 +165,21 @@ def test_missing_exe_raises(stub_run, tmp_path):
         )
 
 
+def test_exe_subdir_looks_up_the_tool_there_instead(stub_run, tmp_path):
+    """exe_subdir='exe' -- what jorek2_four uses -- resolves the tool under
+    exe_dir/exe rather than exe_dir itself."""
+    exe_subdir = stub_run.exe_dir / "exe"
+    exe_subdir.mkdir()
+    _make_stub_tool(exe_subdir, TOOL_NAME)
+    (stub_run.exe_dir / TOOL_NAME).unlink()  # prove the top-level copy isn't used
+
+    collected = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["cwd_listing.txt"], stdin_text="x", exe_subdir="exe",
+    )
+    assert collected["cwd_listing.txt"].is_file()
+
+
 def test_missing_restart_raises(stub_run, tmp_path):
     with pytest.raises(FileNotFoundError):
         run_tool(

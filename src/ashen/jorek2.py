@@ -115,6 +115,7 @@ def run_tool(
     copy_exe: bool = False,
     env: Mapping[str, str] | None = None,
     capture_stdout: bool = False,
+    exe_subdir: str | None = None,
 ) -> ToolResult:
     """Stage inputs for one jorek2_* invocation, run it, collect outputs.
 
@@ -151,13 +152,19 @@ def run_tool(
 
     capture_stdout returns the tool's stdout on the result instead of
     discarding it.
+
+    exe_subdir, if given, looks the tool up under exe_dir/<exe_subdir>
+    instead of exe_dir itself -- e.g. jorek2_four uses "exe", the folder
+    prepare_run symlinks to site.exe, rather than relying on a per-tool
+    top-level symlink like the other jorek2_* tools.
     """
     if stdin_text is None and not stdin_is_namelist:
         raise ValueError("pass stdin_text, or stdin_is_namelist=True")
     if stdin_text is not None and stdin_is_namelist:
         raise ValueError("pass exactly one of stdin_text and stdin_is_namelist")
 
-    exe = run.exe_dir / tool
+    exe_dir = run.exe_dir / exe_subdir if exe_subdir else run.exe_dir
+    exe = exe_dir / tool
     if not exe.is_file():
         raise FileNotFoundError(f"{tool} not found at {exe}")
     restart_src = run.restart_path(step)

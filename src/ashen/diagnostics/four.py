@@ -46,7 +46,8 @@ from ashen.paths import RunPaths
 
 __all__ = ["FourStepReport", "four_params_nml", "run_four_step", "run_four_scan"]
 
-#: The jorek2_four executable, symlinked into a prepared run folder. Module-level
+#: The jorek2_four executable, resolved under a prepared run folder's ``exe/``
+#: symlink (to site.exe) rather than a per-tool top-level symlink. Module-level
 #: so tests can point it at a stub -- on Windows an extensionless file cannot
 #: be executed, so a stub has to be called ``jorek2_four.cmd``.
 FOUR_TOOL = "jorek2_four"
@@ -186,6 +187,7 @@ def run_four_step(
             )
         },
         env={"OMP_NUM_THREADS": str(max(int(omp_threads), 1))},
+        exe_subdir="exe",
     )
 
     records: list[fc.FourRecord] = []
