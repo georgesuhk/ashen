@@ -555,6 +555,16 @@ the step sequence) *is* the result: it shows directly where the flux-surface
 average stopped being computable, rather than requiring a run through the
 warnings `analyse` printed at gather time. See `KNOWN_ISSUES.md` #9.
 
+**`currdens`'s radial gradient.** Whenever `currdens` is among the drawn
+`vars`, its derivative `d(currdens)/d(coords_var)` (`np.gradient` over the
+already-cached radial grid -- no extra gather) is drawn automatically
+alongside it, saved to `<coords_var>_currdens_grad_profile.png`. A
+sharpening peak there flags a forming current-gradient-driven mode (e.g. a
+tearing mode at its resonant surface) before it's obvious in `currdens`
+itself. Not a separate `vars` entry -- always on when `currdens` is
+plotted, off otherwise; a step with fewer than two radial points is
+dropped from that mode's derivative line (can't differentiate a point).
+
 `profile_cmap` (case field, plot-time only, default `"turbo"`) sets the
 colourmap for the time/step colourbar -- any matplotlib colormap name.
 Defaults to a rainbow-style map rather than the package's usual `viridis`,

@@ -26,6 +26,7 @@ import dataclasses
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 
@@ -799,6 +800,74 @@ def _plot_four_modes(
             print(f"  {out}")
 
 
+#: expand_compound_vars-produced var whose radial gradient is worth its own
+#: figure by default -- q=2/1 tearing-mode onset shows up as a sharpening
+#: peak in dcurrdens/dcoords_var well before it's obvious in currdens
+#: itself, so it's drawn automatically alongside currdens rather than
+#: needing a separate vars entry.
+_AUTO_GRADIENT_VARS = ("currdens",)
+
+
+def _gradient_series_by_mode(
+    series_by_mode: Mapping[str, Mapping[int, tuple[np.ndarray, np.ndarray]]],
+) -> dict[str, dict[int, tuple[np.ndarray, np.ndarray]]]:
+    """d(y)/d(x) per step, via np.gradient on the same x grid already
+    cached -- no new jorek2_postproc gather, just a derivative of what
+    read_profile_series returned. A step with fewer than two points can't
+    be differentiated and is dropped from that mode's series, not raised.
+    """
+    result: dict[str, dict[int, tuple[np.ndarray, np.ndarray]]] = {}
+    for mode, series in series_by_mode.items():
+        grad_series = {}
+        for step, (x, y) in series.items():
+            if len(x) < 2:
+                continue
+            grad_series[step] = (x, np.gradient(y, x))
+        result[mode] = grad_series
+    return result
+
+
+def _draw_profile_variant(
+    out_stem: Path,
+    series_by_mode: Mapping[str, Mapping[int, tuple[np.ndarray, np.ndarray]]],
+    ylabel: str,
+    *,
+    color_by: Mapping[int, float] | None,
+    color_label: str,
+    time_by_step: Mapping[int, float] | None,
+    xlabel: str,
+    rational_lines: list[tuple[float, str, str]] | None,
+    cmap: str,
+    animate: bool,
+    kwargs: dict,
+) -> None:
+    """Draws one variable's static PNG (and, if animate, its GIF) -- the
+    shared tail of _plot_profiles' per-variable rendering, reused for both
+    a directly-cached variable and a derived one (_gradient_series_by_mode).
+    """
+    out = out_stem.with_suffix(".png")
+    plot_profile_comparison(
+        series_by_mode, ylabel, out,
+        color_by=color_by, color_label=color_label,
+        xlabel=xlabel, rational_lines=rational_lines,
+        cmap=cmap, **kwargs,
+    )
+    print(f"  {out}")
+
+    if animate:
+        gif_out = out.with_suffix(".gif")
+        animated = animate_profile_comparison(
+            series_by_mode, ylabel, gif_out,
+            color_by=color_by, color_label=color_label, time_by_step=time_by_step,
+            xlabel=xlabel, rational_lines=rational_lines,
+            cmap=cmap, **kwargs,
+        )
+        if animated is None:
+            print(f"  {ylabel!r}: fewer than two steps, skipping animation")
+        else:
+            print(f"  {gif_out}")
+
+
 def _plot_profiles(
     case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1,
     mark_rational: bool = False, cmap: str | None = None, animate: bool = False,
@@ -860,27 +929,26 @@ def _plot_profiles(
             continue
 
         resolved_cmap = cmap if cmap is not None else case.profile_cmap
-        out = paths.profile_figures_dir / f"{case.coords_var}_{var}_profile.png"
-        plot_profile_comparison(
-            series_by_mode, var, out,
-            color_by=color_by, color_label=color_label,
+        out_stem = paths.profile_figures_dir / f"{case.coords_var}_{var}_profile"
+        _draw_profile_variant(
+            out_stem, series_by_mode, var,
+            color_by=color_by, color_label=color_label, time_by_step=time_by_step,
             xlabel=case.coords_var, rational_lines=rational_lines,
-            cmap=resolved_cmap, **kwargs,
+            cmap=resolved_cmap, animate=animate, kwargs=kwargs,
         )
-        print(f"  {out}")
 
-        if animate:
-            gif_out = out.with_suffix(".gif")
-            animated = animate_profile_comparison(
-                series_by_mode, var, gif_out,
-                color_by=color_by, color_label=color_label, time_by_step=time_by_step,
-                xlabel=case.coords_var, rational_lines=rational_lines,
-                cmap=resolved_cmap, **kwargs,
-            )
-            if animated is None:
-                print(f"  {var!r}: fewer than two steps, skipping animation")
-            else:
-                print(f"  {gif_out}")
+        if var in _AUTO_GRADIENT_VARS:
+            grad_series_by_mode = _gradient_series_by_mode(series_by_mode)
+            if any(grad_series_by_mode.values()):
+                grad_out_stem = (
+                    paths.profile_figures_dir / f"{case.coords_var}_{var}_grad_profile"
+                )
+                _draw_profile_variant(
+                    grad_out_stem, grad_series_by_mode, f"d({var})/d({case.coords_var})",
+                    color_by=color_by, color_label=color_label, time_by_step=time_by_step,
+                    xlabel=case.coords_var, rational_lines=rational_lines,
+                    cmap=resolved_cmap, animate=animate, kwargs=kwargs,
+                )
 
 
 def _plot_theta_hist(

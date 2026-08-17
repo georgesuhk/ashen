@@ -1304,6 +1304,114 @@ def test_profiles_diag_writes_one_file_per_var(campaign):
     assert (campaign / "profiles" / "Psi_N_T_profile.png").is_file()
 
 
+# --- currdens gradient: auto-drawn alongside currdens ------------------------------
+
+
+def test_gradient_series_by_mode_differentiates_each_step():
+    import numpy as np
+
+    x = np.array([0.0, 0.5, 1.0])
+    y = np.array([1.0, 2.0, 4.0])
+    series_by_mode = {"midplane": {100: (x, y)}}
+
+    result = plot_cli._gradient_series_by_mode(series_by_mode)
+
+    grad_x, grad_y = result["midplane"][100]
+    np.testing.assert_array_equal(grad_x, x)
+    np.testing.assert_array_equal(grad_y, np.gradient(y, x))
+
+
+def test_gradient_series_by_mode_drops_single_point_steps():
+    import numpy as np
+
+    series_by_mode = {
+        "midplane": {
+            100: (np.array([0.5]), np.array([1.0])),
+            200: (np.array([0.1, 0.5]), np.array([1.0, 2.0])),
+        }
+    }
+    result = plot_cli._gradient_series_by_mode(series_by_mode)
+    assert set(result["midplane"]) == {200}
+
+
+def test_currdens_gradient_is_drawn_alongside_currdens(campaign):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n',
+        encoding="utf-8",
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+        )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.png").is_file()
+    assert (campaign / "profiles" / "Psi_N_currdens_grad_profile.png").is_file()
+
+
+def test_currdens_gradient_not_drawn_for_other_vars(campaign):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["T"]\n',
+        encoding="utf-8",
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "T", step, "midplane", [0.1, 0.5, 0.9], [3.0, 2.0, 1.0],
+        )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert (campaign / "profiles" / "Psi_N_T_profile.png").is_file()
+    assert not (campaign / "profiles" / "Psi_N_T_grad_profile.png").exists()
+    assert not (campaign / "profiles" / "Psi_N_currdens_grad_profile.png").exists()
+
+
+def test_currdens_gradient_animates_alongside_currdens(campaign):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n'
+        'animate = true\n',
+        encoding="utf-8",
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+        )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.gif").is_file()
+    assert (campaign / "profiles" / "Psi_N_currdens_grad_profile.gif").is_file()
+
+
+def test_currdens_gradient_skipped_when_no_step_has_two_points(campaign, capsys):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n',
+        encoding="utf-8",
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane", [0.5], [1.0],
+        )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert (campaign / "profiles" / "Psi_N_currdens_profile.png").is_file()
+    assert not (campaign / "profiles" / "Psi_N_currdens_grad_profile.png").exists()
+
+
 def test_profiles_diag_with_no_cache_reports_and_does_not_crash(campaign, capsys):
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(
