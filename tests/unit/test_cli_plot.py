@@ -2342,13 +2342,23 @@ def test_compare_wetted_fraction_no_warning_when_every_field_has_a_cli_flag(
     assert "overriding this case's own" not in out
 
 
-def test_wetted_fraction_diag_is_comparison_only_per_case(theta_campaign, capsys):
+def test_wetted_fraction_diag_plots_per_case_evolution(theta_campaign):
+    """Unlike theta_hist (one pooled panel across all steps), a single case's
+    wetted_fraction plot shows one point per step -- how the fraction
+    evolves as the run progresses."""
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "wetted_fraction"]
+    ) == 0
+    assert (theta_campaign / "poinc_dir" / "wetted_fraction.png").is_file()
+
+
+def test_wetted_fraction_diag_reports_one_fraction_per_step(theta_campaign, capsys):
     assert plot_cli.main(
         ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "wetted_fraction"]
     ) == 0
     out = capsys.readouterr().out
-    assert "comparison-only" in out
-    assert not (theta_campaign / "figures").exists()
+    assert "step 100: wetted fraction" in out
+    assert "step 200: wetted fraction" in out
 
 
 # --- wetted_fraction with datasets: overlaying several related scans -------------

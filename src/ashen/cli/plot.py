@@ -84,7 +84,9 @@ COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction")
 #: Diags that only make sense across several cases (there is no single-case
 #: "vs. scan parameter" plot) -- valid under --compare, reported and skipped
 #: under the plain per-case loop rather than attempting something meaningless.
-COMPARISON_ONLY_DIAGS = ("wetted_fraction",)
+#: wetted_fraction has a single-case renderer instead (its evolution across
+#: the case's own steps), so it is not listed here.
+COMPARISON_ONLY_DIAGS = ()
 
 
 def _dpi_kwargs(dpi: int | None) -> dict:
@@ -1007,6 +1009,62 @@ def _plot_theta_hist(
     print(f"  {out}")
 
 
+def _plot_wetted_fraction(
+    case: Case,
+    paths: RunPaths,
+    steps: list[int],
+    *,
+    target_psi: float | None,
+    bins: int | None,
+    psi_range: tuple[float, float] | None,
+    threshold: float | None,
+    dpi: int | None,
+) -> None:
+    """A single case's own wetted fraction evolution: one point per step
+    (not pooled across them), unlike the --compare renderer's one pooled
+    point per case. x-axis is the step number, not log-scaled -- unlike
+    plot_wetted_fraction_vs_x's default scan-parameter axis."""
+    real_psi_edge = read_float(paths.real_psi_edge)
+    target = target_psi if target_psi is not None else case.theta_target_psi
+    n_bins = bins if bins is not None else case.theta_bins
+    if psi_range is not None:
+        theta_range = psi_range
+    elif case.theta_psi_n_range is not None:
+        theta_range = tuple(case.theta_psi_n_range)
+    else:
+        theta_range = None
+    case_threshold = threshold if threshold is not None else case.theta_wetted_threshold
+    if case_threshold is None:
+        case_threshold = 1.0 / n_bins
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for step in steps:
+        records = read_step(paths, step)
+        if not records:
+            print(f"  step {step}: no Poincare cache, skipped")
+            continue
+        result = pooled_crossing_angles(
+            {step: records}, [step],
+            target_psi=target, real_psi_edge=real_psi_edge, psi_n_range=theta_range,
+        )
+        counts, _ = theta_histogram(result.angles, bins=n_bins)
+        fraction = wetted_fraction(counts, threshold=case_threshold)
+        print(f"  step {step}: wetted fraction = {fraction:.3g}")
+        xs.append(step)
+        ys.append(fraction)
+
+    if not xs:
+        return
+
+    kwargs = _dpi_kwargs(dpi)
+    out = plot_wetted_fraction_vs_x(
+        xs, ys, paths.figures_dir / "wetted_fraction.png",
+        xlabel="Step", log_x=False, **kwargs,
+    )
+    print(f"  {out}")
+
+
 def _first_not_none(*values):
     """The first non-``None`` value -- the shared shape of every "CLI flag >
     comparison setting > case setting > built-in default" precedence chain
@@ -1340,6 +1398,7 @@ def _run_case(
     theta_target_psi: float | None = None,
     theta_bins: int | None = None,
     theta_psi_range: tuple[float, float] | None = None,
+    theta_wetted_threshold: float | None = None,
     n_cols: int | None = None,
     point_size: float | None = None,
     mark_rational: bool = False,
@@ -1386,6 +1445,12 @@ def _run_case(
             case, paths, steps or case.steps_for("theta_hist"),
             target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
             n_cols=n_cols, dpi=dpi,
+        )
+    if "wetted_fraction" in diags:
+        _plot_wetted_fraction(
+            case, paths, steps or case.steps_for("wetted_fraction"),
+            target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
+            threshold=theta_wetted_threshold, dpi=dpi,
         )
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
     if comparison_only:
@@ -1523,6 +1588,7 @@ def main(argv: list[str] | None = None) -> int:
                 theta_target_psi=theta_target_psi,
                 theta_bins=theta_bins,
                 theta_psi_range=theta_psi_range,
+                theta_wetted_threshold=args.theta_wetted_threshold,
                 n_cols=n_cols,
                 point_size=args.point_size,
                 mark_rational=args.mark_rational,
