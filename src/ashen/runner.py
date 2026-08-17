@@ -373,10 +373,10 @@ def prepare_run(
 # =============================================================================
 
 
-def _run(command: str, cwd: Path, *, dry_run: bool) -> str:
+def _run(command: str, cwd: Path, *, dry_run: bool, check: bool = True) -> str:
     if dry_run:
         return command
-    subprocess.run(command, cwd=cwd, shell=True, check=True)
+    subprocess.run(command, cwd=cwd, shell=True, check=check)
     return command
 
 
@@ -424,8 +424,19 @@ def submit_starwall(
 ) -> list[str]:
     """Equilibrium then STARWALL, then archive the response.
 
-    Fix vs. legacy: equilibrium stage tees into log_eq (matching submit_eq),
-    not log -- old code clobbered the main run's log with this stage's output.
+    The equilibrium stage is *expected* to exit non-zero here: with no
+    starwall-response.dat yet (prepare_run(..., run_sw=True) skips symlinking
+    one in), JOREK exports the wall geometry STARWALL needs and then aborts
+    trying to read the response it doesn't have. check=False lets that
+    expected failure through instead of raising and skipping STARWALL
+    entirely -- run_jorek.py:366-395 runs both stages unconditionally too.
+
+    Fixes vs. legacy:
+    - equilibrium stage tees into log_eq (matching submit_eq), not log --
+      old code clobbered the main run's log with this stage's output.
+    - STARWALL runs under interactive_prelude, like the eq stage right
+      before it (run_jorek.py:385's `module load impi-interactive/1.0`) --
+      both stages run in the foreground, neither is a queued batch job.
 
     Requires prepare_run(..., run_sw=True) -- otherwise starwall-response.dat
     is already a symlink to the exact archive path this copies onto, and the
@@ -437,10 +448,10 @@ def submit_starwall(
         f"{site.launch.interactive_prelude}\n"
         f"{site.launch.mpirun_cmd(site.launch.n_jorek)} ./exe/{params.exe} < ./in_eq | tee log_eq"
     )
-    commands.append(_run(eq_command, paths.run_dir, dry_run=dry_run))
+    commands.append(_run(eq_command, paths.run_dir, dry_run=dry_run, check=False))
 
     sw_command = (
-        f"{site.launch.batch_prelude}\n"
+        f"{site.launch.interactive_prelude}\n"
         f"{site.launch.mpirun_cmd(site.launch.n_starwall)} "
         f"./exe/STARWALL_JOREK_Linux ./input_starwall | tee log_sw"
     )

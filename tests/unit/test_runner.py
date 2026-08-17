@@ -391,6 +391,47 @@ def test_submit_starwall_second_stage_runs_starwall_binary(synthetic_campaign, t
     assert "input_starwall" in commands[1]
 
 
+def test_submit_starwall_both_stages_use_interactive_prelude(synthetic_campaign, tmp_path):
+    """Both stages run in the foreground (run_jorek.py:369-395 loads
+    impi-interactive for both), neither is a queued batch job -- the
+    STARWALL stage previously used batch_prelude by mistake."""
+    site, template_dir, params = synthetic_campaign
+    result = prepare_run(params, site, tmp_path / "rundir", dry_run=True)
+
+    commands = submit_starwall(result.paths, site, params, dry_run=True)
+
+    assert commands[0].startswith(site.launch.interactive_prelude)
+    assert commands[1].startswith(site.launch.interactive_prelude)
+    assert site.launch.batch_prelude not in commands[1]
+
+
+def test_submit_starwall_eq_stage_does_not_check_exit_status(
+    synthetic_campaign, tmp_path, symlinks_maybe_bypassed, monkeypatch
+):
+    """The equilibrium stage is expected to abort here -- with no
+    starwall-response.dat yet (prepare_run(..., run_sw=True) skips
+    symlinking one in), JOREK exports the wall geometry STARWALL needs and
+    then aborts trying to read the response it doesn't have. That expected
+    failure must not stop the STARWALL stage from running afterward."""
+    import ashen.runner as runner_module
+
+    checks = []
+
+    def fake_run(*args, **kwargs):
+        checks.append(kwargs["check"])
+
+    monkeypatch.setattr(runner_module.subprocess, "run", fake_run)
+
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    result = prepare_run(params, site, run_dir, dry_run=False, run_sw=True)
+    (run_dir / "starwall-response.dat").write_text("computed response\n")
+
+    submit_starwall(result.paths, site, params, dry_run=False)
+
+    assert checks == [False, True]
+
+
 def test_submit_starwall_archives_the_response(synthetic_campaign, tmp_path, symlinks_maybe_bypassed, monkeypatch):
     """Archiving (copy + remove) happens unconditionally after the two launch
     commands, which this mocks out -- they need a POSIX shell with `module`
