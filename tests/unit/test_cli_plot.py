@@ -1532,6 +1532,30 @@ def test_animate_with_a_single_step_is_reported_and_skipped(campaign, capsys):
     assert "fewer than two steps, skipping animation" in capsys.readouterr().out
 
 
+def test_animate_passes_time_by_step_even_when_colouring_by_time(campaign, monkeypatch):
+    """The campaign fixture's zeroD cache is complete, so the colourbar is
+    keyed on true time -- time_by_step must still reach animate_
+    profile_comparison, so each frame's text also states the step/time
+    explicitly rather than relying on the colourbar alone."""
+    _write_animate_case(campaign)
+    _write_profile_cache(campaign, "Psi_N", "currdens", 100, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0])
+    _write_profile_cache(campaign, "Psi_N", "currdens", 200, "midplane", [0.1, 0.5, 0.9], [1.5, 2.5, 1.5])
+
+    captured = {}
+    original = plot_cli.animate_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["time_by_step"] = kwargs.get("time_by_step")
+        captured["color_label"] = kwargs.get("color_label")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "animate_profile_comparison", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["color_label"] == r"t [$\mu s$]"  # colourbar is by time
+    assert captured["time_by_step"] == {100: 1e-4, 200: 2e-4}  # step text still gets real time
+
+
 # --- mark_rational: rational-surface vlines + legend on profile plots -------------
 
 

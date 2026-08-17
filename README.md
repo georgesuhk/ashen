@@ -572,6 +572,13 @@ so panels don't rescale frame to frame. `mark_rational`'s lines/legend, if
 on, are drawn once and held static across every frame. Skipped, with a
 printed note, for a figure with fewer than two steps.
 
+Every frame's title states the restart step *and* the true time (from the
+zeroD cache, if available) as text -- regardless of which of the two the
+colourbar itself is keyed on. So even when the zeroD cache is incomplete
+and the colourbar falls back to colouring by step index, a frame's real
+time is still readable; and even when the colourbar is by time, the step
+number stays visible too.
+
 ### jorek2_four mode-amplitude time series
 
 `--diag four` draws one figure per variable, one coloured line per `(n, m)`

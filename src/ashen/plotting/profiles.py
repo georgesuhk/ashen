@@ -32,6 +32,19 @@ from ashen.plotting.colors import PsiColorer, colorer
 __all__ = ["animate_profile_comparison", "draw_profile_family", "plot_profile_comparison"]
 
 
+def _profile_frame_label(step: int, time_by_step: Mapping[int, float] | None) -> str:
+    """"step <n>[, t = <value> us]" -- an animate_profile_comparison frame's
+    title. Always states the step; appends the true time (seconds in
+    time_by_step, displayed in microseconds) only if time_by_step covers
+    this step -- independent of whatever the colourbar itself is keyed on,
+    so the step and the time are both always readable as text when known.
+    """
+    label = f"step {step}"
+    if time_by_step is not None and step in time_by_step:
+        label += f", t = {time_by_step[step] * 1e6:.4g} \N{GREEK SMALL LETTER MU}s"
+    return label
+
+
 def draw_profile_family(
     ax,
     series: Mapping[int, tuple[np.ndarray, np.ndarray]],
@@ -158,6 +171,7 @@ def animate_profile_comparison(
     *,
     color_by: Mapping[int, float] | None = None,
     color_label: str = "Time step",
+    time_by_step: Mapping[int, float] | None = None,
     xlabel: str = "",
     figsize: tuple[float, float] | None = None,
     dpi: int = 150,
@@ -176,6 +190,15 @@ def animate_profile_comparison(
     rational_lines (mark_rational's vertical lines + one legend entry per
     mode) are drawn once and held static across every frame, same as on the
     static figure.
+
+    Every frame's title always states the restart step, and the true time
+    (seconds, formatted in microseconds) if time_by_step covers that step --
+    independent of what color_by/color_label are colouring the curve by.
+    So even when the colourbar is by step index (color_by is None or a
+    zeroD-incomplete case fell back to it), a frame's real time is still
+    readable in text, and even when the colourbar is by time, the step
+    number stays visible too -- the two are complementary labels, not one
+    substituting for the other.
 
     Returns None (no file written) if there are fewer than two steps across
     every mode -- a one-frame "animation" isn't one. Uses matplotlib's
@@ -242,9 +265,7 @@ def animate_profile_comparison(
                     line.set_color(colors(values.get(step, float(step))))
                 else:
                     line.set_data([], [])
-            suptitle.set_text(
-                f"{color_label} = {values[step]:.4g}" if step in values else f"step {step}"
-            )
+            suptitle.set_text(_profile_frame_label(step, time_by_step))
             return [*lines, suptitle]
 
         anim = animation.FuncAnimation(fig, _update, frames=all_steps, blit=False)

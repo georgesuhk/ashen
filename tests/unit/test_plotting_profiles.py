@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from ashen.plotting.profiles import (
+    _profile_frame_label,
     animate_profile_comparison,
     draw_profile_family,
     plot_profile_comparison,
@@ -174,6 +175,23 @@ def test_cmap_is_passed_through_to_colorer(series, monkeypatch, tmp_path):
     assert captured["cmap"] == "plasma"
 
 
+# --- _profile_frame_label: step + time text, independent of the colourbar ----------
+
+
+def test_frame_label_states_step_and_time_when_available():
+    label = _profile_frame_label(100, {100: 1e-4})
+    assert "step 100" in label
+    assert "100" in label  # 1e-4 s -> 100 us
+
+
+def test_frame_label_states_only_step_when_time_by_step_is_none():
+    assert _profile_frame_label(100, None) == "step 100"
+
+
+def test_frame_label_states_only_step_when_this_step_is_missing():
+    assert _profile_frame_label(300, {100: 1e-4}) == "step 300"
+
+
 # --- animate_profile_comparison ------------------------------------------------------
 
 
@@ -241,5 +259,24 @@ def test_animate_with_rational_lines_does_not_crash(series, tmp_path):
     out = animate_profile_comparison(
         {"midplane": series}, "currdens", tmp_path / "profile.gif",
         rational_lines=[(0.5, "red", "n=1, m=2")],
+    )
+    assert out.is_file()
+
+
+def test_animate_with_time_by_step_does_not_crash(series, tmp_path):
+    out = animate_profile_comparison(
+        {"midplane": series}, "currdens", tmp_path / "profile.gif",
+        color_by={100: 1e-4, 200: 2e-4, 300: 3e-4}, color_label=r"t [$\mu s$]",
+        time_by_step={100: 1e-4, 200: 2e-4, 300: 3e-4},
+    )
+    assert out.is_file()
+
+
+def test_animate_with_partial_time_by_step_does_not_crash(series, tmp_path):
+    # Steps 100 and 300 have a real time, 200 doesn't (e.g. its zeroD cache
+    # is missing) -- must not raise, just omit the time text for that frame.
+    out = animate_profile_comparison(
+        {"midplane": series}, "currdens", tmp_path / "profile.gif",
+        time_by_step={100: 1e-4, 300: 3e-4},
     )
     assert out.is_file()

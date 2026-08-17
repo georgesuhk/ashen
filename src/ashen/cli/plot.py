@@ -808,7 +808,10 @@ def _plot_profiles(
     Colour carries true time where the zeroD cache allows it, falling back to
     step index -- the same all-or-nothing rule as ``_plot_four_modes``' time
     axis, since a colour scale mixing seconds and step indices would be worse
-    than one honest unit.
+    than one honest unit. When ``animate``, each GIF frame's title always
+    states both the step and the true time as text (``time_by_step``,
+    animate_profile_comparison), independent of which of the two the
+    colourbar itself ended up keyed on.
     """
     variables = expand_compound_vars(case.vars)
     if not variables:
@@ -819,9 +822,14 @@ def _plot_profiles(
     if true_times is not None:
         color_by = {step: t * 1e6 for step, t in zip(steps, true_times)}
         color_label = r"t [$\mu s$]"
+        # Kept separately (seconds, not the display-unit color_by) so
+        # animate's per-frame step+time text always has real time available,
+        # even in the "colour by step index" branch below.
+        time_by_step = dict(zip(steps, true_times))
     else:
         color_by = None
         color_label = "Time step"
+        time_by_step = None
         print("  no zeroD cache for one or more steps (run analyse --diag zerod); "
               "colouring profiles by step index")
 
@@ -865,7 +873,7 @@ def _plot_profiles(
             gif_out = out.with_suffix(".gif")
             animated = animate_profile_comparison(
                 series_by_mode, var, gif_out,
-                color_by=color_by, color_label=color_label,
+                color_by=color_by, color_label=color_label, time_by_step=time_by_step,
                 xlabel=case.coords_var, rational_lines=rational_lines,
                 cmap=resolved_cmap, **kwargs,
             )
