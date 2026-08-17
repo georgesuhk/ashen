@@ -1318,7 +1318,23 @@ def test_gradient_series_by_mode_differentiates_each_step():
 
     grad_x, grad_y = result["midplane"][100]
     np.testing.assert_array_equal(grad_x, x)
-    np.testing.assert_array_equal(grad_y, np.gradient(y, x))
+    np.testing.assert_array_equal(grad_y, np.abs(np.gradient(y, x)))
+
+
+def test_gradient_series_by_mode_takes_absolute_value():
+    """A decreasing profile has a negative gradient -- the diag reports its
+    magnitude (tearing-mode-onset signal), not its sign."""
+    import numpy as np
+
+    x = np.array([0.0, 0.5, 1.0])
+    y = np.array([4.0, 2.0, 1.0])  # decreasing -> raw gradient is negative
+    series_by_mode = {"midplane": {100: (x, y)}}
+
+    result = plot_cli._gradient_series_by_mode(series_by_mode)
+
+    _, grad_y = result["midplane"][100]
+    assert np.all(grad_y >= 0)
+    np.testing.assert_array_equal(grad_y, np.abs(np.gradient(y, x)))
 
 
 def test_gradient_series_by_mode_drops_single_point_steps():
@@ -1351,6 +1367,64 @@ def test_currdens_gradient_is_drawn_alongside_currdens(campaign):
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
     assert (campaign / "profiles" / "Psi_N_currdens_profile.png").is_file()
     assert (campaign / "profiles" / "Psi_N_currdens_grad_profile.png").is_file()
+
+
+def test_profile_ylim_applies_separately_to_currdens_and_its_gradient(campaign, monkeypatch):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n'
+        'profile_ylim = { currdens = [0, 5], currdens_grad = [0, 50] }\n',
+        encoding="utf-8",
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+        )
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured[var] = kwargs.get("ylim")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["currdens"] == (0.0, 5.0)
+    assert captured["|d(currdens)/d(Psi_N)|"] == (0.0, 50.0)
+
+
+def test_profile_ylim_unset_for_a_variable_leaves_auto_scaling(campaign, monkeypatch):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'coords_var = "Psi_N"\n'
+        'vars = ["currdens"]\n'
+        'profile_ylim = { currdens = [0, 5] }\n',
+        encoding="utf-8",
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane", [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+        )
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured[var] = kwargs.get("ylim")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+    assert captured["currdens"] == (0.0, 5.0)
+    assert captured["|d(currdens)/d(Psi_N)|"] is None
 
 
 def test_currdens_gradient_not_drawn_for_other_vars(campaign):

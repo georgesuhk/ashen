@@ -53,6 +53,12 @@ n_points        = 100
 # is this line" easier to read by eye. Plot-time only. `--profile-cmap
 # NAME` overrides it for one invocation without editing this file.
 # profile_cmap = "plasma"
+# Per-variable y-axis bounds for `plot --diag profiles` -- a variable absent
+# here keeps matplotlib's own auto-scaling (or, for --animate, the fixed
+# range computed from the cached data). Same convention as four_ylim.
+# currdens's auto-drawn |d(currdens)/d(coords_var)| gradient figure is a
+# separate quantity, keyed "<var>_grad" -- give it its own bounds.
+# profile_ylim = { currdens = [0, 5e5], currdens_grad = [0, 1e7] }
 # Also write an animated GIF of the profile's time evolution alongside the
 # static PNG -- one frame per restart step, each panel showing only that
 # step's curve, fixed axis limits so panels don't rescale frame to frame.

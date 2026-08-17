@@ -88,6 +88,20 @@ def test_title_and_labels_are_set(series):
     plt.close(fig)
 
 
+def test_ylim_pins_the_axis(series):
+    fig, ax = plt.subplots()
+    draw_profile_family(ax, series, ylim=(0.0, 10.0))
+    assert ax.get_ylim() == (0.0, 10.0)
+    plt.close(fig)
+
+
+def test_ylim_none_leaves_auto_scaling(series):
+    fig, ax = plt.subplots()
+    draw_profile_family(ax, series)
+    assert ax.get_ylim() != (0.0, 10.0)
+    plt.close(fig)
+
+
 # --- plot_profile_comparison: file-owning, one panel per mode ----------------------
 
 
@@ -173,6 +187,25 @@ def test_cmap_is_passed_through_to_colorer(series, monkeypatch, tmp_path):
         {"midplane": series}, "currdens", tmp_path / "profile.png", cmap="plasma",
     )
     assert captured["cmap"] == "plasma"
+
+
+def test_ylim_is_forwarded_to_every_panel(series, monkeypatch, tmp_path):
+    captured = []
+    from ashen.plotting import profiles as profiles_mod
+
+    original = profiles_mod.draw_profile_family
+
+    def spy(ax, series, **kwargs):
+        captured.append(kwargs.get("ylim"))
+        return original(ax, series, **kwargs)
+
+    monkeypatch.setattr(profiles_mod, "draw_profile_family", spy)
+
+    plot_profile_comparison(
+        {"midplane": series, "average": series}, "currdens", tmp_path / "profile.png",
+        ylim=(0.0, 10.0),
+    )
+    assert captured == [(0.0, 10.0), (0.0, 10.0)]
 
 
 # --- _profile_frame_label: step + time text, independent of the colourbar ----------
@@ -280,3 +313,24 @@ def test_animate_with_partial_time_by_step_does_not_crash(series, tmp_path):
         time_by_step={100: 1e-4, 300: 3e-4},
     )
     assert out.is_file()
+
+
+def test_animate_ylim_overrides_data_derived_limits(series, monkeypatch, tmp_path):
+    """With ylim given, every panel must use it instead of the data-range
+    fixed limits animate_profile_comparison would otherwise compute."""
+    captured = {}
+    real_subplots = plt.subplots
+
+    def spy_subplots(*args, **kwargs):
+        fig, axes = real_subplots(*args, **kwargs)
+        captured["axes"] = axes
+        return fig, axes
+
+    monkeypatch.setattr(plt, "subplots", spy_subplots)
+
+    out = animate_profile_comparison(
+        {"midplane": series}, "currdens", tmp_path / "profile.gif", ylim=(0.0, 10.0),
+    )
+    assert out.is_file()
+    ax = captured["axes"][0][0]
+    assert ax.get_ylim() == (0.0, 10.0)

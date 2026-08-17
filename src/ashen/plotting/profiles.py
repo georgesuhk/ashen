@@ -55,6 +55,7 @@ def draw_profile_family(
     ylabel: str = "",
     title: str = "",
     rational_lines: list[tuple[float, str, str]] | None = None,
+    ylim: tuple[float, float] | None = None,
 ) -> PsiColorer:
     """Draw one line per step in series onto ax, in step order.
 
@@ -71,6 +72,11 @@ def draw_profile_family(
     can produce several crossings (several lines) sharing one mode's label;
     only the first per label is added to the legend, so the legend has one
     entry per mode, not one per crossing.
+
+    ylim, if given, is a (min, max) pair applied via ax.set_ylim, pinning
+    the axis instead of matplotlib's auto-scaling -- since every panel
+    shares one y-axis (plot_profile_comparison's sharey=True), setting it
+    on any one panel is enough for all of them.
     """
     steps = sorted(series)
     values = {step: float(step) for step in steps} if color_by is None else color_by
@@ -98,6 +104,8 @@ def draw_profile_family(
         ax.set_ylabel(ylabel)
     if title:
         ax.set_title(title)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
     return colors
 
 
@@ -113,6 +121,7 @@ def plot_profile_comparison(
     dpi: int = 150,
     rational_lines: list[tuple[float, str, str]] | None = None,
     cmap: str = "turbo",
+    ylim: tuple[float, float] | None = None,
 ) -> Path:
     """One panel per tor_mode, sharing the y-axis, with a shared colourbar.
 
@@ -127,6 +136,9 @@ def plot_profile_comparison(
     cmap is any matplotlib colormap name -- passed straight through to
     colorer, unvalidated here (an invalid name surfaces as matplotlib's own
     error at draw time).
+
+    ylim, if given, is a (min, max) pair pinning the shared y-axis instead
+    of matplotlib's auto-scaling -- see draw_profile_family.
     """
     import matplotlib.pyplot as plt
 
@@ -153,7 +165,7 @@ def plot_profile_comparison(
             draw_profile_family(
                 ax, series, color_by=values, colors=colors,
                 xlabel=xlabel, title=mode if series else f"{mode} (no data)",
-                rational_lines=rational_lines,
+                rational_lines=rational_lines, ylim=ylim,
             )
         row[0].set_ylabel(var)
 
@@ -178,6 +190,7 @@ def animate_profile_comparison(
     rational_lines: list[tuple[float, str, str]] | None = None,
     cmap: str = "turbo",
     fps: float = 2.0,
+    ylim: tuple[float, float] | None = None,
 ) -> Path | None:
     """The animated counterpart to plot_profile_comparison -- a GIF with one
     frame per restart step, each panel showing that step's curve alone
@@ -186,7 +199,10 @@ def animate_profile_comparison(
 
     Same panel-per-tor_mode layout and colour convention as
     plot_profile_comparison, but axis limits are fixed up front to the full
-    data range across every step, so panels don't rescale frame to frame.
+    data range across every step, so panels don't rescale frame to frame --
+    ylim, if given, is used instead of that data-derived range (see
+    draw_profile_family), pinning every frame to the same caller-chosen
+    bounds rather than the range covered by the cached data.
     rational_lines (mark_rational's vertical lines + one legend entry per
     mode) are drawn once and held static across every frame, same as on the
     static figure.
@@ -235,10 +251,13 @@ def animate_profile_comparison(
                 ax.set_xlabel(xlabel)
             if series:
                 xs = np.concatenate([x for x, _ in series.values()])
-                ys = np.concatenate([y for _, y in series.values()])
-                y_pad = (float(ys.max()) - float(ys.min())) * 0.05 or 1.0
                 ax.set_xlim(float(xs.min()), float(xs.max()))
-                ax.set_ylim(float(ys.min()) - y_pad, float(ys.max()) + y_pad)
+                if ylim is None:
+                    ys = np.concatenate([y for _, y in series.values()])
+                    y_pad = (float(ys.max()) - float(ys.min())) * 0.05 or 1.0
+                    ax.set_ylim(float(ys.min()) - y_pad, float(ys.max()) + y_pad)
+            if ylim is not None:
+                ax.set_ylim(*ylim)
             (line,) = ax.plot([], [], linewidth=1.5)
             lines.append(line)
 

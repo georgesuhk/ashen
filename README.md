@@ -556,14 +556,16 @@ average stopped being computable, rather than requiring a run through the
 warnings `analyse` printed at gather time. See `KNOWN_ISSUES.md` #9.
 
 **`currdens`'s radial gradient.** Whenever `currdens` is among the drawn
-`vars`, its derivative `d(currdens)/d(coords_var)` (`np.gradient` over the
-already-cached radial grid -- no extra gather) is drawn automatically
-alongside it, saved to `<coords_var>_currdens_grad_profile.png`. A
-sharpening peak there flags a forming current-gradient-driven mode (e.g. a
-tearing mode at its resonant surface) before it's obvious in `currdens`
-itself. Not a separate `vars` entry -- always on when `currdens` is
-plotted, off otherwise; a step with fewer than two radial points is
-dropped from that mode's derivative line (can't differentiate a point).
+`vars`, `|d(currdens)/d(coords_var)|` (absolute value, `np.gradient` over
+the already-cached radial grid -- no extra gather) is drawn automatically
+alongside it, saved to `<coords_var>_currdens_grad_profile.png`. Absolute
+value because a sharpening *magnitude* is the tearing-mode-onset signal
+(same convention as the legacy `gather_profiles.py::plot_postproc_profs`
+Jgrad panel) -- the sign flips depending on which side of the peak you're
+on and isn't the interesting part. Not a separate `vars` entry -- always on
+when `currdens` is plotted, off otherwise; a step with fewer than two
+radial points is dropped from that mode's derivative line (can't
+differentiate a point).
 
 `profile_cmap` (case field, plot-time only, default `"turbo"`) sets the
 colourmap for the time/step colourbar -- any matplotlib colormap name.
@@ -572,6 +574,18 @@ since a profile figure is read by eye for "which step is this line", and a
 rainbow's wider hue range makes that easier to track than viridis's narrower
 one. `--profile-cmap NAME` overrides it for one invocation without editing
 `cases.toml`.
+
+`profile_ylim` (case field, plot-time only) pins a variable's y-axis to
+`[min, max]` instead of matplotlib's auto-scaling, keyed by variable name --
+same convention as `four_ylim`. `currdens`'s auto-drawn gradient figure is a
+separate quantity/figure and needs its own entry, keyed `"<var>_grad"`:
+
+```toml
+profile_ylim = { currdens = [0, 5e5], currdens_grad = [0, 1e7] }
+```
+
+Applies to both the static PNG and (if `animate`) every GIF frame, in place
+of the animation's usual fixed-to-the-data-range y-limits.
 
 **Animating the time evolution.** `animate = true` (case field, or
 `--animate` for one invocation) additionally writes

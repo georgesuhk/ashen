@@ -23,7 +23,7 @@ _CASE_KEYS = (
     "lc_psi_n_in", "four_vars", "modes", "mode_colors", "four_growth_rate", "four_growth_steps",
     "four_max_delta_b", "four_ylim", "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
-    "profile_cmap", "animate",
+    "profile_cmap", "profile_ylim", "animate",
     "poincare_highlight", "poincare_point_size", "mark_rational",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
     "theta_wetted_threshold",
@@ -139,6 +139,13 @@ class Case:
     #: only. `--profile-cmap` overrides it for one invocation without
     #: editing the file.
     profile_cmap: str = "turbo"
+    #: Per-variable y-axis bounds for `plot --diag profiles`, e.g.
+    #: {"currdens" = [0, 5e5]}. Plot-time only. Unlisted var = auto-scale.
+    #: currdens's auto-drawn gradient figure is keyed "<var>_grad", e.g.
+    #: {"currdens_grad" = [0, 1e7]} -- it's a separate figure/quantity from
+    #: currdens itself, so it needs its own entry, same convention as
+    #: four_ylim keying by the variable each bound applies to.
+    profile_ylim: dict[str, list[float]] = field(default_factory=dict)
     #: Also write an animated GIF of `plot --diag profiles`' time evolution
     #: alongside the static PNG -- one frame per restart step, each panel
     #: showing that step's curve alone. Skipped (with a message) for a
@@ -267,6 +274,34 @@ def _psi_from_spec(
         f"{source}: case {case_name!r} {field_name} must be a list, or a "
         f"{{start, stop, step}}/{{start, stop, n}} table, got {spec!r}"
     )
+
+
+def _ylim_table_from_spec(
+    spec: object, *, case_name: str, source: Path, field_name: str
+) -> dict[str, list[float]]:
+    """Validate/normalise a per-variable y-axis-bounds table (four_ylim,
+    profile_ylim) -- a table of variable -> [min, max], min < max.
+    """
+    if not isinstance(spec, dict):
+        raise CasesError(
+            f"{source}: case {case_name!r} {field_name} must be a table of "
+            f"variable -> [min, max], got {spec!r}"
+        )
+    ylim: dict[str, list[float]] = {}
+    for var, bounds in spec.items():
+        if not (isinstance(bounds, list) and len(bounds) == 2):
+            raise CasesError(
+                f"{source}: case {case_name!r} {field_name}[{var!r}] must be "
+                f"[min, max], got {bounds!r}"
+            )
+        lo, hi = float(bounds[0]), float(bounds[1])
+        if not lo < hi:
+            raise CasesError(
+                f"{source}: case {case_name!r} {field_name}[{var!r}] must satisfy "
+                f"min < max, got [{lo}, {hi}]"
+            )
+        ylim[var] = [lo, hi]
+    return ylim
 
 
 def load_cases(path: Path | str) -> dict[str, Case]:
@@ -433,27 +468,14 @@ def load_cases(path: Path | str) -> dict[str, Case]:
             merged["four_quantities"] = quantities
 
         if "four_ylim" in merged:
-            spec = merged["four_ylim"]
-            if not isinstance(spec, dict):
-                raise CasesError(
-                    f"{path}: case {name!r} four_ylim must be a table of "
-                    f"variable -> [min, max], got {spec!r}"
-                )
-            ylim: dict[str, list[float]] = {}
-            for var, bounds in spec.items():
-                if not (isinstance(bounds, list) and len(bounds) == 2):
-                    raise CasesError(
-                        f"{path}: case {name!r} four_ylim[{var!r}] must be "
-                        f"[min, max], got {bounds!r}"
-                    )
-                lo, hi = float(bounds[0]), float(bounds[1])
-                if not lo < hi:
-                    raise CasesError(
-                        f"{path}: case {name!r} four_ylim[{var!r}] must satisfy "
-                        f"min < max, got [{lo}, {hi}]"
-                    )
-                ylim[var] = [lo, hi]
-            merged["four_ylim"] = ylim
+            merged["four_ylim"] = _ylim_table_from_spec(
+                merged["four_ylim"], case_name=name, source=path, field_name="four_ylim"
+            )
+
+        if "profile_ylim" in merged:
+            merged["profile_ylim"] = _ylim_table_from_spec(
+                merged["profile_ylim"], case_name=name, source=path, field_name="profile_ylim"
+            )
 
         if "four_deconfinement_step" in merged:
             merged["four_deconfinement_step"] = int(merged["four_deconfinement_step"])

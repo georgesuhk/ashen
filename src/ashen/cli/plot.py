@@ -811,10 +811,14 @@ _AUTO_GRADIENT_VARS = ("currdens",)
 def _gradient_series_by_mode(
     series_by_mode: Mapping[str, Mapping[int, tuple[np.ndarray, np.ndarray]]],
 ) -> dict[str, dict[int, tuple[np.ndarray, np.ndarray]]]:
-    """d(y)/d(x) per step, via np.gradient on the same x grid already
+    """|d(y)/d(x)| per step, via np.gradient on the same x grid already
     cached -- no new jorek2_postproc gather, just a derivative of what
-    read_profile_series returned. A step with fewer than two points can't
-    be differentiated and is dropped from that mode's series, not raised.
+    read_profile_series returned. Absolute value, same convention as the
+    legacy gather_profiles.py::plot_postproc_profs Jgrad panel -- what
+    matters here is the gradient's magnitude (how sharply peaked the
+    current profile is), not its sign. A step with fewer than two points
+    can't be differentiated and is dropped from that mode's series, not
+    raised.
     """
     result: dict[str, dict[int, tuple[np.ndarray, np.ndarray]]] = {}
     for mode, series in series_by_mode.items():
@@ -822,7 +826,7 @@ def _gradient_series_by_mode(
         for step, (x, y) in series.items():
             if len(x) < 2:
                 continue
-            grad_series[step] = (x, np.gradient(y, x))
+            grad_series[step] = (x, np.abs(np.gradient(y, x)))
         result[mode] = grad_series
     return result
 
@@ -840,6 +844,7 @@ def _draw_profile_variant(
     cmap: str,
     animate: bool,
     kwargs: dict,
+    ylim: tuple[float, float] | None = None,
 ) -> None:
     """Draws one variable's static PNG (and, if animate, its GIF) -- the
     shared tail of _plot_profiles' per-variable rendering, reused for both
@@ -850,7 +855,7 @@ def _draw_profile_variant(
         series_by_mode, ylabel, out,
         color_by=color_by, color_label=color_label,
         xlabel=xlabel, rational_lines=rational_lines,
-        cmap=cmap, **kwargs,
+        cmap=cmap, ylim=ylim, **kwargs,
     )
     print(f"  {out}")
 
@@ -860,7 +865,7 @@ def _draw_profile_variant(
             series_by_mode, ylabel, gif_out,
             color_by=color_by, color_label=color_label, time_by_step=time_by_step,
             xlabel=xlabel, rational_lines=rational_lines,
-            cmap=cmap, **kwargs,
+            cmap=cmap, ylim=ylim, **kwargs,
         )
         if animated is None:
             print(f"  {ylabel!r}: fewer than two steps, skipping animation")
@@ -930,24 +935,29 @@ def _plot_profiles(
 
         resolved_cmap = cmap if cmap is not None else case.profile_cmap
         out_stem = paths.profile_figures_dir / f"{case.coords_var}_{var}_profile"
+        var_ylim = case.profile_ylim.get(var)
         _draw_profile_variant(
             out_stem, series_by_mode, var,
             color_by=color_by, color_label=color_label, time_by_step=time_by_step,
             xlabel=case.coords_var, rational_lines=rational_lines,
             cmap=resolved_cmap, animate=animate, kwargs=kwargs,
+            ylim=(var_ylim[0], var_ylim[1]) if var_ylim else None,
         )
 
         if var in _AUTO_GRADIENT_VARS:
             grad_series_by_mode = _gradient_series_by_mode(series_by_mode)
             if any(grad_series_by_mode.values()):
+                grad_var = f"{var}_grad"
+                grad_ylim = case.profile_ylim.get(grad_var)
                 grad_out_stem = (
                     paths.profile_figures_dir / f"{case.coords_var}_{var}_grad_profile"
                 )
                 _draw_profile_variant(
-                    grad_out_stem, grad_series_by_mode, f"d({var})/d({case.coords_var})",
+                    grad_out_stem, grad_series_by_mode, f"|d({var})/d({case.coords_var})|",
                     color_by=color_by, color_label=color_label, time_by_step=time_by_step,
                     xlabel=case.coords_var, rational_lines=rational_lines,
                     cmap=resolved_cmap, animate=animate, kwargs=kwargs,
+                    ylim=(grad_ylim[0], grad_ylim[1]) if grad_ylim else None,
                 )
 
 

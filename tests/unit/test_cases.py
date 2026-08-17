@@ -794,6 +794,47 @@ def test_profile_cmap_is_settable(tmp_path):
     assert case.profile_cmap == "plasma"
 
 
+def test_profile_ylim_defaults_empty(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    case = load_cases(path)["a"]
+    assert case.profile_ylim == {}
+
+
+def test_profile_ylim_is_settable_per_variable(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        [cases.a]
+        steps = [1]
+        profile_ylim = { currdens = [0, 5e5], currdens_grad = [0, 1e7] }
+        """,
+    )
+    case = load_cases(path)["a"]
+    assert case.profile_ylim == {"currdens": [0.0, 5e5], "currdens_grad": [0.0, 1e7]}
+
+
+def test_profile_ylim_rejects_non_table(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\nprofile_ylim = [1, 2]\n')
+    with pytest.raises(CasesError, match="must be a table"):
+        load_cases(path)
+
+
+def test_profile_ylim_rejects_non_pair(tmp_path):
+    path = _write(
+        tmp_path, '[cases.a]\nsteps = [1]\nprofile_ylim = { currdens = [0] }\n'
+    )
+    with pytest.raises(CasesError, match=r"must be \[min, max\]"):
+        load_cases(path)
+
+
+def test_profile_ylim_rejects_min_not_less_than_max(tmp_path):
+    path = _write(
+        tmp_path, '[cases.a]\nsteps = [1]\nprofile_ylim = { currdens = [1.0, 1.0] }\n'
+    )
+    with pytest.raises(CasesError, match="min < max"):
+        load_cases(path)
+
+
 def test_animate_defaults_off(tmp_path):
     path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
     case = load_cases(path)["a"]
