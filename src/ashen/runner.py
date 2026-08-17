@@ -10,8 +10,10 @@ Fixes applied vs. run_jorek.py (confirmed with George; refactor plan's
 - freeboundary is a real bool on ShotParams (not the ".t."/".f." string the
   old code tested truthiness of) -- starwall-response requirement now
   actually respects fixed-boundary runs.
-- --replace actually allows overwrite now (old exist_ok=(not replace_flag)
-  had it backwards).
+- No --replace flag: prepare_run always overwrites an existing run folder
+  (old exist_ok=(not replace_flag) made overwriting an explicit opt-in;
+  since a run folder is populated in place from `template/` every time,
+  by-file symlinks/copies are the only side effect of doing it twice).
 - --run_sw tees its equilibrium stage into log_eq, not log (old code
   clobbered the main run's log).
 - Regenerated boundary written to all 3 namelists (in_eq, in_main,
@@ -164,7 +166,6 @@ def prepare_run(
     site: Site,
     run_dir: Path,
     *,
-    replace: bool = False,
     dry_run: bool = False,
     run_sw: bool = False,
 ) -> PreparedRun:
@@ -289,16 +290,8 @@ def prepare_run(
     # =========================================================================
 
     # run_dir is always the caller's cwd, so it always already exists by
-    # this point -- bare existence isn't a meaningful signal. Naively
-    # inverting the old exist_ok=(not replace_flag) bug would break the
-    # *default* case instead. Gate --replace on whether the folder was
-    # already populated by a prior prepare_run: check in_eq, the first
-    # file that step writes.
-    if paths.in_eq.exists() and not replace:
-        raise FileExistsError(
-            f"{run_dir} already contains a prepared run (in_eq exists); "
-            "pass replace=True to overwrite"
-        )
+    # this point -- bare existence isn't a meaningful signal, and prepare_run
+    # always repopulates in place (no --replace gate; see module docstring).
     disk.mkdir(run_dir, exist_ok=True)
 
     disk.copy_all_files(site.template / "copy", run_dir)

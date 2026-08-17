@@ -146,17 +146,11 @@ def test_real_prepare_populates_the_folder(cli_campaign, capsys, symlinks_maybe_
     assert "populated at" in out
 
 
-def test_replace_flag_is_threaded_through(cli_campaign, symlinks_maybe_bypassed):
+def test_second_prepare_always_succeeds(cli_campaign, symlinks_maybe_bypassed):
+    """No --replace flag: preparing an already-populated folder again must
+    not fail."""
     main(["shotfile.py"])  # first prepare
 
-    code = main(["shotfile.py", "--replace"])  # must not fail on existing folder
+    code = main(["shotfile.py"])
 
     assert code == 0
-
-
-def test_without_replace_second_prepare_fails(cli_campaign, symlinks_maybe_bypassed):
-    main(["shotfile.py"])
-
-    code = main(["shotfile.py"])  # no --replace, folder already populated
-
-    assert code == 1

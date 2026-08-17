@@ -47,8 +47,6 @@ def build_parser() -> argparse.ArgumentParser:
     stages.add_argument("--run_r", action="store_true", help="submit a restart run")
     stages.add_argument("--run_eq", action="store_true", help="equilibrium, interactive")
     stages.add_argument("--run_sw", action="store_true", help="equilibrium then STARWALL")
-    stages.add_argument("--replace", action="store_true",
-                        help="overwrite an existing run folder")
     return parser
 
 
@@ -91,9 +89,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = prepare_run(
             params, site, run_dir,
-            replace=args.replace, dry_run=args.dry_run, run_sw=args.run_sw,
+            dry_run=args.dry_run, run_sw=args.run_sw,
         )
-    except (ShotfileError, NotImplementedError, FileNotFoundError, FileExistsError) as exc:
+    except (ShotfileError, NotImplementedError, FileNotFoundError) as exc:
         print(f"error: {exc}")
         return 1
 

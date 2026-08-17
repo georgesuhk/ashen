@@ -145,35 +145,25 @@ def test_allow_other_starwall_skips_the_requirement_too(synthetic_campaign, tmp_
     prepare_run(params, site, tmp_path / "rundir", dry_run=True)
 
 
-def test_first_prepare_never_needs_replace(synthetic_campaign, tmp_path):
-    """The corrected fix for bug #2: run_dir is always the cwd, so it always
-    already exists by the time prepare_run runs (you have to cd into it
-    first) -- bare existence can't be what --replace gates, or the *default*
-    case would fail every time, which is worse than the original bug. What
-    matters is whether the folder was already populated by a previous run
-    (checked via in_eq), not whether the directory itself exists."""
+def test_first_prepare_needs_no_flag(synthetic_campaign, tmp_path):
+    """run_dir is always the cwd, so it always already exists by the time
+    prepare_run runs (you have to cd into it first) -- must not raise
+    against a fresh (existing but unpopulated) directory, the normal
+    first-time-use case."""
     site, template_dir, params = synthetic_campaign
 
-    # must not raise, with no --replace, against a fresh (existing but
-    # unpopulated) directory -- the normal first-time-use case.
-    prepare_run(params, site, tmp_path / "rundir", dry_run=True, replace=False)
+    prepare_run(params, site, tmp_path / "rundir", dry_run=True)
 
 
-def test_second_prepare_without_replace_is_refused(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+def test_second_prepare_always_succeeds(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    """No --replace gate: prepare_run always repopulates a run folder in
+    place, so calling it again against an already-prepared directory must
+    not raise."""
     site, template_dir, params = synthetic_campaign
     run_dir = tmp_path / "rundir"
     prepare_run(params, site, run_dir, dry_run=False)  # first prepare succeeds
 
-    with pytest.raises(FileExistsError, match="in_eq"):
-        prepare_run(params, site, run_dir, dry_run=False, replace=False)
-
-
-def test_second_prepare_with_replace_succeeds(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
-    site, template_dir, params = synthetic_campaign
-    run_dir = tmp_path / "rundir"
-    prepare_run(params, site, run_dir, dry_run=False)
-
-    prepare_run(params, site, run_dir, dry_run=False, replace=True)  # must not raise
+    prepare_run(params, site, run_dir, dry_run=False)  # must not raise
 
 
 def test_unimplemented_ffprime_method_raises_before_any_write(synthetic_campaign, tmp_path):
@@ -322,16 +312,14 @@ def test_real_run_with_refluid_inserts_re_fields(synthetic_campaign, tmp_path, s
     assert fields["dre_par"] == pytest.approx(1e-6)
 
 
-def test_real_run_empty_preexisting_folder_does_not_need_replace(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+def test_real_run_empty_preexisting_folder_succeeds(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
     """The normal first-time case: a user mkdir's an empty run folder
-    themselves before invoking the tool. Must succeed with no --replace --
-    see test_second_prepare_without_replace_is_refused for the case that
-    should actually fail (a folder already populated by a prior run)."""
+    themselves before invoking the tool."""
     site, template_dir, params = synthetic_campaign
     run_dir = tmp_path / "rundir"
     run_dir.mkdir()
 
-    prepare_run(params, site, run_dir, dry_run=False, replace=False)  # must not raise
+    prepare_run(params, site, run_dir, dry_run=False)  # must not raise
 
     assert (run_dir / "in_eq").exists()
 
