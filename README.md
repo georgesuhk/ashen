@@ -540,6 +540,39 @@ is `dataset_label` if set, else the dataset's TOML key (`rho19` above).
 `theta_target_psi`/`theta_bins`/`theta_psi_n_range`/`theta_wetted_threshold`
 apply uniformly across every dataset's cases, same as flat-mode comparisons.
 
+#### Delta-B vs. a scan parameter
+
+`--compare NAME --diag four` draws the same kind of "scalar vs. `x_values`"
+figure as `wetted_fraction`, but for delta-B: one delta-B (or delta-B/B)
+number per case, converted from that case's `Psi` jorek2_four cache exactly
+as the single-run `four_deconfinement_step`/`four_max_delta_b` caption does
+(see [Fourier decomposition](#fourier-decomposition-jorek2_four) below), then
+plotted against `x_values`. `--delta-b-quantity` picks which scalar:
+
+- `max` (default) -- the domain-wide peak over every mode and every
+  requested step, same value `four_max_delta_b`'s caption line shows.
+- `mode` -- the peak of one `(m, n)` mode's own series, needs
+  `--delta-b-mode M,N` (same `[m, n]` convention as `cases.toml`'s `modes`).
+- `deconfinement` -- the domain-wide value at the case's own
+  `four_deconfinement_step`; a case that hasn't set one is skipped (reported,
+  not silently zero).
+
+```bash
+python ~/ashen/bin/plot --compare eta_scan --diag four
+python ~/ashen/bin/plot --compare eta_scan --diag four --delta-b-quantity mode --delta-b-mode 3,2
+python ~/ashen/bin/plot --compare eta_scan --diag four --delta-b-quantity deconfinement
+python ~/ashen/bin/plot --compare eta_scan --diag four --delta-b-over-b
+```
+
+`--delta-b-over-b` plots `delta_b_over_b` instead of `delta_b` -- it needs
+the same step-0 Btor profile as the single-run figure (auto-gathered on
+demand, same as there). Each member case's own `steps`/`modes` still select
+what's fetched, the same `steps_for("four")`/`--step` override as everywhere
+else; `x_values` is required, same as `wetted_fraction`. Written to
+`figures/<comparison-name>_<delta_b|delta_b_over_b>_<quantity>.png`. Also
+draws `datasets`-style comparisons (one legend-labelled series per dataset,
+`--dataset NAME` to restrict), the same split as `wetted_fraction` above.
+
 ### Radial profiles
 
 `--diag profiles` draws one figure per `(coords_var, var)` gathered by

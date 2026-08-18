@@ -2492,3 +2492,164 @@ def test_profiles_diag_falls_back_to_step_index_without_zerod(campaign, capsys):
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
     assert "colouring profiles by step index" in capsys.readouterr().out
+
+
+# --- delta_b comparison: scalar-per-case vs. scan parameter -----------------------
+
+
+@pytest.fixture
+def delta_b_comparison_campaign(tmp_path, monkeypatch):
+    """Two cases, each with a two-mode jorek2_four cache across two steps,
+    grouped into one x_values comparison for the delta_b compare renderer.
+
+    Mode (n=1, m=2) dominates every case's domain-wide peak; mode (n=0, m=1)
+    is smaller, so --delta-b-quantity=mode can be told apart from "max", and
+    step 100 (the configured four_deconfinement_step) differs from each
+    case's step-200 peak, so "deconfinement" can be told apart from both.
+    """
+    peaks = {
+        "eta1e-3_RE": {(100, 1, 2): 4.0, (200, 1, 2): 8.0, (100, 0, 1): 0.5, (200, 0, 1): 0.75},
+        "eta1e-4_RE": {(100, 1, 2): 2.0, (200, 1, 2): 6.0, (100, 0, 1): 0.25, (200, 0, 1): 0.5},
+    }
+    for name, case_peaks in peaks.items():
+        run_dir = tmp_path / "qa2.1_g2.3" / name
+        run_dir.mkdir(parents=True)
+        (run_dir / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+        for step in (100, 200):
+            (run_dir / f"jorek{step:06d}.h5").write_bytes(b"")
+            _write_four_cache(run_dir, step, records=[
+                _four_record("Psi", 1, 2, real_peak=case_peaks[(step, 1, 2)]),
+                _four_record("Psi", 0, 1, real_peak=case_peaks[(step, 0, 1)]),
+            ])
+
+    cases_toml = tmp_path / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_deconfinement_step = 100\n'
+        '[cases."qa2.1_g2.3/eta1e-4_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_deconfinement_step = 100\n'
+        '[comparisons.eta_scan]\n'
+        'note = "resistivity scan"\n'
+        'cases = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE"]\n'
+        'x_tick_labels = ["1e-3", "1e-4"]\n'
+        'x_values = [1e-3, 1e-4]\n'
+        'x_label = "$\\\\eta$"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def test_compare_delta_b_max_writes_file_and_reports_peak_values(
+    delta_b_comparison_campaign, capsys
+):
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "four"]) == 0
+    assert (
+        delta_b_comparison_campaign / "figures" / "eta_scan_delta_b_max.png"
+    ).is_file()
+    out = capsys.readouterr().out
+    # scale = m/r_axis**2 = 2/4 = 0.5 for (n=1, m=2); domain-wide peak is
+    # step 200's real_peak (8.0, 6.0) times that scale.
+    assert "qa2.1_g2.3/eta1e-3_RE: delta_b (max) = 4" in out
+    assert "qa2.1_g2.3/eta1e-4_RE: delta_b (max) = 3" in out
+
+
+def test_compare_delta_b_mode_quantity_needs_delta_b_mode_flag(
+    delta_b_comparison_campaign, capsys
+):
+    assert plot_cli.main(
+        ["--compare", "eta_scan", "--diag", "four", "--delta-b-quantity", "mode"]
+    ) == 0
+    assert "--delta-b-mode" in capsys.readouterr().out
+    assert not (delta_b_comparison_campaign / "figures").exists()
+
+
+def test_compare_delta_b_mode_quantity_reads_the_requested_mode_only(
+    delta_b_comparison_campaign, capsys
+):
+    # mode (n=0, m=1) is the smaller of the two modes -- distinguishes this
+    # from "max" if the filter weren't actually applied.
+    assert plot_cli.main([
+        "--compare", "eta_scan", "--diag", "four",
+        "--delta-b-quantity", "mode", "--delta-b-mode", "1,0",
+    ]) == 0
+    out = capsys.readouterr().out
+    # scale = m/r_axis**2 = 1/4 = 0.25; peak is step 200's real_peak (0.75, 0.5).
+    assert "qa2.1_g2.3/eta1e-3_RE: delta_b (mode) = 0.188" in out
+    assert "qa2.1_g2.3/eta1e-4_RE: delta_b (mode) = 0.125" in out
+
+
+def test_compare_delta_b_deconfinement_quantity_reads_the_configured_step(
+    delta_b_comparison_campaign, capsys
+):
+    assert plot_cli.main([
+        "--compare", "eta_scan", "--diag", "four", "--delta-b-quantity", "deconfinement",
+    ]) == 0
+    out = capsys.readouterr().out
+    # step 100's domain-wide max across both modes: (n=1,m=2) 4.0*0.5=2.0
+    # beats (n=0,m=1) 0.5*0.25=0.125.
+    assert "qa2.1_g2.3/eta1e-3_RE: delta_b (deconfinement) = 2" in out
+    assert "qa2.1_g2.3/eta1e-4_RE: delta_b (deconfinement) = 1" in out
+
+
+def test_compare_delta_b_deconfinement_without_case_step_is_skipped(
+    delta_b_comparison_campaign, capsys
+):
+    cases_toml = delta_b_comparison_campaign / "cases.toml"
+    text = cases_toml.read_text(encoding="utf-8").replace(
+        "four_deconfinement_step = 100\n", ""
+    )
+    cases_toml.write_text(text, encoding="utf-8")
+
+    assert plot_cli.main([
+        "--compare", "eta_scan", "--diag", "four", "--delta-b-quantity", "deconfinement",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "no four_deconfinement_step set, skipped" in out
+    assert not (delta_b_comparison_campaign / "figures").exists()
+
+
+def test_compare_delta_b_without_x_values_is_reported_and_skipped(
+    tmp_path, monkeypatch, capsys
+):
+    run_dir = tmp_path / "qa2.1_g2.3" / "eta1e-3_RE"
+    run_dir.mkdir(parents=True)
+    (run_dir / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_four_cache(run_dir, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    cases_toml = tmp_path / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\n'
+        '[comparisons.eta_scan]\n'
+        'cases = ["qa2.1_g2.3/eta1e-3_RE"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "four"]) == 0
+    assert "no x_values configured" in capsys.readouterr().out
+    assert not (tmp_path / "figures").exists()
+
+
+def test_compare_delta_b_over_b_variable(delta_b_comparison_campaign, capsys):
+    _write_btor_profile(
+        delta_b_comparison_campaign / "qa2.1_g2.3" / "eta1e-3_RE",
+        psi_n=[0.0, 1.0], btor=[3.0, 2.0],
+    )
+    _write_btor_profile(
+        delta_b_comparison_campaign / "qa2.1_g2.3" / "eta1e-4_RE",
+        psi_n=[0.0, 1.0], btor=[3.0, 2.0],
+    )
+    for name in ("eta1e-3_RE", "eta1e-4_RE"):
+        (delta_b_comparison_campaign / "qa2.1_g2.3" / name / "jorek000000.h5").write_bytes(b"")
+
+    assert plot_cli.main(
+        ["--compare", "eta_scan", "--diag", "four", "--delta-b-over-b"]
+    ) == 0
+    assert (
+        delta_b_comparison_campaign / "figures" / "eta_scan_delta_b_over_b_max.png"
+    ).is_file()
+    out = capsys.readouterr().out
+    assert "delta_b_over_b (max)" in out

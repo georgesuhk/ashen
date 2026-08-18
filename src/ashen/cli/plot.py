@@ -79,7 +79,7 @@ DIAG_CHOICES = (
 
 #: Diags with a registered --compare renderer -- asking for one without (e.g.
 #: --compare X --diag profiles) is reported, not silently a no-op.
-COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction")
+COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction", "four")
 
 #: Diags that only make sense across several cases (there is no single-case
 #: "vs. scan parameter" plot) -- valid under --compare, reported and skipped
@@ -221,6 +221,25 @@ def build_parser() -> argparse.ArgumentParser:
         "alongside the static PNG, one frame per restart step (skipped, "
         "with a message, for fewer than two steps); turns this on for "
         "every case plotted, regardless of the case's own animate setting",
+    )
+    parser.add_argument(
+        "--delta-b-quantity", choices=("max", "mode", "deconfinement"), default="max",
+        help="four (compare): which delta-B scalar to plot per case -- 'max' "
+        "(domain-wide peak over every mode and step), 'mode' (peak of one "
+        "(m, n) mode's own series, needs --delta-b-mode), or 'deconfinement' "
+        "(value at the case's own four_deconfinement_step; a case without "
+        "one set is skipped)",
+    )
+    parser.add_argument(
+        "--delta-b-mode", type=str, default=None, metavar="M,N",
+        help="four (compare): the (m, n) mode --delta-b-quantity=mode reads, "
+        "e.g. '3,2' for m=3, n=2 (same convention as cases.toml's modes)",
+    )
+    parser.add_argument(
+        "--delta-b-over-b", action="store_true",
+        help="four (compare): plot delta_b_over_b (dimensionless) instead of "
+        "delta_b (Tesla); needs the same step-0 Btor profile as the "
+        "per-case delta_b_over_b figure",
     )
     parser.add_argument(
         "--compare", action="append", dest="comparisons",
@@ -1366,6 +1385,200 @@ def _compare_wetted_fraction(
     print(f"  {out}")
 
 
+def _delta_b_xy(
+    labelled_cases: list[tuple[str, str]],
+    x_by_case: dict[str, float],
+    cases: dict[str, Case],
+    *,
+    variable: str,
+    quantity: str,
+    mode: tuple[int, int] | None,
+    steps: list[int] | None,
+) -> tuple[list[float], list[float]]:
+    """One (x, delta-B) point per case in `labelled_cases` -- the per-case
+    computation shared by both a flat comparison's single series and each
+    dataset's series within a `datasets`-style comparison.
+
+    `quantity` selects which scalar per case: the domain-wide peak over
+    every mode and step ("max"), one (n, m) mode's own peak ("mode", needs
+    `mode` -- an (m, n) pair, cases.toml's convention), or the value at the
+    case's own `four_deconfinement_step` ("deconfinement"; a case without
+    one set is skipped). `variable` is DELTA_B or DELTA_B_OVER_B, same
+    conversion _plot_four_modes applies to a single case's Psi cache.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    for _, case_name in labelled_cases:
+        case = cases[case_name]
+        run_dir = Path.cwd() / case.name
+        if not run_dir.is_dir():
+            print(f"  {case_name}: no such folder {run_dir}, skipped")
+            continue
+        paths = RunPaths.detect(run_dir)
+
+        case_steps = steps or case.steps_for("four")
+        modes_filter = (
+            [(mode[1], mode[0])] if mode is not None
+            else ([(n, m) for m, n in case.modes] if case.modes else None)
+        )
+        series = max_amplitude_series(
+            paths, case_steps, variables=["Psi"], modes=modes_filter,
+        )
+        psi_only = {k: v for k, v in series.items() if k[0] == "Psi"}
+        if not psi_only:
+            print(f"  {case_name}: no jorek2_four Psi cache found, skipped "
+                  "(run analyse --diag four)")
+            continue
+
+        try:
+            r0 = r_axis(paths.log)
+        except LogfileError as exc:
+            print(f"  {case_name}: skipping ({exc})")
+            continue
+
+        if variable == DELTA_B_OVER_B:
+            jrun = Jorek2Run(
+                run_dir=paths.run_dir, exe_dir=paths.run_dir,
+                namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
+            )
+            try:
+                b_ref = ensure_edge_toroidal_field(jrun, paths)
+            except (FileNotFoundError, Jorek2Error) as exc:
+                print(f"  {case_name}: skipping {DELTA_B_OVER_B} ({exc})")
+                continue
+            if b_ref is None:
+                print(f"  {case_name}: skipping {DELTA_B_OVER_B} (could not gather "
+                      "the Btor profile at the plasma edge for step 0)")
+                continue
+            converted = delta_b_over_b_series(psi_only, r_axis=r0, b_ref=b_ref)
+        else:
+            converted = delta_b_series(psi_only, r_axis=r0)
+
+        if quantity == "max":
+            value = _peak_of_variable(converted, variable)
+        elif quantity == "deconfinement":
+            if case.four_deconfinement_step is None:
+                print(f"  {case_name}: no four_deconfinement_step set, skipped")
+                continue
+            value = _value_at_step(
+                converted, variable, case_steps, case.four_deconfinement_step
+            )
+        else:  # "mode"
+            n, m = mode[1], mode[0]
+            arr = converted.get((variable, n, m))
+            finite = arr[np.isfinite(arr)] if arr is not None else np.array([])
+            value = float(np.max(finite)) if finite.size else None
+
+        if value is None:
+            print(f"  {case_name}: no {variable} value for the requested "
+                  f"quantity ({quantity}), skipped")
+            continue
+
+        print(f"  {case_name}: {variable} ({quantity}) = {value:.3g}")
+        xs.append(x_by_case[case_name])
+        ys.append(value)
+
+    return xs, ys
+
+
+def _compare_delta_b(
+    comparison: Comparison,
+    cases: dict[str, Case],
+    *,
+    variable: str,
+    quantity: str,
+    mode: tuple[int, int] | None,
+    dpi: int | None,
+    steps: list[int] | None,
+    dataset_names: list[str] | None = None,
+) -> None:
+    """Delta-B (or delta-B/B), one scalar per case (see _delta_b_xy),
+    plotted against a numeric x-axis -- e.g. max delta-B vs. eta. Needs
+    `x_values` configured somewhere; unlike `four`'s own per-case
+    time-evolution figure there is no meaningful figure without one, so a
+    series missing it is skipped.
+
+    A `datasets` comparison draws one overlaid, legend-labelled series per
+    dataset (`plot_wetted_fraction_datasets`), optionally restricted to
+    `dataset_names`; a flat comparison draws its one series as before
+    (`plot_wetted_fraction_vs_x`) -- same split as _compare_wetted_fraction,
+    reusing the same generic scan-vs-x plotting functions.
+    """
+    if quantity == "mode" and mode is None:
+        print("  --delta-b-quantity=mode needs --delta-b-mode M,N, skipped")
+        return
+
+    if variable == DELTA_B_OVER_B:
+        ylabel = f"\N{GREEK SMALL LETTER DELTA}B/B ({quantity})"
+    else:
+        ylabel = f"\N{GREEK SMALL LETTER DELTA}B [T] ({quantity})"
+    out_stem = f"{comparison.name}_{variable}_{quantity}"
+    out_dir = Path.cwd() / "figures"
+    kwargs = _dpi_kwargs(dpi)
+
+    if comparison.datasets:
+        chosen = comparison.datasets
+        if dataset_names is not None:
+            unknown = [n for n in dataset_names if n not in comparison.datasets]
+            if unknown:
+                print(
+                    f"  comparison {comparison.name!r} has no dataset(s) {unknown}; "
+                    f"known: {list(comparison.datasets)}"
+                )
+                return
+            chosen = {n: comparison.datasets[n] for n in dataset_names}
+
+        series: list[tuple[str, list[float], list[float]]] = []
+        colors: list[str | None] = []
+        for ds_name, ds in chosen.items():
+            if ds.x_values is None:
+                print(
+                    f"  dataset {ds_name!r} of comparison {comparison.name!r} has no "
+                    "x_values (and the comparison sets none to fall back on); "
+                    f"{variable} needs one numeric value per case, skipped"
+                )
+                continue
+            x_by_case = dict(zip(ds.cases, ds.x_values))
+            xs, ys = _delta_b_xy(
+                ds.labelled_cases(), x_by_case, cases,
+                variable=variable, quantity=quantity, mode=mode, steps=steps,
+            )
+            if not xs:
+                continue
+            series.append((ds.series_label, xs, ys))
+            colors.append(ds.color)
+
+        if not series:
+            return
+        out = plot_wetted_fraction_datasets(
+            series, out_dir / f"{out_stem}.png",
+            xlabel=comparison.x_label, ylabel=ylabel, colors=colors, **kwargs,
+        )
+        print(f"  {out}")
+        return
+
+    if comparison.x_values is None:
+        print(
+            f"  comparison {comparison.name!r} has no x_values configured; "
+            f"{variable} needs one numeric value per case, skipped"
+        )
+        return
+
+    x_by_case = dict(zip(comparison.cases, comparison.x_values))
+    xs, ys = _delta_b_xy(
+        comparison.labelled_cases(), x_by_case, cases,
+        variable=variable, quantity=quantity, mode=mode, steps=steps,
+    )
+    if not xs:
+        return
+
+    out = plot_wetted_fraction_vs_x(
+        xs, ys, out_dir / f"{out_stem}.png",
+        xlabel=comparison.x_label, ylabel=ylabel, **kwargs,
+    )
+    print(f"  {out}")
+
+
 def _resolve_n_workers(args) -> int:
     """--n-workers if given, else site.toml's [diagnostics] n_workers if
     explicitly set, else 1 (serial).
@@ -1471,6 +1684,9 @@ def _run_comparisons(
     n_cols: int | None,
     wetted_threshold: float | None,
     dataset_names: list[str] | None,
+    delta_b_variable: str,
+    delta_b_quantity: str,
+    delta_b_mode: tuple[int, int] | None,
 ) -> int:
     unknown = [name for name in names if name not in comparisons]
     if unknown:
@@ -1499,6 +1715,12 @@ def _run_comparisons(
                 target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
                 threshold=wetted_threshold, dpi=dpi, steps=steps,
                 dataset_names=dataset_names,
+            )
+        if "four" in comparable:
+            _compare_delta_b(
+                comparison, cases,
+                variable=delta_b_variable, quantity=delta_b_quantity, mode=delta_b_mode,
+                dpi=dpi, steps=steps, dataset_names=dataset_names,
             )
     return 0
 
@@ -1553,6 +1775,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     n_cols = args.n_cols
 
+    delta_b_mode = None
+    if args.delta_b_mode is not None:
+        parts = args.delta_b_mode.split(",")
+        if len(parts) != 2 or not all(p.strip().lstrip("-").isdigit() for p in parts):
+            print(f"error: --delta-b-mode must be 'M,N', got {args.delta_b_mode!r}")
+            return 1
+        delta_b_mode = (int(parts[0]), int(parts[1]))
+
     if args.comparisons:
         return _run_comparisons(
             args.comparisons, comparisons, cases,
@@ -1561,6 +1791,9 @@ def main(argv: list[str] | None = None) -> int:
             theta_psi_range=theta_psi_range, n_cols=n_cols,
             wetted_threshold=args.theta_wetted_threshold,
             dataset_names=args.datasets_selected,
+            delta_b_variable=DELTA_B_OVER_B if args.delta_b_over_b else DELTA_B,
+            delta_b_quantity=args.delta_b_quantity,
+            delta_b_mode=delta_b_mode,
         )
 
     selected = args.selected or list(cases)
