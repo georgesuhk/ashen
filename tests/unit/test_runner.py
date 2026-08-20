@@ -185,6 +185,80 @@ def test_unimplemented_rho_method_raises(synthetic_campaign, tmp_path):
         prepare_run(params, site, tmp_path / "rundir", dry_run=True)
 
 
+# --- namelist_options ---------------------------------------------------------
+
+MODEL_SOURCE = """\
+subroutine initialise_parameters(my_id, filename)
+implicit none
+namelist /in1/  tstep, nstep, eta, visco,                          &
+                central_density, freeboundary,                     &
+                Dre_num, Dre_par
+end subroutine
+"""
+
+
+def _write_model(site, model_number="600", with_refluid=False):
+    root = site.jorek_re if with_refluid else site.jorek
+    model_dir = root / "models" / f"model{model_number}"
+    model_dir.mkdir(parents=True)
+    (model_dir / "initialise_parameters.f90").write_text(MODEL_SOURCE, encoding="utf-8")
+
+
+def test_namelist_options_unknown_parameter_raises_before_any_write(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    _write_model(site)
+    params = dataclasses.replace(
+        params, exe="jorek_model600_fixed_T_rho", namelist_options={"not_a_real_param": 1.0}
+    )
+    run_dir = tmp_path / "rundir"
+
+    with pytest.raises(ShotfileError, match="not_a_real_param"):
+        prepare_run(params, site, run_dir, dry_run=True)
+
+    assert not run_dir.exists()
+
+
+def test_namelist_options_known_parameter_is_applied(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    site, template_dir, params = synthetic_campaign
+    _write_model(site)
+    params = dataclasses.replace(
+        params, exe="jorek_model600_fixed_T_rho", namelist_options={"visco": 5e-7}
+    )
+    run_dir = tmp_path / "rundir"
+    (site.exe / "jorek_model600_fixed_T_rho").write_text("#!/bin/sh\n")
+
+    prepare_run(params, site, run_dir, dry_run=False)
+
+    for name in ("in_eq", "in_main", "in_main_r"):
+        assert effective_fields(run_dir / name)["visco"] == pytest.approx(5e-7)
+
+
+def test_namelist_options_without_model_number_in_exe_raises(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    params = dataclasses.replace(params, namelist_options={"visco": 5e-7})
+
+    with pytest.raises(ShotfileError, match="model number"):
+        prepare_run(params, site, tmp_path / "rundir", dry_run=True)
+
+
+def test_namelist_options_missing_model_source_raises(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    params = dataclasses.replace(
+        params, exe="jorek_model999_fixed_T_rho", namelist_options={"visco": 5e-7}
+    )
+
+    with pytest.raises(ShotfileError, match="model999"):
+        prepare_run(params, site, tmp_path / "rundir", dry_run=True)
+
+
+def test_namelist_options_empty_dict_needs_no_model_source(synthetic_campaign, tmp_path):
+    """The common case (no namelist_options at all) must not require a
+    models/ tree to exist -- most dev clones won't have one."""
+    site, template_dir, params = synthetic_campaign
+
+    prepare_run(params, site, tmp_path / "rundir", dry_run=True)  # must not raise
+
+
 def test_bnd_method_castor_alone_no_longer_name_errors(synthetic_campaign, tmp_path):
     """Regression for bug #5: the old code only checked ffprime/T/rho for
     'castor' membership, so bnd_method='castor' alone (with the others

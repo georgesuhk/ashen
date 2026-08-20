@@ -27,6 +27,8 @@ __all__ = [
     "effective_fields",
     "format_boundary_block",
     "fortran_literal",
+    "known_parameter_names",
+    "normalise_key",
     "parse_value",
     "read_field",
     "set_boundary_block",
@@ -113,7 +115,7 @@ _ASSIGNMENT = re.compile(
 )
 
 
-def _normalise_key(key: str) -> str:
+def normalise_key(key: str) -> str:
     """Fortran is case-insensitive and indifferent to spacing inside indices."""
     return re.sub(r"\s+", "", key).lower()
 
@@ -137,7 +139,7 @@ def effective_fields(path: Path | str) -> dict[str, Any]:
         if not stripped or stripped.startswith("&"):
             continue
         for match in _ASSIGNMENT.finditer(stripped):
-            key = _normalise_key(match.group(1))
+            key = normalise_key(match.group(1))
             value = match.group(2).strip().rstrip(",").strip()
             if value:
                 fields[key] = parse_value(value)
@@ -147,11 +149,54 @@ def effective_fields(path: Path | str) -> dict[str, Any]:
 def read_field(path: Path | str, field: str, cast: type | None = None) -> Any:
     """Read a single field. Raises if it is absent."""
     fields = effective_fields(path)
-    key = _normalise_key(field)
+    key = normalise_key(field)
     if key not in fields:
         raise NamelistError(f"{path}: no field named {field!r}")
     value = fields[key]
     return cast(value) if cast is not None else value
+
+
+_NAMELIST_DECL = re.compile(r"^\s*namelist\s*/\s*(\w+)\s*/", re.IGNORECASE)
+
+
+def known_parameter_names(source: Path | str, group: str = "in1") -> set[str]:
+    """The parameter names JOREK itself declares in ``namelist /group/``.
+
+    Parses the ``namelist /in1/ name1, name2, &`` declaration straight out of
+    a model's ``initialise_parameters.f90`` -- the authoritative list per
+    CLAUDE.md -- rather than hand-maintaining a duplicate one that would drift.
+    Names are returned through :func:`normalise_key`, so callers compare like
+    Fortran does: case- and space-insensitively.
+    """
+    path = Path(source)
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        raise NamelistError(f"{path}: cannot be read -- {exc}") from exc
+
+    start = next(
+        (
+            i for i, line in enumerate(lines)
+            if (m := _NAMELIST_DECL.match(line)) and m.group(1).lower() == group.lower()
+        ),
+        None,
+    )
+    if start is None:
+        raise NamelistError(f"{path}: no 'namelist /{group}/' declaration found")
+
+    body_lines = []
+    for i in range(start, len(lines)):
+        line = lines[i]
+        if i == start:
+            line = _NAMELIST_DECL.sub("", line, count=1)
+        line = line.rstrip()
+        continues = line.endswith("&")
+        body_lines.append(line[:-1] if continues else line)
+        if not continues:
+            break
+
+    tokens = " ".join(body_lines).split(",")
+    return {normalise_key(t) for t in tokens if t.strip()}
 
 
 # --- editing -----------------------------------------------------------------

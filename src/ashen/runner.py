@@ -37,6 +37,7 @@ T-profile grid and density-independence issues are reproduced exactly.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -161,6 +162,40 @@ def _uses_castor(params: ShotParams) -> bool:
     )
 
 
+_MODEL_NUMBER = re.compile(r"model(\d+)")
+
+
+def _validate_namelist_options(params: ShotParams, site: Site) -> None:
+    """Refuse a shotfile's ``namelist_options`` up front if any key isn't a
+    parameter JOREK's own model declares -- catches typos before anything is
+    written, rather than silently inserting a field JOREK will never read.
+    """
+    match = _MODEL_NUMBER.search(params.exe)
+    if not match:
+        raise ShotfileError(
+            f"namelist_options is set but the JOREK model number could not be "
+            f"parsed out of exe={params.exe!r} (expected e.g. 'jorek_model600_...')"
+        )
+    model_root = site.jorek_re if params.with_refluid else site.jorek
+    model_source = model_root / "models" / f"model{match.group(1)}" / "initialise_parameters.f90"
+    if not model_source.is_file():
+        raise ShotfileError(
+            f"namelist_options is set but {model_source} does not exist -- cannot "
+            f"validate parameter names against model{match.group(1)}'s namelist"
+        )
+
+    known = nml.known_parameter_names(model_source)
+    unknown = sorted(
+        name for name in params.namelist_options
+        if nml.normalise_key(name) not in known
+    )
+    if unknown:
+        raise ShotfileError(
+            f"namelist_options has parameter(s) not declared in {model_source}'s "
+            f"'namelist /in1/': {', '.join(unknown)}"
+        )
+
+
 def prepare_run(
     params: ShotParams,
     site: Site,
@@ -191,6 +226,9 @@ def prepare_run(
         warnings.warn(
             f"with_refluid=True but 'RE' not in exe ({params.exe!r})", stacklevel=2
         )
+
+    if params.namelist_options:
+        _validate_namelist_options(params, site)
 
     # ---- pure computation first: psi, profiles, boundary --------------------
     castor_dir = None
@@ -350,6 +388,9 @@ def prepare_run(
             },
             create_missing=True,
         )
+
+    if params.namelist_options:
+        disk.set_fields(paths.namelists, params.namelist_options, create_missing=True)
 
     disk.write_float(paths.real_psi_edge, real_psi_edge)
     disk.savetxt(run_dir / "ffprime_prof.dat", ffprime_data)

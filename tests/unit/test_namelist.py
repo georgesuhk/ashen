@@ -15,6 +15,7 @@ from ashen.namelist import (
     effective_fields,
     format_boundary_block,
     fortran_literal,
+    known_parameter_names,
     parse_value,
     read_field,
     set_boundary_block,
@@ -284,6 +285,60 @@ def test_edit_leaves_file_otherwise_byte_identical(namelist):
     assert len(before) == len(after)
     differing = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
     assert len(differing) == 1
+
+
+# --- known_parameter_names ----------------------------------------------------
+
+FORTRAN_SOURCE = """\
+subroutine initialise_parameters(my_id, filename)
+implicit none
+namelist /in1/  tstep, nstep, eta, visco,                          &
+                central_density, freeboundary,                     &
+                Dre_num, Dre_par
+end subroutine
+"""
+
+
+@pytest.fixture
+def model_source(tmp_path) -> Path:
+    path = tmp_path / "initialise_parameters.f90"
+    path.write_text(FORTRAN_SOURCE, encoding="utf-8")
+    return path
+
+
+def test_known_parameter_names_collects_every_continuation_line(model_source):
+    names = known_parameter_names(model_source)
+
+    assert "tstep" in names
+    assert "eta" in names
+    assert "dre_par" in names
+
+
+def test_known_parameter_names_is_case_and_space_insensitive(model_source):
+    names = known_parameter_names(model_source)
+
+    assert "central_density" in names  # matches "central_density," verbatim
+    assert "freeboundary" in names
+
+
+def test_known_parameter_names_stops_at_a_non_continued_line(model_source):
+    names = known_parameter_names(model_source)
+
+    assert "end" not in names
+    assert "subroutine" not in names
+
+
+def test_known_parameter_names_refuses_missing_group(model_source):
+    with pytest.raises(NamelistError, match="in2"):
+        known_parameter_names(model_source, group="in2")
+
+
+def test_known_parameter_names_refuses_missing_declaration(tmp_path):
+    path = tmp_path / "no_namelist.f90"
+    path.write_text("subroutine x()\nend subroutine\n", encoding="utf-8")
+
+    with pytest.raises(NamelistError, match="namelist /in1/"):
+        known_parameter_names(path)
 
 
 # --- boundary blocks ---------------------------------------------------------
