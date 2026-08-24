@@ -16,6 +16,7 @@ import dataclasses
 import numpy as np
 import pytest
 
+from ashen.config import SiteConfigError
 from ashen.namelist import effective_fields
 from ashen.paths import read_float
 from ashen.runner import (
@@ -257,6 +258,81 @@ def test_namelist_options_empty_dict_needs_no_model_source(synthetic_campaign, t
     site, template_dir, params = synthetic_campaign
 
     prepare_run(params, site, tmp_path / "rundir", dry_run=True)  # must not raise
+
+
+# --- starwall_options -----------------------------------------------------------
+
+STARWALL_INPUT_SOURCE = """\
+subroutine input
+namelist / params / i_response, n_harm, n_tor, nv, delta, n_points, nwall, iwall
+end subroutine
+"""
+
+STARWALL_WALL_SOURCE = """\
+namelist / params_wall / nwu, nwv, mn_w, n_w, m_w, rc_w, rs_w, zc_w, zs_w, eta_thin_w
+"""
+
+
+def _with_starwall_source(site, tmp_path):
+    """A synthetic_campaign site has no 'starwall' path -- add one pointing
+    at a minimal fake checkout, mirroring the two real namelist sources."""
+    starwall_dir = tmp_path / "starwall.git" / "src_3d"
+    starwall_dir.mkdir(parents=True)
+    (starwall_dir / "input.f90").write_text(STARWALL_INPUT_SOURCE, encoding="utf-8")
+    (starwall_dir / "surface_wall.f90").write_text(STARWALL_WALL_SOURCE, encoding="utf-8")
+    return dataclasses.replace(
+        site, paths={**site.paths, "starwall": starwall_dir.parent}
+    )
+
+
+def test_starwall_options_needs_site_starwall_path(synthetic_campaign, tmp_path):
+    """synthetic_campaign's site has no 'starwall' key -- must fail with a
+    clear site-config error, not an AttributeError or KeyError."""
+    site, template_dir, params = synthetic_campaign
+    params = dataclasses.replace(params, starwall_options={"i_response": 1})
+
+    with pytest.raises(SiteConfigError, match="starwall"):
+        prepare_run(params, site, tmp_path / "rundir", dry_run=True)
+
+
+def test_starwall_options_unknown_parameter_raises_before_any_write(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    site = _with_starwall_source(site, tmp_path)
+    params = dataclasses.replace(params, starwall_options={"not_a_real_param": 1})
+    run_dir = tmp_path / "rundir"
+
+    with pytest.raises(ShotfileError, match="not_a_real_param"):
+        prepare_run(params, site, run_dir, dry_run=True)
+
+    assert not run_dir.exists()
+
+
+def test_starwall_options_known_parameter_from_either_group_is_accepted(synthetic_campaign, tmp_path):
+    """i_response is /params/, eta_thin_w is /params_wall/ -- both must
+    validate, since starwall_options isn't split by group."""
+    site, template_dir, params = synthetic_campaign
+    site = _with_starwall_source(site, tmp_path)
+    params = dataclasses.replace(
+        params, starwall_options={"i_response": 1, "eta_thin_w": 1e-4}
+    )
+
+    # Only i_response exists in the fixture's input_starwall template (see
+    # conftest.py); eta_thin_w would need create_missing, which starwall
+    # writes don't support (see prepare_run's comment) -- so this specific
+    # combination must fail at the *write* stage, past validation.
+    with pytest.raises(Exception, match="eta_thin_w"):
+        prepare_run(params, site, tmp_path / "rundir", dry_run=False)
+
+
+def test_starwall_options_known_parameter_is_applied(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    site, template_dir, params = synthetic_campaign
+    site = _with_starwall_source(site, tmp_path)
+    params = dataclasses.replace(params, starwall_options={"i_response": 0})
+    run_dir = tmp_path / "rundir"
+
+    prepare_run(params, site, run_dir, dry_run=False)
+
+    assert effective_fields(run_dir / "input_starwall")["i_response"] == pytest.approx(0)
 
 
 def test_bnd_method_castor_alone_no_longer_name_errors(synthetic_campaign, tmp_path):

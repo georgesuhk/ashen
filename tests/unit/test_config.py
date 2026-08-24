@@ -162,6 +162,31 @@ def test_missing_reports_absent_targets(tmp_path):
     assert site.missing() == ["castor_root"]
 
 
+def test_starwall_is_optional_and_absent_by_default(tmp_path):
+    """Unlike REQUIRED_PATHS, a site.toml with no [paths].starwall must still
+    load fine -- only shotfiles setting starwall_options need this key."""
+    campaign = build_campaign(tmp_path)
+
+    site = load_site(campaign / "site.toml")
+
+    with pytest.raises(SiteConfigError, match="starwall"):
+        site.starwall
+
+
+def test_starwall_resolves_when_configured(tmp_path):
+    campaign = build_campaign(tmp_path)
+    with_starwall = SITE_BODY.replace(
+        'castor_root = "/elsewhere/castor3d"\n',
+        'castor_root = "/elsewhere/castor3d"\n'
+        'starwall    = "../starwall.git"\n',
+    )
+    (campaign / "site.toml").write_text(with_starwall, encoding="utf-8")
+
+    site = load_site(campaign / "site.toml")
+
+    assert site.starwall == tmp_path / "starwall.git"
+
+
 # --- the headline property ---------------------------------------------------
 
 

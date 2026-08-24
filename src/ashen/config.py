@@ -138,6 +138,15 @@ class Site:
     def castor_root(self) -> Path:
         return self.path("castor_root")
 
+    @property
+    def starwall(self) -> Path:
+        """A ``starwall.git`` checkout (``src_3d/`` holds its namelist source).
+
+        Optional, unlike the REQUIRED_PATHS -- only needed by shotfiles that
+        set ``starwall_options``, so most site.toml files never need this key.
+        """
+        return self.path("starwall")
+
     def jorek_util(self, with_refluid: bool) -> Path:
         """The JOREK ``util/`` tree to link into a run folder.
 

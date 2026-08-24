@@ -233,6 +233,10 @@ class RunPaths:
         return self.run_dir / "in_bnd"
 
     @property
+    def input_starwall(self) -> Path:
+        return self.run_dir / "input_starwall"
+
+    @property
     def namelists(self) -> list[Path]:
         """The three namelists the runner edits together."""
         return [self.in_eq, self.in_main, self.in_main_r]

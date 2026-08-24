@@ -15,6 +15,7 @@ jobscripts  = "../jobscripts"             # SLURM jobscripts
 jorek       = "../jorek"                  # standard JOREK checkout
 jorek_re    = "../jorek_RE"               # runaway-electron JOREK checkout
 castor_root = "/tokp/work/geosu/castor3d" # CASTOR3D tree (absolute: different filesystem)
+starwall    = "../starwall.git"           # optional: only needed by starwall_options
 
 [launch]
 # Shell preambles, lifted out of the driver where they were previously

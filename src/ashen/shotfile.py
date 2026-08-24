@@ -85,6 +85,9 @@ class ShotParams:
     Dre_iso: float = 0.0
     allow_other_starwall: bool = False
     namelist_options: dict = field(default_factory=dict)
+    #: Fields to set in input_starwall's namelist /params/ or /params_wall/.
+    #: Validated against STARWALL's own source -- see runner._validate_starwall_options.
+    starwall_options: dict = field(default_factory=dict)
 
     #: Machine suffix for CASTOR3D filenames (xn_fpol_stor0_<suffix>, etc).
     #: Old code hardcoded "DIIID" into 5 filenames across run_jorek_util.py;

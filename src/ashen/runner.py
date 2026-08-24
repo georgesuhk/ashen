@@ -196,6 +196,43 @@ def _validate_namelist_options(params: ShotParams, site: Site) -> None:
         )
 
 
+#: STARWALL's own namelist declarations (see site.starwall's docstring),
+#: relative to a starwall.git checkout.
+_STARWALL_NAMELIST_SOURCES = (
+    ("src_3d/input.f90", "params"),
+    ("src_3d/surface_wall.f90", "params_wall"),
+)
+
+
+def _validate_starwall_options(params: ShotParams, site: Site) -> None:
+    """Same idea as :func:`_validate_namelist_options`, for input_starwall.
+
+    STARWALL is a separate codebase (site.starwall) with its own two
+    namelists, /params/ and /params_wall/ -- both declared in input_starwall
+    (see template/copy/input_starwall). A shotfile's starwall_options is
+    validated against the union of both.
+    """
+    known: set[str] = set()
+    for relative, group in _STARWALL_NAMELIST_SOURCES:
+        source = site.starwall / relative
+        if not source.is_file():
+            raise ShotfileError(
+                f"starwall_options is set but {source} does not exist -- cannot "
+                "validate parameter names against STARWALL's namelists"
+            )
+        known |= nml.known_parameter_names(source, group=group)
+
+    unknown = sorted(
+        name for name in params.starwall_options
+        if nml.normalise_key(name) not in known
+    )
+    if unknown:
+        raise ShotfileError(
+            "starwall_options has parameter(s) not declared in STARWALL's "
+            f"'namelist /params/' or '/params_wall/': {', '.join(unknown)}"
+        )
+
+
 def prepare_run(
     params: ShotParams,
     site: Site,
@@ -229,6 +266,9 @@ def prepare_run(
 
     if params.namelist_options:
         _validate_namelist_options(params, site)
+
+    if params.starwall_options:
+        _validate_starwall_options(params, site)
 
     # ---- pure computation first: psi, profiles, boundary --------------------
     castor_dir = None
@@ -333,6 +373,14 @@ def prepare_run(
     disk.mkdir(run_dir, exist_ok=True)
 
     disk.copy_all_files(site.template / "copy", run_dir)
+
+    if params.starwall_options:
+        # No create_missing: input_starwall closes each namelist group with a
+        # bare "/", not "&end", so set_fields's insertion point (before "&end")
+        # doesn't apply here -- only fields already declared in the template
+        # can be set this way.
+        disk.set_fields([paths.input_starwall], params.starwall_options)
+
     disk.symlink_dir(site.exe, run_dir, "exe")
     disk.symlink_dir(site.jobscripts, run_dir, "jobscripts")
     disk.symlink_files_in(site.template / "symlink" / "base", run_dir)
