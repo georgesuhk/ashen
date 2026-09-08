@@ -38,6 +38,8 @@ from typing import Callable, Iterable, Mapping
 
 import numpy as np
 
+from ashen.diagnostics.hdf5 import require_h5py
+
 __all__ = [
     "SCHEMA_VERSION",
     "PoincareCacheError",
@@ -74,21 +76,8 @@ class PoincareCacheError(RuntimeError):
 
 
 def _h5py():
-    """Import h5py lazily, with an actionable message.
-
-    Kept out of module import so the rest of ashen stays importable on a
-    machine without h5py -- CLAUDE.md's rule that importability must not
-    depend on ``pip install``.
-    """
-    try:
-        import h5py
-    except ImportError as exc:  # pragma: no cover - environment-dependent
-        raise PoincareCacheError(
-            "the Poincare cache needs h5py, which is not importable here. "
-            "It is present in the HPC environment; on a dev clone install it "
-            "with `python -m pip install h5py`."
-        ) from exc
-    return h5py
+    """The h5py module, or PoincareCacheError explaining how to get it."""
+    return require_h5py("the Poincare cache", PoincareCacheError)
 
 
 @dataclass(frozen=True)
