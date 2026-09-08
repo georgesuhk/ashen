@@ -258,11 +258,9 @@ def prepare_run(
     disk = _Disk(dry_run)
     paths = RunPaths(run_dir)
 
-    if params.with_refluid and "RE" not in params.exe:
-        import warnings
-        warnings.warn(
-            f"with_refluid=True but 'RE' not in exe ({params.exe!r})", stacklevel=2
-        )
+    # No with_refluid/exe cross-check here: ShotParams.__post_init__ already
+    # warns about it at load time, and doing it again emitted the same warning
+    # twice for one run.
 
     if params.namelist_options:
         _validate_namelist_options(params, site)

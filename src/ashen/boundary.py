@@ -25,6 +25,7 @@ from ashen.castor_io import load_two_col_data
 
 __all__ = [
     "ExtendedPsi",
+    "boundary_center",
     "expand_boundary",
     "extend_prof",
     "extend_psi",
