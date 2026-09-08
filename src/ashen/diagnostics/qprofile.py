@@ -19,7 +19,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 
@@ -29,10 +29,16 @@ from ashen.postproc import qprofile_script, read_postproc_profile
 
 __all__ = [
     "run_qprofile_step", "read_qprofile", "find_rational_surfaces",
-    "rational_surface_matches",
+    "rational_surface_matches", "track_branches", "MAX_BRANCH_JUMP",
 ]
 
 POSTPROC_TOOL = "jorek2_postproc"
+
+#: How far (in psi_n) one rational surface may move between adjacent steps and
+#: still be considered the same surface by :func:`track_branches`. A resonant
+#: surface drifts as q evolves, but it drifts continuously; a jump larger than
+#: this is a different surface, not the same one teleporting.
+MAX_BRANCH_JUMP = 0.1
 
 
 def run_qprofile_step(run: Jorek2Run, step: int, paths: RunPaths) -> Path:
@@ -159,3 +165,74 @@ def rational_surface_matches(
             nearest = min(traced, key=lambda p: abs(p - crossing))
             matches[nearest] = color
     return matches
+
+
+def track_branches(
+    crossings_by_step: Mapping[int, Sequence[float]],
+    *,
+    max_jump: float = MAX_BRANCH_JUMP,
+) -> list[dict[int, float]]:
+    """Follow one mode's rational surfaces across steps.
+
+    Takes {step: [psi_n, ...]} -- the crossings :func:`find_rational_surfaces`
+    found for a single q=m/n at each step -- and returns one dict per
+    *surface*, mapping the steps where that surface exists to its position.
+
+    Tracking is needed because a mode does not have a fixed number of
+    surfaces. A monotonic q crosses q=m/n once, but a reversed-shear profile
+    crosses it two or three times, and those extra surfaces appear and merge
+    as q evolves through the run. Pairing crossings by their rank within each
+    step would silently re-label every surface the moment an inner one
+    vanishes, turning a band into nonsense; matching by position does not.
+
+    Greedy nearest-neighbour: walking steps in order, each crossing joins the
+    unclaimed branch whose last known position is nearest, provided it is
+    within `max_jump`. Anything further away starts a new branch. A branch a
+    step does not reach simply has no entry for it -- callers should not
+    assume every branch spans every step.
+
+    `max_jump` exists only to tell competing surfaces apart, so it is not
+    applied where there is no competition: if one crossing and one
+    still-live branch are left over after that pass, they are paired however
+    far apart they are. A lone surface cannot be confused with anything, and
+    it can legitimately move a long way between two restarts saved far apart
+    in time -- a limit tuned to separate a reversed-shear pair would
+    otherwise split that single surface into a string of stubs.
+    """
+    branches: list[dict[int, float]] = []
+    previous_step: int | None = None
+
+    for step in sorted(crossings_by_step):
+        crossings = sorted(float(c) for c in crossings_by_step[step])
+        unmatched: list[float] = []
+
+        for x in crossings:
+            best: int | None = None
+            best_distance = float("inf")
+            for i, branch in enumerate(branches):
+                if step in branch:  # already claimed at this step
+                    continue
+                head = branch[max(branch)]
+                distance = abs(head - x)
+                if distance < best_distance:
+                    best, best_distance = i, distance
+            if best is not None and best_distance <= max_jump:
+                branches[best][step] = x
+            else:
+                unmatched.append(x)
+
+        # The unambiguous leftover: exactly one crossing with nowhere to go
+        # and exactly one branch that was alive last step and went unclaimed.
+        live_unclaimed = [
+            i for i, branch in enumerate(branches)
+            if step not in branch and previous_step is not None
+            and previous_step in branch
+        ]
+        if len(unmatched) == 1 and len(live_unclaimed) == 1:
+            branches[live_unclaimed[0]][step] = unmatched.pop()
+
+        for x in unmatched:
+            branches.append({step: x})
+        previous_step = step
+
+    return branches

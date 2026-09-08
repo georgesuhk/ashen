@@ -2708,3 +2708,156 @@ def test_x_by_case_rejects_a_case_listed_twice_at_different_x():
 
 def test_x_by_case_allows_a_case_repeated_at_the_same_x():
     assert plot_cli._x_by_case(["a", "b", "a"], [1.0, 2.0, 1.0]) == {"a": 1.0, "b": 2.0}
+
+
+# --- rational surfaces updating per step ---------------------------------------
+
+
+def _rational_line(psi_n, label="n=1, m=2", color="#4c78a8"):
+    return (psi_n, color, label)
+
+
+def test_rational_bands_span_the_excursion_and_end_at_the_last_step():
+    bands = plot_cli._rational_bands({
+        100: [_rational_line(0.80)],
+        200: [_rational_line(0.72)],
+        300: [_rational_line(0.65)],
+    })
+    assert len(bands) == 1
+    band = bands[0]
+    assert (band.low, band.high) == (0.65, 0.80)
+    assert band.final == 0.65  # the last step, not the first
+    assert band.label == "n=1, m=2"
+    assert not band.is_static
+
+
+def test_rational_band_of_a_stationary_surface_is_flagged_static():
+    """A surface that never moves would otherwise shade a zero-width sliver."""
+    bands = plot_cli._rational_bands({
+        100: [_rational_line(0.5)], 200: [_rational_line(0.5)],
+    })
+    assert bands[0].is_static
+    assert bands[0].final == 0.5
+
+
+def test_rational_band_has_no_final_line_when_the_surface_vanishes():
+    """A reversed-shear pair whose inner surface merges away before the last
+    step still gets its band, but no line to draw it at."""
+    bands = plot_cli._rational_bands({
+        100: [_rational_line(0.30), _rational_line(0.80)],
+        200: [_rational_line(0.34), _rational_line(0.78)],
+        300: [_rational_line(0.76)],
+    })
+    by_span = sorted(bands, key=lambda b: b.low)
+    assert by_span[0].final is None            # inner surface gone by step 300
+    assert by_span[1].final == 0.76            # outer survived
+    assert by_span[1].high - by_span[1].low < 0.05  # not smeared to 0.30
+
+
+def test_rational_bands_keep_modes_apart():
+    bands = plot_cli._rational_bands({
+        100: [_rational_line(0.3, "n=1, m=2", "blue"),
+              _rational_line(0.7, "n=2, m=3", "orange")],
+        200: [_rational_line(0.35, "n=1, m=2", "blue"),
+              _rational_line(0.72, "n=2, m=3", "orange")],
+    })
+    assert {b.label for b in bands} == {"n=1, m=2", "n=2, m=3"}
+    assert len(bands) == 2
+
+
+def test_mark_rational_uses_each_step_not_just_the_first(campaign, monkeypatch):
+    """The surface moves between steps, so the static figure must band the
+    excursion and put its line at the LAST step -- it used to compute one set
+    from steps[0] and draw that against every curve."""
+    # q = 1 + 2*psi_n crosses q=2 at 0.5; the step-200 profile is steeper, so
+    # its q=2 surface sits further in, at 0.25.
+    _write_qprofile_cache(
+        campaign, 100, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    _write_qprofile_cache(
+        campaign, 200, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 2.0, 3.0, 4.0, 5.0]
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane",
+            [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+        )
+    _write_mark_rational_case(campaign, modes=[[2, 1]])
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["rational_lines"] = kwargs.get("rational_lines")
+        captured["rational_bands"] = kwargs.get("rational_bands")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+
+    # Line at step 200's surface (0.25), not step 100's (0.5).
+    assert captured["rational_lines"] == [(0.25, plot_cli.DISCRETE_PALETTE[0], "n=1, m=2")]
+    (band,) = captured["rational_bands"]
+    assert (band.low, band.high) == (0.25, 0.5)
+    assert band.final == 0.25
+
+
+def test_mark_rational_animation_gets_the_per_step_mapping(campaign, monkeypatch):
+    """Each GIF frame is one step, so it must receive every step's own lines --
+    the axvlines used to be drawn once outside the frame update."""
+    _write_qprofile_cache(
+        campaign, 100, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    _write_qprofile_cache(
+        campaign, 200, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 2.0, 3.0, 4.0, 5.0]
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane",
+            [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+        )
+    _write_mark_rational_case(campaign, modes=[[2, 1]])
+
+    captured = {}
+    monkeypatch.setattr(
+        plot_cli, "animate_profile_comparison",
+        lambda *a, **k: captured.setdefault("by_step", k.get("rational_lines_by_step")),
+    )
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles", "--animate"]
+    ) == 0
+
+    color = plot_cli.DISCRETE_PALETTE[0]
+    assert captured["by_step"] == {
+        100: [(0.5, color, "n=1, m=2")],
+        200: [(0.25, color, "n=1, m=2")],
+    }
+
+
+def test_mark_rational_marks_the_rest_when_one_step_lacks_a_qprofile(
+    campaign, monkeypatch, capsys
+):
+    """A step missing its cache is reported and left out, not fatal, and not
+    filled in from a neighbour."""
+    _write_qprofile_cache(
+        campaign, 100, psi_n=[0.0, 0.25, 0.5, 0.75, 1.0], q=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    for step in (100, 200):
+        _write_profile_cache(
+            campaign, "Psi_N", "currdens", step, "midplane",
+            [0.1, 0.5, 0.9], [1.0, 2.0, 1.0],
+        )
+    _write_mark_rational_case(campaign, modes=[[2, 1]])
+
+    captured = {}
+    original = plot_cli.plot_profile_comparison
+
+    def spy(series_by_mode, var, out_path, **kwargs):
+        captured["rational_lines"] = kwargs.get("rational_lines")
+        return original(series_by_mode, var, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_profile_comparison", spy)
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "profiles"]) == 0
+
+    assert "no qprofile cache for step(s) [200]" in capsys.readouterr().out
+    assert captured["rational_lines"] == [(0.5, plot_cli.DISCRETE_PALETTE[0], "n=1, m=2")]

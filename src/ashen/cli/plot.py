@@ -60,6 +60,7 @@ from ashen.diagnostics.profiles import (
     read_profile_series,
 )
 from ashen.diagnostics.qprofile import (
+    track_branches,
     find_rational_surfaces,
     rational_surface_matches,
     read_qprofile,
@@ -77,7 +78,11 @@ from ashen.plotting.colors import DISCRETE_PALETTE
 from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes
 from ashen.plotting.poincare import plot_poincare_step
-from ashen.plotting.profiles import animate_profile_comparison, plot_profile_comparison
+from ashen.plotting.profiles import (
+    RationalBand,
+    animate_profile_comparison,
+    plot_profile_comparison,
+)
 from ashen.plotting.theta_histogram import plot_theta_histogram_grid
 from ashen.plotting.wetted_fraction import plot_wetted_fraction_datasets, plot_wetted_fraction_vs_x
 from ashen.postproc import read_zeroD, zero_d_is_usable
@@ -516,6 +521,63 @@ def _rational_lines_for_step(
     return lines
 
 
+def _rational_lines_by_step(
+    case: Case, paths: RunPaths, steps: list[int]
+) -> dict[int, list[tuple[float, str, str]]]:
+    """{step: rational lines} for every step with a qprofile cache.
+
+    q evolves through a run -- that is the point of the run -- so a resonant
+    surface computed once at one step does not describe the others. Steps
+    whose cache is missing are omitted rather than filled in from a
+    neighbour; the caller reports how many were found.
+    """
+    by_step: dict[int, list[tuple[float, str, str]]] = {}
+    for step in steps:
+        lines = _rational_lines_for_step(case, paths, step)
+        if lines is not None:
+            by_step[step] = lines
+    return by_step
+
+
+def _rational_bands(
+    lines_by_step: dict[int, list[tuple[float, str, str]]],
+) -> list[RationalBand]:
+    """Collapse per-step rational lines into one band per surface.
+
+    A static profile figure overlays every step, so each surface becomes the
+    span it swept plus a line where it finished (see RationalBand). Surfaces
+    are followed across steps by position (qprofile.track_branches), not by
+    their rank within a step, so a reversed-shear pair that merges partway
+    through does not silently re-label the survivor.
+    """
+    if not lines_by_step:
+        return []
+    last_step = max(lines_by_step)
+
+    # Regroup [(psi_n, color, label)] per step into per-mode crossing lists,
+    # since a surface is only ever tracked against others of its own mode.
+    by_label: dict[str, tuple[str, dict[int, list[float]]]] = {}
+    for step, lines in lines_by_step.items():
+        for psi_n, color, label in lines:
+            _color, crossings = by_label.setdefault(label, (color, {}))
+            crossings.setdefault(step, []).append(psi_n)
+
+    bands: list[RationalBand] = []
+    for label, (color, crossings_by_step) in by_label.items():
+        for branch in track_branches(crossings_by_step):
+            positions = list(branch.values())
+            bands.append(
+                RationalBand(
+                    low=min(positions),
+                    high=max(positions),
+                    final=branch.get(last_step),
+                    color=color,
+                    label=label,
+                )
+            )
+    return bands
+
+
 def _read_true_times(
     case: Case, paths: RunPaths, steps: list[int], *, n_workers: int = 1
 ) -> list[float] | None:
@@ -838,6 +900,8 @@ def _draw_profile_variant(
     animate: bool,
     kwargs: dict,
     ylim: tuple[float, float] | None = None,
+    rational_bands: list[RationalBand] | None = None,
+    rational_lines_by_step: dict[int, list[tuple[float, str, str]]] | None = None,
 ) -> None:
     """Draws one variable's static PNG (and, if animate, its GIF) -- the
     shared tail of _plot_profiles' per-variable rendering, reused for both
@@ -848,6 +912,7 @@ def _draw_profile_variant(
         series_by_mode, ylabel, out,
         color_by=color_by, color_label=color_label,
         xlabel=xlabel, rational_lines=rational_lines,
+        rational_bands=rational_bands,
         cmap=cmap, ylim=ylim, **kwargs,
     )
     print(f"  {out}")
@@ -858,6 +923,7 @@ def _draw_profile_variant(
             series_by_mode, ylabel, gif_out,
             color_by=color_by, color_label=color_label, time_by_step=time_by_step,
             xlabel=xlabel, rational_lines=rational_lines,
+            rational_lines_by_step=rational_lines_by_step,
             cmap=cmap, ylim=ylim, **kwargs,
         )
         if animated is None:
@@ -900,10 +966,14 @@ def _plot_profiles(
         print("  no zeroD cache for one or more steps (run analyse --diag zerod); "
               "colouring profiles by step index")
 
-    # One reference step's rational-surface positions, shared across every
-    # variable's figure -- q shifts only slightly step to step, and a single
-    # consistent set of lines is more legible than one line set per figure.
+    # Rational surfaces are resolved per step, not once: q evolves through
+    # the run, so a surface fixed at one step misrepresents every other.
+    # The static figure overlays all steps, so each surface becomes a band
+    # (its excursion) plus a line at the last step; the animation, one step
+    # per frame, moves its lines with the frame.
     rational_lines: list[tuple[float, str, str]] | None = None
+    rational_bands: list[RationalBand] | None = None
+    lines_by_step: dict[int, list[tuple[float, str, str]]] | None = None
     if mark_rational:
         if case.coords_var != "Psi_N":
             print("  mark_rational needs coords_var = 'Psi_N', skipping "
@@ -912,9 +982,25 @@ def _plot_profiles(
             print("  mark_rational is on but no modes configured, skipping")
         else:
             _ensure_qprofile(case, paths, steps, n_workers=n_workers)
-            rational_lines = _rational_lines_for_step(case, paths, steps[0])
-            if rational_lines is None:
-                print(f"  mark_rational: no qprofile cache for step {steps[0]}, skipping")
+            lines_by_step = _rational_lines_by_step(case, paths, steps)
+            if not lines_by_step:
+                print("  mark_rational: no qprofile cache for any requested step, "
+                      "skipping")
+                lines_by_step = None
+            else:
+                missing = [step for step in steps if step not in lines_by_step]
+                if missing:
+                    print(f"  mark_rational: no qprofile cache for step(s) {missing}, "
+                          "marking the rest")
+                last_step = max(lines_by_step)
+                rational_lines = lines_by_step[last_step]
+                rational_bands = _rational_bands(lines_by_step)
+                moving = [b for b in rational_bands if not b.is_static]
+                if moving:
+                    widest = max(b.high - b.low for b in moving)
+                    print(f"  mark_rational: lines at step {last_step}, shaded over "
+                          f"{len(lines_by_step)} step(s) (largest excursion "
+                          f"{widest:.3g} in psi_n)")
 
     kwargs = _dpi_kwargs(dpi)
     for var in variables:
@@ -933,6 +1019,7 @@ def _plot_profiles(
             out_stem, series_by_mode, var,
             color_by=color_by, color_label=color_label, time_by_step=time_by_step,
             xlabel=case.coords_var, rational_lines=rational_lines,
+            rational_bands=rational_bands, rational_lines_by_step=lines_by_step,
             cmap=resolved_cmap, animate=animate, kwargs=kwargs,
             ylim=(var_ylim[0], var_ylim[1]) if var_ylim else None,
         )
@@ -949,6 +1036,7 @@ def _plot_profiles(
                     grad_out_stem, grad_series_by_mode, f"|d({var})/d({case.coords_var})|",
                     color_by=color_by, color_label=color_label, time_by_step=time_by_step,
                     xlabel=case.coords_var, rational_lines=rational_lines,
+                    rational_bands=rational_bands, rational_lines_by_step=lines_by_step,
                     cmap=resolved_cmap, animate=animate, kwargs=kwargs,
                     ylim=(grad_ylim[0], grad_ylim[1]) if grad_ylim else None,
                 )

@@ -21,15 +21,50 @@ interesting comparison is where one stops having curves at all
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import numpy as np
 
 from ashen.plotting import DEFAULT_DPI, style
 from ashen.plotting.colors import PsiColorer, colorer
 
-__all__ = ["animate_profile_comparison", "draw_profile_family", "plot_profile_comparison"]
+__all__ = [
+    "RationalBand",
+    "animate_profile_comparison",
+    "draw_profile_family",
+    "plot_profile_comparison",
+]
+
+
+@dataclass(frozen=True)
+class RationalBand:
+    """Where one rational surface sat over the plotted steps.
+
+    A static profile figure overlays every step's curve on one axes, so a
+    surface that moves cannot be drawn as a single line without picking a
+    step and misrepresenting the others. Instead the excursion
+    ``[low, high]`` is shaded and the position at the last step is drawn as
+    a line, so the figure shows both where the surface ended up and how far
+    it travelled to get there.
+
+    ``final`` is None for a surface that does not exist at the last step (a
+    reversed-shear pair that merged and vanished, say) -- the band is still
+    drawn, with no line on it.
+    """
+
+    low: float
+    high: float
+    final: float | None
+    color: str
+    label: str
+
+    @property
+    def is_static(self) -> bool:
+        """Whether the surface effectively did not move, so the band would
+        render as a zero-width sliver and only the line is worth drawing."""
+        return self.high - self.low < 1e-9
 
 
 def _profile_frame_label(step: int, time_by_step: Mapping[int, float] | None) -> str:
@@ -55,6 +90,7 @@ def draw_profile_family(
     ylabel: str = "",
     title: str = "",
     rational_lines: list[tuple[float, str, str]] | None = None,
+    rational_bands: Sequence[RationalBand] | None = None,
     ylim: tuple[float, float] | None = None,
 ) -> PsiColorer:
     """Draw one line per step in series onto ax, in step order.
@@ -73,6 +109,12 @@ def draw_profile_family(
     only the first per label is added to the legend, so the legend has one
     entry per mode, not one per crossing.
 
+    rational_bands (see :class:`RationalBand`) shades how far each of those
+    surfaces moved across the plotted steps, drawn behind the curves. It
+    pairs with rational_lines rather than replacing it: the band is the
+    excursion, the line is where the surface ended up. Only the line
+    carries the legend entry, so shading adds no legend clutter.
+
     ylim, if given, is a (min, max) pair applied via ax.set_ylim, pinning
     the axis instead of matplotlib's auto-scaling -- since every panel
     shares one y-axis (plot_profile_comparison's sharey=True), setting it
@@ -83,6 +125,15 @@ def draw_profile_family(
 
     if colors is None:
         colors = colorer([values[s] for s in steps if s in values])
+
+    # Bands first, and below everything: zorder 0 keeps the shading behind
+    # both the profile curves and the surface lines drawn on top of it.
+    for band in rational_bands or []:
+        if band.is_static:
+            continue
+        ax.axvspan(
+            band.low, band.high, color=band.color, alpha=0.12, linewidth=0, zorder=0,
+        )
 
     for step in steps:
         x, y = series[step]
@@ -120,6 +171,7 @@ def plot_profile_comparison(
     figsize: tuple[float, float] | None = None,
     dpi: int = DEFAULT_DPI,
     rational_lines: list[tuple[float, str, str]] | None = None,
+    rational_bands: Sequence[RationalBand] | None = None,
     cmap: str = "turbo",
     ylim: tuple[float, float] | None = None,
 ) -> Path:
@@ -165,7 +217,8 @@ def plot_profile_comparison(
             draw_profile_family(
                 ax, series, color_by=values, colors=colors,
                 xlabel=xlabel, title=mode if series else f"{mode} (no data)",
-                rational_lines=rational_lines, ylim=ylim,
+                rational_lines=rational_lines, rational_bands=rational_bands,
+                ylim=ylim,
             )
         row[0].set_ylabel(var)
 
@@ -188,6 +241,7 @@ def animate_profile_comparison(
     figsize: tuple[float, float] | None = None,
     dpi: int = DEFAULT_DPI,
     rational_lines: list[tuple[float, str, str]] | None = None,
+    rational_lines_by_step: Mapping[int, list[tuple[float, str, str]]] | None = None,
     cmap: str = "turbo",
     fps: float = 2.0,
     ylim: tuple[float, float] | None = None,
@@ -203,9 +257,16 @@ def animate_profile_comparison(
     ylim, if given, is used instead of that data-derived range (see
     draw_profile_family), pinning every frame to the same caller-chosen
     bounds rather than the range covered by the cached data.
-    rational_lines (mark_rational's vertical lines + one legend entry per
-    mode) are drawn once and held static across every frame, same as on the
-    static figure.
+    Rational surfaces move with the frame when rational_lines_by_step is
+    given ({step: [(psi_n, color, label), ...]}): each frame redraws that
+    step's own q=m/n crossings, so a surface visibly tracks the profile it
+    belongs to instead of sitting where it was at some other step. The
+    legend is built once, from the union of labels across every step, so it
+    neither flickers nor resizes as surfaces appear and vanish.
+
+    rational_lines is the static fallback for a caller with only one set of
+    positions -- drawn once and held across every frame. Pass one or the
+    other; rational_lines_by_step wins if both are given.
 
     Every frame's title always states the restart step, and the true time
     (seconds, formatted in microseconds) if time_by_step covers that step --
@@ -261,15 +322,36 @@ def animate_profile_comparison(
             (line,) = ax.plot([], [], linewidth=1.5)
             lines.append(line)
 
-            seen_labels: set[str] = set()
-            for psi_n, color, label in rational_lines or []:
-                ax.axvline(
-                    psi_n, color=color, linestyle="--", linewidth=1.0, alpha=0.7,
-                    label=None if label in seen_labels else label,
+        # The legend is built once, from every label any step contributes,
+        # so it stays fixed while the lines underneath it move. Proxy
+        # handles, not the real axvlines: those are recreated each frame.
+        legend_colors: dict[str, str] = {}
+        for frame_lines in (
+            rational_lines_by_step.values() if rational_lines_by_step
+            else [rational_lines or []]
+        ):
+            for _psi_n, color, label in frame_lines:
+                legend_colors.setdefault(label, color)
+
+        vlines: dict[int, list] = {i: [] for i in range(len(row))}
+        for i, ax in enumerate(row):
+            if legend_colors:
+                # Fixed corner, not "best": matplotlib re-solves "best" on
+                # every render, so an animated figure's legend hops from
+                # corner to corner as the curve moves under it.
+                ax.legend(
+                    handles=[
+                        plt.Line2D([], [], color=color, linestyle="--", label=label)
+                        for label, color in legend_colors.items()
+                    ],
+                    fontsize=8, loc="upper right",
                 )
-                seen_labels.add(label)
-            if seen_labels:
-                ax.legend(fontsize=8, loc="best")
+            if rational_lines_by_step is None:
+                # Static: draw once, never touched by _update.
+                for psi_n, color, _label in rational_lines or []:
+                    ax.axvline(
+                        psi_n, color=color, linestyle="--", linewidth=1.0, alpha=0.7,
+                    )
         row[0].set_ylabel(var)
 
         fig.colorbar(colors.scalar_mappable(), ax=list(row), label=color_label)
@@ -284,8 +366,26 @@ def animate_profile_comparison(
                     line.set_color(colors(values.get(step, float(step))))
                 else:
                     line.set_data([], [])
+
+            redrawn = []
+            if rational_lines_by_step is not None:
+                # Surfaces appear, merge and vanish between steps, so the
+                # artist count is not fixed -- clear and redraw rather than
+                # trying to keep a stable set of lines in sync.
+                for i, ax in enumerate(row):
+                    for artist in vlines[i]:
+                        artist.remove()
+                    vlines[i] = [
+                        ax.axvline(
+                            psi_n, color=color, linestyle="--",
+                            linewidth=1.0, alpha=0.7,
+                        )
+                        for psi_n, color, _label in rational_lines_by_step.get(step, [])
+                    ]
+                    redrawn.extend(vlines[i])
+
             suptitle.set_text(_profile_frame_label(step, time_by_step))
-            return [*lines, suptitle]
+            return [*lines, *redrawn, suptitle]
 
         anim = animation.FuncAnimation(fig, _update, frames=all_steps, blit=False)
         anim.save(out_path, writer="pillow", fps=fps, dpi=dpi)

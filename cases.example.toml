@@ -162,11 +162,14 @@ n_points        = 100
 # modes = [[3, 2], [2, 1]]
 # mode_colors = { "3,2" = "red", "2,1" = "blue" }
 
-# Mark `modes`' q=m/n rational surfaces as vertical dashed lines on `plot
-# --diag profiles` figures, with a legend labelling each mode -- needs
-# coords_var = "Psi_N". Auto-gathers the qprofile cache for any requested
-# step missing one, in parallel under --n-workers. `--mark_rational` on the
-# command line turns this on for one invocation without editing the file.
+# Mark `modes`' q=m/n rational surfaces on `plot --diag profiles` figures,
+# with a legend labelling each mode -- needs coords_var = "Psi_N".
+# Auto-gathers the qprofile cache for any requested step missing one, in
+# parallel under --n-workers. Resolved per step, since q evolves: the static
+# figure shades each surface's excursion and draws its line at the LAST
+# step, and an --animate GIF moves the lines with the frame.
+# `--mark_rational` on the command line turns this on for one invocation
+# without editing the file.
 # mark_rational = true
 
 # Marker area per puncture (matplotlib scatter `s`, points^2). Plot-time

@@ -350,11 +350,24 @@ moving, not a bug.
 
 **Marking rational surfaces on radial profiles.** `mark_rational = true`
 (case field, or `--mark_rational` for one invocation) draws the same
-`modes`' `q = m/n` crossings as vertical dashed lines on `plot --diag
-profiles` figures, with a legend labelling each mode (`mode_colors`
-overrides apply here too) -- needs `coords_var = "Psi_N"`. Auto-gathers the
-q-profile cache for any requested step that's missing one, in parallel under
-`--n-workers`.
+`modes`' `q = m/n` crossings on `plot --diag profiles` figures, with a
+legend labelling each mode (`mode_colors` overrides apply here too) --
+needs `coords_var = "Psi_N"`. Auto-gathers the q-profile cache for any
+requested step that's missing one, in parallel under `--n-workers`.
+
+The surfaces are resolved **per step**, because q evolves through a run and
+a surface pinned to one step misrepresents every other. Since the static
+figure overlays all steps at once, each surface is drawn as a shaded band
+spanning where it travelled, with a dashed line at its position at the
+**last** step -- so the figure shows both where the resonance ended up and
+how far it moved to get there. A surface that barely moves gets no visible
+band, just its line; one that merges away before the last step keeps its
+band but has no line to sit on. A step whose q-profile can't be gathered is
+named and left out rather than filled in from a neighbour.
+
+Surfaces are followed between steps by position, not by their order within
+a step, so a reversed-shear pair that merges partway through doesn't
+re-label the survivor and smear its band across the domain.
 
 **Puncture size.** `poincare_point_size` (case field, plot-time only, default
 `0.1`) sets each puncture's marker area -- matplotlib's scatter `s`, in
@@ -631,8 +644,11 @@ of the animation's usual fixed-to-the-data-range y-limits.
 `<coords_var>_<var>_profile.gif` alongside the PNG -- one frame per restart
 step, each panel showing only that step's curve (not the whole family at
 once), coloured the same way as the static figure, with fixed axis limits
-so panels don't rescale frame to frame. `mark_rational`'s lines/legend, if
-on, are drawn once and held static across every frame. Skipped, with a
+so panels don't rescale frame to frame. `mark_rational`'s surfaces, if on,
+move with the frame -- each frame draws its own step's crossings, so a
+resonance visibly tracks the profile it belongs to. The legend is built
+once from every step's modes, so it doesn't flicker as surfaces come and
+go. Skipped, with a
 printed note, for a figure with fewer than two steps.
 
 Every frame's title states the restart step *and* the true time (from the

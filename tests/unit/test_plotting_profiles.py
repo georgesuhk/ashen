@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from ashen.plotting.profiles import (
+    RationalBand,
     _profile_frame_label,
     animate_profile_comparison,
     draw_profile_family,
@@ -334,3 +335,84 @@ def test_animate_ylim_overrides_data_derived_limits(series, monkeypatch, tmp_pat
     assert out.is_file()
     ax = captured["axes"][0][0]
     assert ax.get_ylim() == (0.0, 10.0)
+
+
+# --- rational surfaces: bands on the static figure, motion in the animation ------
+
+
+def test_bands_are_drawn_behind_the_curves(series, tmp_path):
+    fig, ax = plt.subplots()
+    draw_profile_family(
+        ax, series,
+        rational_lines=[(0.4, "blue", "n=1, m=2")],
+        rational_bands=[RationalBand(0.3, 0.5, 0.4, "blue", "n=1, m=2")],
+    )
+    spans = [p for p in ax.patches if isinstance(p, matplotlib.patches.Patch)]
+    assert len(spans) == 1
+    assert spans[0].get_zorder() == 0
+    # The band must not add a second legend entry for the same mode.
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert labels == ["n=1, m=2"]
+    plt.close(fig)
+
+
+def test_a_static_band_is_not_shaded(series):
+    """Zero-width shading is invisible clutter -- only the line is drawn."""
+    fig, ax = plt.subplots()
+    draw_profile_family(
+        ax, series, rational_bands=[RationalBand(0.4, 0.4, 0.4, "blue", "n=1, m=2")],
+    )
+    assert not [p for p in ax.patches if isinstance(p, matplotlib.patches.Patch)]
+    plt.close(fig)
+
+
+def test_animation_moves_the_rational_lines_between_frames(series, tmp_path):
+    """Regression: the axvlines were created once outside the frame update, so
+    every frame showed the first step's surfaces regardless of its own curve.
+    """
+    positions_seen = []
+    real_axvline = plt.Axes.axvline
+
+    def spy(self, x=0, *args, **kwargs):
+        positions_seen.append(x)
+        return real_axvline(self, x, *args, **kwargs)
+
+    plt.Axes.axvline = spy
+    try:
+        out = animate_profile_comparison(
+            {"midplane": series}, "T", tmp_path / "a.gif",
+            rational_lines_by_step={100: [(0.30, "blue", "n=1, m=2")],
+                                    200: [(0.70, "blue", "n=1, m=2")]},
+        )
+    finally:
+        plt.Axes.axvline = real_axvline
+
+    assert out is not None
+    # Both steps' positions were drawn, not just the first repeated.
+    assert 0.30 in positions_seen and 0.70 in positions_seen
+
+
+def test_animation_legend_covers_every_step_and_is_built_once(series, tmp_path):
+    """A surface present at only one step still needs its legend entry, and
+    the legend must not grow or shrink as frames advance."""
+    legends = []
+    real_legend = plt.Axes.legend
+
+    def spy(self, *args, **kwargs):
+        legends.append(kwargs.get("handles"))
+        return real_legend(self, *args, **kwargs)
+
+    plt.Axes.legend = spy
+    try:
+        animate_profile_comparison(
+            {"midplane": series}, "T", tmp_path / "b.gif",
+            rational_lines_by_step={
+                100: [(0.30, "blue", "n=1, m=2")],
+                200: [(0.70, "blue", "n=1, m=2"), (0.40, "orange", "n=2, m=3")],
+            },
+        )
+    finally:
+        plt.Axes.legend = real_legend
+
+    assert len(legends) == 1, "legend rebuilt per frame"
+    assert [h.get_label() for h in legends[0]] == ["n=1, m=2", "n=2, m=3"]

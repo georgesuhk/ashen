@@ -11,6 +11,7 @@ from ashen.diagnostics.qprofile import (
     rational_surface_matches,
     read_qprofile,
     run_qprofile_step,
+    track_branches,
 )
 from ashen.jorek2 import Jorek2Run, MissingRestartError
 from ashen.paths import RunPaths
@@ -168,3 +169,58 @@ def test_run_qprofile_step_missing_exe_raises(tmp_path):
     paths = RunPaths(run_dir, pad_width=6)
     with pytest.raises(FileNotFoundError):
         run_qprofile_step(run, 100, paths)
+
+
+# --- track_branches: following surfaces across steps ---------------------------
+
+
+def test_track_branches_follows_one_drifting_surface():
+    branches = track_branches({100: [0.70], 200: [0.66], 300: [0.61]})
+    assert branches == [{100: 0.70, 200: 0.66, 300: 0.61}]
+
+
+def test_track_branches_keeps_reversed_shear_pair_apart():
+    """Two crossings of the same q, drifting independently, stay two branches."""
+    branches = track_branches({100: [0.30, 0.80], 200: [0.34, 0.78]})
+    assert branches == [{100: 0.30, 200: 0.34}, {100: 0.80, 200: 0.78}]
+
+
+def test_track_branches_survives_a_surface_vanishing():
+    """Regression for the reason this exists: pairing crossings by their rank
+    within a step would re-label the outer surface as the inner one the moment
+    the inner one merges away, turning its band into a spurious sweep across
+    the whole domain."""
+    branches = track_branches({100: [0.30, 0.80], 200: [0.34, 0.78], 300: [0.76]})
+
+    assert branches == [{100: 0.30, 200: 0.34}, {100: 0.80, 200: 0.78, 300: 0.76}]
+    outer = branches[1]
+    assert max(outer.values()) - min(outer.values()) < 0.05  # not 0.30 -> 0.76
+
+
+def test_track_branches_of_nothing_is_empty():
+    assert track_branches({}) == []
+
+
+def test_track_branches_follows_a_lone_surface_past_max_jump():
+    """max_jump separates competing surfaces; it must not split a single one.
+
+    Restarts saved far apart in time can show one surface moving further than
+    the limit in one hop, and there is nothing it could be confused with.
+    """
+    branches = track_branches({100: [0.50], 200: [0.25]}, max_jump=0.1)
+    assert branches == [{100: 0.50, 200: 0.25}]
+
+
+def test_track_branches_does_not_pair_across_a_gap():
+    """A branch that died two steps ago is not resurrected by a new crossing
+    appearing elsewhere -- only a surface alive at the previous step is a
+    candidate for the unambiguous pairing."""
+    branches = track_branches({100: [0.20], 200: [], 300: [0.90]}, max_jump=0.1)
+    assert branches == [{100: 0.20}, {300: 0.90}]
+
+
+def test_track_branches_still_splits_two_ambiguous_surfaces():
+    """Two crossings both beyond max_jump stay two new branches -- the
+    leftover pairing only applies when there is exactly one of each."""
+    branches = track_branches({100: [0.20, 0.25], 200: [0.80, 0.90]}, max_jump=0.1)
+    assert len(branches) == 4
