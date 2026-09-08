@@ -26,7 +26,7 @@ from typing import Mapping
 
 import numpy as np
 
-from ashen.plotting import style
+from ashen.plotting import DEFAULT_DPI, style
 from ashen.plotting.colors import PsiColorer, colorer
 
 __all__ = ["animate_profile_comparison", "draw_profile_family", "plot_profile_comparison"]
@@ -118,7 +118,7 @@ def plot_profile_comparison(
     color_label: str = "Time step",
     xlabel: str = "",
     figsize: tuple[float, float] | None = None,
-    dpi: int = 150,
+    dpi: int = DEFAULT_DPI,
     rational_lines: list[tuple[float, str, str]] | None = None,
     cmap: str = "turbo",
     ylim: tuple[float, float] | None = None,
@@ -186,7 +186,7 @@ def animate_profile_comparison(
     time_by_step: Mapping[int, float] | None = None,
     xlabel: str = "",
     figsize: tuple[float, float] | None = None,
-    dpi: int = 150,
+    dpi: int = DEFAULT_DPI,
     rational_lines: list[tuple[float, str, str]] | None = None,
     cmap: str = "turbo",
     fps: float = 2.0,

@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from ashen.diagnostics.connection_length import smooth_ignoring_inf
-from ashen.plotting import style
+from ashen.plotting import DEFAULT_DPI, style
 
 __all__ = ["draw_connection_length_map", "plot_connection_length_map"]
 
@@ -80,7 +80,7 @@ def plot_connection_length_map(
     log: bool = True,
     smooth: bool = False,
     figsize: tuple[float, float] = (7, 5),
-    dpi: int = 150,
+    dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save one LC/LCTT figure. ``true_times`` is required when
     ``plot_true_times=True`` -- ports ``data_jorek.py:598-600``'s

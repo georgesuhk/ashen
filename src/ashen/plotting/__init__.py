@@ -21,7 +21,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
-__all__ = ["STYLE", "style"]
+__all__ = ["DEFAULT_DPI", "STYLE", "style"]
+
+#: Output resolution for every figure in this package. One constant rather
+#: than a per-module default: the modules had drifted to 150 in some and 200
+#: in others, so the same figure family came out at two resolutions depending
+#: on which function drew it. The CLI's --dpi still overrides per invocation.
+DEFAULT_DPI = 200
 
 #: Union of both legacy blocks, with the one real conflict (data.py's
 #: concrete font stack vs data_jorek.py's bare "serif") resolved in favour

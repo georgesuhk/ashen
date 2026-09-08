@@ -39,7 +39,7 @@ from typing import Sequence
 import numpy as np
 
 from ashen.diagnostics.theta_histogram import theta_histogram
-from ashen.plotting import style
+from ashen.plotting import DEFAULT_DPI, style
 
 __all__ = ["draw_theta_histogram", "plot_theta_histogram_grid"]
 
@@ -73,7 +73,7 @@ def plot_theta_histogram_grid(
     n_cols: int = 4,
     figsize_per_panel: tuple[float, float] = (1.8, 1.8),
     y_max: float | None = None,
-    dpi: int = 200,
+    dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save a grid of theta-crossing histograms, one panel per
     (label, angles) pair in panels -- the file-owning counterpart to

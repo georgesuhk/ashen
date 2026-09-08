@@ -23,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from ashen.plotting import style
+from ashen.plotting import DEFAULT_DPI, style
 from ashen.plotting.colors import DISCRETE_PALETTE
 
 __all__ = [
@@ -70,7 +70,7 @@ def plot_wetted_fraction_vs_x(
     ylabel: str = "Wetted fraction",
     log_x: bool = True,
     figsize: tuple[float, float] = (6, 3.5),
-    dpi: int = 200,
+    dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save one figure -- the file-owning counterpart to
     :func:`draw_wetted_fraction_vs_x`."""
@@ -95,7 +95,7 @@ def plot_wetted_fraction_datasets(
     ylabel: str = "Wetted fraction",
     log_x: bool = True,
     figsize: tuple[float, float] = (6, 3.5),
-    dpi: int = 200,
+    dpi: int = DEFAULT_DPI,
     colors: Sequence[str | None] | None = None,
 ) -> Path:
     """Overlay several named series on one axes -- e.g. the same

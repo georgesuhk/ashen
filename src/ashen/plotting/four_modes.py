@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from ashen.diagnostics.four_modes import GrowthFit, ModeKey
-from ashen.plotting import style
+from ashen.plotting import DEFAULT_DPI, style
 from ashen.plotting.colors import DISCRETE_PALETTE
 
 __all__ = ["draw_mode_amplitudes", "plot_mode_amplitudes"]
@@ -151,7 +151,7 @@ def plot_mode_amplitudes(
     ylim: tuple[float, float] | None = None,
     vline: tuple[float, str] | None = None,
     figsize: tuple[float, float] = (7, 5),
-    dpi: int = 150,
+    dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save one variable's mode-amplitude time series."""
     import matplotlib.pyplot as plt

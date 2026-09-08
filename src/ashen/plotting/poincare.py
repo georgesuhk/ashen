@@ -22,7 +22,7 @@ from typing import Mapping
 import numpy as np
 
 from ashen.diagnostics.poincare_cache import LineKey, LineRecord
-from ashen.plotting import style
+from ashen.plotting import DEFAULT_DPI, style
 from ashen.plotting.colors import colorer
 
 __all__ = ["draw_poincare", "plot_poincare_step"]
@@ -81,7 +81,7 @@ def plot_poincare_step(
     out_path: Path | str,
     *,
     figsize: tuple[float, float] = (6, 6),
-    dpi: int = 200,
+    dpi: int = DEFAULT_DPI,
     title: str | None = None,
     **draw_kwargs,
 ) -> Path:
