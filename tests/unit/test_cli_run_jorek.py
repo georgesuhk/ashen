@@ -92,7 +92,7 @@ def test_show_config_missing_site_reports_error(tmp_path, monkeypatch, capsys):
     code = main(["--show-config"])
 
     assert code == 1
-    assert "error" in capsys.readouterr().out.lower()
+    assert "error" in capsys.readouterr().err.lower()
 
 
 # --- --help / no args --------------------------------------------------------
@@ -130,7 +130,7 @@ def test_missing_shotfile_field_reports_error_not_traceback(cli_campaign, capsys
     code = main(["shotfile.py", "--dry-run"])
 
     assert code == 1
-    assert "error" in capsys.readouterr().out.lower()
+    assert "error" in capsys.readouterr().err.lower()
 
 
 # --- real prepare (uses the symlink-bypass campaign) --------------------------

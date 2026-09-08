@@ -14,6 +14,7 @@ matplotlib.use("Agg")
 import numpy as np
 import pytest
 
+from ashen.cases import CasesError
 from ashen.cli import plot as plot_cli
 from ashen.diagnostics import four_cache as four_cache_mod
 from ashen.diagnostics import poincare_cache as pc
@@ -293,7 +294,7 @@ def test_poincare_highlight_false_never_reads_qprofile(campaign, monkeypatch):
 
 def test_unknown_case_is_an_error(campaign, capsys):
     assert plot_cli.main(["--case", "does_not_exist"]) == 1
-    assert "unknown case" in capsys.readouterr().out
+    assert "unknown case" in capsys.readouterr().err
 
 
 def test_missing_run_folder_is_reported(tmp_path, monkeypatch):
@@ -2653,3 +2654,57 @@ def test_compare_delta_b_over_b_variable(delta_b_comparison_campaign, capsys):
     ).is_file()
     out = capsys.readouterr().out
     assert "delta_b_over_b (max)" in out
+
+
+# --- per-case error tolerance and x_values mapping (cli/_common) -----------------
+
+
+def test_run_folder_without_restart_files_is_reported_not_crashed(
+    tmp_path, monkeypatch, capsys
+):
+    """RunPaths.detect raises PaddingError when a folder holds no jorek*.h5.
+
+    That is the first mistake a new user makes (running from the wrong
+    directory) and it used to escape main() as a raw traceback, since only
+    FileNotFoundError was caught.
+    """
+    run_dir = tmp_path / "empty_case"
+    run_dir.mkdir()
+    (tmp_path / "cases.toml").write_text(
+        '[cases.empty_case]\nsteps = [100]\n', encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert plot_cli.main(["--case", "empty_case", "--diag", "poincare"]) == 1
+    assert "no JOREK restart files" in capsys.readouterr().err
+
+
+def test_one_failing_case_does_not_abort_the_others(campaign, monkeypatch, capsys):
+    """A bad case is reported and skipped so an overnight batch keeps its
+    other results; the exit code still reflects the failure."""
+    (campaign.parent.parent / "broken").mkdir()
+    (campaign.parent.parent / "cases.toml").write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        '[cases.broken]\n'
+        'steps = [100]\n',
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--diag", "poincare"]) == 1
+    captured = capsys.readouterr()
+    # The good case still ran, despite `broken` failing.
+    assert "==== qa2.1_g2.3/eta1e-3_RE ====" in captured.out
+    assert "1 of 2 case(s) failed: broken" in captured.err
+
+
+def test_x_by_case_rejects_a_case_listed_twice_at_different_x():
+    """Keyed by name, so a repeated case used to collapse to whichever x came
+    last -- one point silently plotted at the wrong position."""
+    with pytest.raises(CasesError, match="appears more than once"):
+        plot_cli._x_by_case(["a", "b", "a"], [1.0, 2.0, 3.0])
+
+
+def test_x_by_case_allows_a_case_repeated_at_the_same_x():
+    assert plot_cli._x_by_case(["a", "b", "a"], [1.0, 2.0, 1.0]) == {"a": 1.0, "b": 2.0}

@@ -43,6 +43,7 @@ __all__ = [
     "qprofile_script",
     "zero_d_script",
     "read_zeroD",
+    "zero_d_is_usable",
     "read_postproc_profile",
     "parse_macroscopic_vars",
 ]
@@ -189,6 +190,29 @@ def read_zeroD(path: Path | str) -> dict[str, float]:
     keys = lines[0].split()
     values = [_parse_fortran_float(v) for v in lines[1].split()]
     return dict(zip(keys, values))
+
+
+def zero_d_is_usable(path: Path | str) -> bool:
+    """Whether a zeroD cache exists AND actually parses.
+
+    Existence alone isn't enough: an interrupted jorek2_postproc leaves an
+    empty/header-only file behind, which blocks its own re-gathering forever
+    (the file is there, so nothing regenerates it) and silently loses every
+    true-time figure's x-axis. Treating an unparseable cache as absent makes
+    that self-healing.
+
+    Lives here rather than in one CLI because both `analyse` and `plot` gate
+    zeroD gathering on it -- it used to exist only in `plot`, so `analyse`
+    reported a truncated cache as `[cached]` and never repaired it.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return False
+    try:
+        read_zeroD(path)
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def read_postproc_profile(path: Path | str) -> tuple[list[str], dict[int, np.ndarray]]:

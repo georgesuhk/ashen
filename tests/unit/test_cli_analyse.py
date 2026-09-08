@@ -12,7 +12,7 @@ import pytest
 
 from ashen.cases import Case
 from ashen.cli import analyse as analyse_cli
-from ashen.jorek2 import Jorek2Run, MissingRestartError
+from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError
 from ashen.paths import RunPaths
 
 
@@ -352,3 +352,50 @@ def test_profiles_passes_case_knobs_through_to_gather_profiles(case_and_run_dir,
     assert captured["deltaphi"] == case.profile_deltaphi
     assert captured["steps"] == case.steps
     assert captured["variables"] == case.vars
+
+
+# --- shared cache-validity and per-case tolerance (cli/_common) -----------------
+
+
+def test_truncated_zerod_cache_is_regathered(jrun_and_paths, monkeypatch, capsys):
+    """Regression: an interrupted jorek2_postproc leaves a header-only file.
+
+    Existence alone used to count as `[cached]` here, so the bad file blocked
+    its own repair forever -- while `plot`, which parsed the cache, correctly
+    regathered it. Both now gate on postproc.zero_d_is_usable.
+    """
+    run, paths = jrun_and_paths
+    paths.zero_d(100).parent.mkdir(parents=True, exist_ok=True)
+    paths.zero_d(100).write_text("Time Energy\n", encoding="utf-8")  # header only
+
+    calls = []
+    monkeypatch.setattr(
+        analyse_cli, "run_zero_d", lambda jrun, step, paths: calls.append(step)
+    )
+
+    analyse_cli._gather_zero_d(run, paths, [100], force=False, n_workers=1)
+
+    assert calls == [100]
+    assert "[cached]" not in capsys.readouterr().out
+
+
+def test_tool_failure_on_one_step_does_not_abort_the_rest(jrun_and_paths, monkeypatch):
+    """A Jorek2Error used to escape _gather_zero_d entirely (only
+    MissingRestartError was caught), aborting every remaining step and case.
+    """
+    run, paths = jrun_and_paths
+
+    def fake_run_zero_d(jrun, step, paths):
+        if step == 200:
+            raise Jorek2Error("jorek2_postproc exited 1")
+        paths.zero_d(step).parent.mkdir(parents=True, exist_ok=True)
+        paths.zero_d(step).write_text("Time Energy\n1.0 1.0\n", encoding="utf-8")
+
+    monkeypatch.setattr(analyse_cli, "run_zero_d", fake_run_zero_d)
+
+    with pytest.warns(UserWarning, match="skipping zerod step 200"):
+        analyse_cli._gather_zero_d(run, paths, [100, 200, 300], force=False, n_workers=1)
+
+    assert paths.zero_d(100).is_file()
+    assert not paths.zero_d(200).is_file()
+    assert paths.zero_d(300).is_file()

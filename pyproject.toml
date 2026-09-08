@@ -24,9 +24,9 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7", "h5py>=3"]
 
-# No [project.scripts]: bin/run_jorek and bin/analyse are the supported entry
-# points and work from a bare clone without installing. Console scripts get
-# added in Phase 3 only if pip installation proves useful.
+# No [project.scripts]: the shims in bin/ (run_jorek, analyse, plot, timestep)
+# are the supported entry points and work from a bare clone without installing.
+# Console scripts get added in Phase 3 only if pip installation proves useful.
 
 [tool.setuptools.packages.find]
 where = ["src"]

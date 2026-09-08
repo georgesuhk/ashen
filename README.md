@@ -227,8 +227,14 @@ omp_threads = 0   # OpenMP threads per process; 0 = min(8, cpu_count)
 
 ## Plotting
 
-`bin/plot` draws figures from data `analyse` already gathered -- it never runs
-a `jorek2_*` tool itself, and reads the same `cases.toml`:
+`bin/plot` draws figures from data `analyse` already gathered, and reads the
+same `cases.toml`. It never *traces* -- no `jorek2_poincare`, no `four`, none
+of the slow work, which is what keeps it fast enough to iterate on. It will,
+though, top up three cheap `jorek2_postproc` caches on demand if a figure
+needs one and it is missing or unreadable: zeroD (every true-time x-axis),
+the q-profile (rational-surface lines), and the edge `Btor` profile
+(`delta_b_over_b`). Each is one call per step; each is reported as it runs
+and skipped rather than fatal if it fails.
 
 ```bash
 python ~/ashen/bin/plot --list

@@ -52,7 +52,7 @@ def test_two_steps_prints_delta_and_rate(run_dir, monkeypatch, capsys):
 
 def test_more_than_two_steps_is_an_error(run_dir, capsys):
     assert timestep_cli.main(["100", "200", "300"]) == 1
-    assert "at most two steps" in capsys.readouterr().out
+    assert "at most two steps" in capsys.readouterr().err
 
 
 def test_no_restart_files_is_an_error(tmp_path, monkeypatch, capsys):
@@ -61,7 +61,7 @@ def test_no_restart_files_is_an_error(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(empty_dir)
 
     assert timestep_cli.main(["100"]) == 1
-    assert "error" in capsys.readouterr().out
+    assert "error" in capsys.readouterr().err
 
 
 def test_missing_restart_step_is_reported(run_dir, monkeypatch, capsys):
@@ -73,4 +73,4 @@ def test_missing_restart_step_is_reported(run_dir, monkeypatch, capsys):
     monkeypatch.setattr(timestep_cli, "step_time", fake)
 
     assert timestep_cli.main(["999"]) == 1
-    assert "error" in capsys.readouterr().out
+    assert "error" in capsys.readouterr().err

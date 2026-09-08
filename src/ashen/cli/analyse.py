@@ -19,18 +19,28 @@ from __future__ import annotations
 
 import argparse
 import warnings
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
 
-from ashen.cases import Case, CasesError, load_cases
+from ashen.cases import Case
+from ashen.cli._common import (
+    CASE_ERRORS,
+    error,
+    load_cases_or_exit,
+    print_case_list,
+    resolve_selection,
+    run_steps,
+    show_config,
+    stale_steps,
+)
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics import four as four_diag
 from ashen.diagnostics import poincare as poincare_diag
 from ashen.diagnostics import profiles as profiles_diag
 from ashen.diagnostics import qprofile as qprofile_diag
-from ashen.jorek2 import Jorek2Run, MissingRestartError, run_zero_d
+from ashen.jorek2 import Jorek2Run, run_zero_d
 from ashen.paths import RunPaths, read_float
+from ashen.postproc import zero_d_is_usable
 
 DIAG_CHOICES = ("zerod", "poincare", "profiles", "four")
 
@@ -76,87 +86,75 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _gather(
+    label: str,
+    run_one,
+    is_current,
+    steps: list[int],
+    *,
+    force: bool,
+    n_workers: int,
+) -> None:
+    """Gather one per-step diagnostic: cache-gated, fanned out across
+    processes, one step's failure never aborting the rest.
+
+    `is_current(step)` decides whether a cached result counts as done --
+    for zeroD that means parsing it, not just finding it (see
+    postproc.zero_d_is_usable). `run_one` must be picklable for n_workers > 1.
+
+    A step whose restart is missing, or whose jorek2_* call fails for any
+    other reason, is warned about and skipped: restart files for a run in
+    progress are routinely incomplete at the tail of a requested range, and
+    one unreadable step shouldn't cost the other twenty their gather.
+    """
+    total = len(steps)
+    order = {step: i for i, step in enumerate(steps, start=1)}
+    todo = stale_steps(steps, is_current, force=force)
+    pending = set(todo)
+    for step in steps:
+        if step not in pending:
+            print(f"  {label} {order[step]}/{total}: step {step} [cached]")
+
+    run_steps(
+        run_one,
+        todo,
+        n_workers=n_workers,
+        on_done=lambda step: print(f"  {label} {order[step]}/{total}: step {step}"),
+        on_skip=lambda step, exc: warnings.warn(
+            f"skipping {label} step {step}: {exc}", stacklevel=2
+        ),
+    )
+
+
 def _gather_zero_d(
     jrun: Jorek2Run, paths: RunPaths, steps: list[int], *, force: bool, n_workers: int
 ) -> None:
-    """zeroD for every step, cache-gated and fanned out across processes --
-    same shape as poincare.run_poincare_scan.
+    """zeroD for every step. See :func:`_gather`.
 
-    A step with a missing restart is warned about and skipped, not
-    aborted: restart files for a run in progress are routinely incomplete
-    at the tail of a requested step range.
+    Cache validity goes through zero_d_is_usable, not bare existence: an
+    interrupted jorek2_postproc leaves a header-only file that used to be
+    reported `[cached]` here forever while `plot` correctly regathered it.
     """
-    total = len(steps)
-    tasks: list[tuple[int, int]] = []
-    for i, step in enumerate(steps, start=1):
-        if force or not paths.zero_d(step).is_file():
-            tasks.append((i, step))
-        else:
-            print(f"  zerod {i}/{total}: step {step} [cached]")
-
-    if not tasks:
-        return
-
-    if n_workers <= 1 or len(tasks) <= 1:
-        for i, step in tasks:
-            print(f"  zerod {i}/{total}: step {step}")
-            try:
-                run_zero_d(jrun, step, paths)
-            except MissingRestartError as exc:
-                warnings.warn(f"skipping zerod step {step}: {exc}", stacklevel=2)
-        return
-
-    one = partial(run_zero_d, jrun, paths=paths)
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(one, step): (i, step) for i, step in tasks}
-        for future in as_completed(futures):
-            i, step = futures[future]
-            try:
-                future.result()
-            except MissingRestartError as exc:
-                warnings.warn(f"skipping zerod step {step}: {exc}", stacklevel=2)
-                continue
-            print(f"  zerod {i}/{total}: step {step}")
+    _gather(
+        "zerod",
+        partial(run_zero_d, jrun, paths=paths),
+        lambda step: zero_d_is_usable(paths.zero_d(step)),
+        steps, force=force, n_workers=n_workers,
+    )
 
 
 def _gather_qprofile(
     jrun: Jorek2Run, paths: RunPaths, steps: list[int], *, force: bool, n_workers: int
 ) -> None:
-    """q-profile for every step, cache-gated and fanned out across processes
-    -- same shape as _gather_zero_d, since qprofile.run_qprofile_step runs
-    jorek2_postproc in place exactly like jorek2.run_zero_d.
-    """
-    total = len(steps)
-    tasks: list[tuple[int, int]] = []
-    for i, step in enumerate(steps, start=1):
-        if force or not paths.qprofile(step).is_file():
-            tasks.append((i, step))
-        else:
-            print(f"  qprofile {i}/{total}: step {step} [cached]")
-
-    if not tasks:
-        return
-
-    if n_workers <= 1 or len(tasks) <= 1:
-        for i, step in tasks:
-            print(f"  qprofile {i}/{total}: step {step}")
-            try:
-                qprofile_diag.run_qprofile_step(jrun, step, paths)
-            except MissingRestartError as exc:
-                warnings.warn(f"skipping qprofile step {step}: {exc}", stacklevel=2)
-        return
-
-    one = partial(qprofile_diag.run_qprofile_step, jrun, paths=paths)
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(one, step): (i, step) for i, step in tasks}
-        for future in as_completed(futures):
-            i, step = futures[future]
-            try:
-                future.result()
-            except MissingRestartError as exc:
-                warnings.warn(f"skipping qprofile step {step}: {exc}", stacklevel=2)
-                continue
-            print(f"  qprofile {i}/{total}: step {step}")
+    """q-profile for every step -- same shape as _gather_zero_d, since
+    qprofile.run_qprofile_step runs jorek2_postproc in place exactly like
+    jorek2.run_zero_d."""
+    _gather(
+        "qprofile",
+        partial(qprofile_diag.run_qprofile_step, jrun, paths=paths),
+        lambda step: paths.qprofile(step).is_file(),
+        steps, force=force, n_workers=n_workers,
+    )
 
 
 def _run_case(
@@ -304,35 +302,26 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.show_config:
-        try:
-            site = load_site(args.site)
-        except SiteConfigError as exc:
-            print(f"error: {exc}")
-            return 1
-        print(site.describe())
-        return 0
+        return show_config(args.site)
 
-    try:
-        cases = load_cases(args.cases)
-    except CasesError as exc:
-        print(f"error: {exc}")
+    cases = load_cases_or_exit(args.cases)
+    if cases is None:
         return 1
 
     if args.list:
-        for name, case in cases.items():
-            note = f" -- {case.note}" if case.note else ""
-            print(f"{name} ({len(case.steps)} steps){note}")
-        return 0
+        return print_case_list(cases)
 
-    selected = args.selected or list(cases)
-    unknown = [name for name in selected if name not in cases]
-    if unknown:
-        print(f"error: unknown case(s) {unknown}; --list to see defined cases")
+    selected = resolve_selection(args.selected, cases)
+    if selected is None:
         return 1
 
     diags = args.diags or ["zerod"]
     n_workers, omp_threads = _resolve_parallelism(args)
 
+    # One bad case is reported and skipped, not fatal: an overnight gather
+    # over twenty cases shouldn't lose the other nineteen because one folder
+    # is missing or has no restart files yet. The exit code still reflects it.
+    failed: list[str] = []
     for name in selected:
         print(f"==== {name} ====")
         try:
@@ -343,8 +332,12 @@ def main(argv: list[str] | None = None) -> int:
                 n_workers=n_workers,
                 omp_threads=omp_threads,
             )
-        except FileNotFoundError as exc:
-            print(f"error: {exc}")
-            return 1
+        except CASE_ERRORS as exc:
+            error(f"{name}: {exc}")
+            failed.append(name)
+
+    if failed:
+        error(f"{len(failed)} of {len(selected)} case(s) failed: {', '.join(failed)}")
+        return 1
 
     return 0

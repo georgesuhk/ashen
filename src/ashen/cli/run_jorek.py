@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ashen.cli._common import error, show_config
 from ashen.config import SiteConfigError, load_site
 from ashen.runner import (
     prepare_run,
@@ -54,19 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.show_config:
-        try:
-            site = load_site(args.site)
-        except SiteConfigError as exc:
-            print(f"error: {exc}")
-            return 1
-        print(site.describe())
-        missing = site.missing()
-        if missing:
-            print(
-                f"\nnote: {len(missing)} path(s) do not exist here: "
-                f"{', '.join(missing)}"
-            )
-        return 0
+        return show_config(args.site)
 
     if args.shot_file is None:
         build_parser().print_help()
@@ -75,13 +64,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         params = load_shotfile(args.shot_file)
     except ShotfileError as exc:
-        print(f"error: {exc}")
+        error(str(exc))
         return 1
 
     try:
         site = load_site(args.site)
     except SiteConfigError as exc:
-        print(f"error: {exc}")
+        error(str(exc))
         return 1
 
     run_dir = Path.cwd()
@@ -92,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run, run_sw=args.run_sw,
         )
     except (ShotfileError, NotImplementedError, FileNotFoundError) as exc:
-        print(f"error: {exc}")
+        error(str(exc))
         return 1
 
     if args.dry_run:

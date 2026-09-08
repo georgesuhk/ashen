@@ -26,11 +26,20 @@ import dataclasses
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 import numpy as np
 
-from ashen.cases import Case, CasesError, load_cases
+from ashen.cases import Case, CasesError
+from ashen.cli._common import (
+    CASE_ERRORS,
+    error,
+    load_cases_or_exit,
+    print_case_list,
+    resolve_selection,
+    run_steps,
+    show_config,
+)
 from ashen.comparisons import Comparison, load_comparisons
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
@@ -71,7 +80,7 @@ from ashen.plotting.poincare import plot_poincare_step
 from ashen.plotting.profiles import animate_profile_comparison, plot_profile_comparison
 from ashen.plotting.theta_histogram import plot_theta_histogram_grid
 from ashen.plotting.wetted_fraction import plot_wetted_fraction_datasets, plot_wetted_fraction_vs_x
-from ashen.postproc import read_zeroD
+from ashen.postproc import read_zeroD, zero_d_is_usable
 
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
@@ -394,79 +403,73 @@ def _plot_connection_length(
         print(f"  {out}")
 
 
-def _zero_d_is_usable(path: Path) -> bool:
-    """Whether this step's zeroD cache exists AND actually parses.
+def _ensure(
+    label: str,
+    report: str,
+    run_one_for,
+    is_current,
+    case: Case,
+    paths: RunPaths,
+    steps: list[int],
+    *,
+    n_workers: int = 1,
+) -> None:
+    """Gather a per-step cache on demand for whichever `steps` lack one.
 
-    Existence alone isn't enough: an interrupted jorek2_postproc leaves an
-    empty/header-only file, blocking its own re-gathering forever (the
-    file is there, so nothing regenerates it) and silently losing every
-    true-time figure's x-axis. Treating an unparseable cache as absent
-    makes that self-healing.
+    Distinct from analyse's `_gather` in reporting, not mechanism: this is
+    an unexpected top-up during plotting, so it says what was missing and
+    why it is running, where analyse reports i/total over a batch it planned.
+    Both share `run_steps` underneath.
+
+    `report` is the noun phrase for the "missing" line -- zeroD says
+    "missing or unreadable" (it validates by parsing), qprofile just
+    "missing".
+
+    A step whose restart doesn't exist, or whose jorek2_postproc call fails
+    otherwise (no exe symlinked in, say), is reported and skipped rather
+    than raised: one step's failure only drops that step from the eventual
+    figure, it doesn't abort every other diag this invocation asked for.
+
+    n_workers > 1 fans missing steps out across processes, same shape as
+    _plot_poincare's rendering pool -- each call is its own jorek2_postproc
+    invocation, independent of every other step.
     """
-    if not path.is_file():
-        return False
-    try:
-        read_zeroD(path)
-    except (OSError, ValueError):
-        return False
-    return True
+    missing = [step for step in steps if not is_current(step)]
+    if not missing:
+        return
+
+    print(f"  {label}: {report} for step(s) {missing}, gathering")
+    jrun = Jorek2Run(
+        run_dir=paths.run_dir, exe_dir=paths.run_dir,
+        namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
+    )
+    run_steps(
+        run_one_for(jrun),
+        missing,
+        n_workers=n_workers,
+        on_done=lambda step: print(f"  {label}: step {step} done"),
+        on_skip=lambda step, exc: print(f"  {label}: step {step} skipped ({exc})"),
+    )
 
 
 def _ensure_zero_d(
     case: Case, paths: RunPaths, steps: list[int], *, n_workers: int = 1
 ) -> None:
     """Gather the zeroD cache for whichever `steps` lack a usable one --
-    absent or unparseable (_zero_d_is_usable).
+    absent or unparseable (postproc.zero_d_is_usable).
 
     Every true-time x-axis goes through _read_true_times, which used to
     just skip on "no zeroD cache", needing a separate `analyse --diag
     zerod` pass first. zeroD is cheap (one jorek2_postproc call/step, no
     tracing), so it's gathered here on demand instead, same precedent as
     ensure_edge_toroidal_field's Btor profile.
-
-    A step whose restart doesn't exist (MissingRestartError, a
-    FileNotFoundError subclass -- same tolerance analyse's own zerod
-    gathering has for a run in progress) or whose jorek2_postproc call
-    fails otherwise (Jorek2Error, or bare FileNotFoundError if the exe
-    isn't symlinked in) is reported and skipped, not raised -- one step's
-    failure only drops that step from the eventual axis, doesn't abort
-    every other diag this invocation also asked for.
-
-    n_workers > 1 fans missing steps out across processes, same shape as
-    _plot_poincare's rendering pool -- each zeroD call is its own
-    jorek2_postproc invocation, independent of every other step.
     """
-    missing = [step for step in steps if not _zero_d_is_usable(paths.zero_d(step))]
-    if not missing:
-        return
-
-    print(f"  zerod: missing or unreadable for step(s) {missing}, gathering")
-    jrun = Jorek2Run(
-        run_dir=paths.run_dir, exe_dir=paths.run_dir,
-        namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
+    _ensure(
+        "zerod", "missing or unreadable",
+        lambda jrun: partial(run_zero_d, jrun, paths=paths),
+        lambda step: zero_d_is_usable(paths.zero_d(step)),
+        case, paths, steps, n_workers=n_workers,
     )
-
-    if n_workers <= 1 or len(missing) <= 1:
-        for step in missing:
-            try:
-                run_zero_d(jrun, step, paths)
-            except (FileNotFoundError, Jorek2Error) as exc:
-                print(f"  zerod: step {step} skipped ({exc})")
-            else:
-                print(f"  zerod: step {step} done")
-        return
-
-    one = partial(run_zero_d, jrun, paths=paths)
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(one, step): step for step in missing}
-        for future in as_completed(futures):
-            step = futures[future]
-            try:
-                future.result()
-            except (FileNotFoundError, Jorek2Error) as exc:
-                print(f"  zerod: step {step} skipped ({exc})")
-                continue
-            print(f"  zerod: step {step} done")
 
 
 def _ensure_qprofile(
@@ -474,44 +477,13 @@ def _ensure_qprofile(
 ) -> None:
     """Gather the qprofile cache (jorek2_postproc) for whichever `steps`
     lack one -- same on-demand shape as _ensure_zero_d, swapping in
-    qprofile.run_qprofile_step.
-
-    A step whose restart doesn't exist, or whose jorek2_postproc call
-    otherwise fails, is reported and skipped rather than raised: one
-    step missing its rational-surface line shouldn't abort the whole
-    profile figure.
-    """
-    missing = [step for step in steps if not paths.qprofile(step).is_file()]
-    if not missing:
-        return
-
-    print(f"  qprofile: missing for step(s) {missing}, gathering")
-    jrun = Jorek2Run(
-        run_dir=paths.run_dir, exe_dir=paths.run_dir,
-        namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
+    qprofile.run_qprofile_step."""
+    _ensure(
+        "qprofile", "missing",
+        lambda jrun: partial(run_qprofile_step, jrun, paths=paths),
+        lambda step: paths.qprofile(step).is_file(),
+        case, paths, steps, n_workers=n_workers,
     )
-
-    if n_workers <= 1 or len(missing) <= 1:
-        for step in missing:
-            try:
-                run_qprofile_step(jrun, step, paths)
-            except (FileNotFoundError, Jorek2Error) as exc:
-                print(f"  qprofile: step {step} skipped ({exc})")
-            else:
-                print(f"  qprofile: step {step} done")
-        return
-
-    one = partial(run_qprofile_step, jrun, paths=paths)
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(one, step): step for step in missing}
-        for future in as_completed(futures):
-            step = futures[future]
-            try:
-                future.result()
-            except (FileNotFoundError, Jorek2Error) as exc:
-                print(f"  qprofile: step {step} skipped ({exc})")
-                continue
-            print(f"  qprofile: step {step} done")
 
 
 def _rational_lines_for_step(
@@ -554,7 +526,7 @@ def _read_true_times(
     time axis is worse than none.
 
     ValueError covers a cache that's empty/truncated or unparseable
-    (postproc.read_zeroD) -- the same case _zero_d_is_usable already tried
+    (postproc.read_zeroD) -- the same case zero_d_is_usable already tried
     to re-gather; kept here so a failed re-gather degrades to skipping the
     time axis rather than aborting every other diag.
     """
@@ -1217,6 +1189,27 @@ def _compare_theta_hist(
     print(f"  {out}")
 
 
+def _x_by_case(case_names: list[str], x_values: list[float]) -> dict[str, float]:
+    """{case name -> its x value}, refusing a comparison that lists one case
+    twice.
+
+    Lengths already match 1:1 (validated in ashen.comparisons), but the
+    mapping is keyed by name, so a case repeated at two different x
+    positions would silently collapse to whichever came last -- one point
+    quietly plotted at the wrong x. Rare, and a configuration mistake rather
+    than a plotting one, so it is reported rather than guessed at.
+    """
+    seen: dict[str, float] = {}
+    for name, x in zip(case_names, x_values):
+        if name in seen and seen[name] != x:
+            raise CasesError(
+                f"case {name!r} appears more than once with different x_values "
+                f"({seen[name]} and {x}); each case needs one x position"
+            )
+        seen[name] = x
+    return seen
+
+
 def _wetted_fraction_xy(
     labelled_cases: list[tuple[str, str]],
     x_by_case: dict[str, float],
@@ -1295,30 +1288,35 @@ def _wetted_fraction_xy(
     return xs, ys
 
 
-def _compare_wetted_fraction(
+def _compare_scan_vs_x(
     comparison: Comparison,
-    cases: dict[str, Case],
+    xy_for: Callable[[list[tuple[str, str]], dict[str, float]], tuple[list[float], list[float]]],
     *,
-    target_psi: float | None,
-    bins: int | None,
-    psi_range: tuple[float, float] | None,
-    threshold: float | None,
+    what: str,
+    out_stem: str,
     dpi: int | None,
-    steps: list[int] | None,
-    dataset_names: list[str] | None = None,
+    dataset_names: list[str] | None,
+    ylabel: str | None = None,
 ) -> None:
-    """The fraction of each case's (pooled) theta_hist bins exceeding a
-    threshold, plotted against a numeric x-axis -- e.g. wetted fraction vs.
-    eta. Needs `x_values` configured somewhere; unlike theta_hist there is no
-    meaningful figure without one, so a series missing it is skipped.
+    """Draw one "scalar per case vs. a numeric scan parameter" figure.
+
+    The shape every such comparison shares -- wetted fraction vs. eta,
+    delta-B vs. eta, and whatever comes next. `xy_for(labelled_cases,
+    x_by_case)` supplies the points for one series; everything around it
+    (dataset selection, x_values resolution and its skip messages, the
+    flat-vs-datasets split, the output path) is the same either way and
+    lives here.
 
     A `datasets` comparison draws one overlaid, legend-labelled series per
-    dataset (`plot_wetted_fraction_datasets`), optionally restricted to
-    `dataset_names`; a flat comparison draws its one series as before
-    (`plot_wetted_fraction_vs_x`).
+    dataset, optionally restricted to `dataset_names`; a flat comparison
+    draws its single series. Both need `x_values` configured somewhere --
+    unlike a theta_hist grid there is no meaningful figure without one, so a
+    series missing it is skipped with a note naming `what`.
     """
     out_dir = Path.cwd() / "figures"
     kwargs = _dpi_kwargs(dpi)
+    if ylabel is not None:
+        kwargs["ylabel"] = ylabel
 
     if comparison.datasets:
         chosen = comparison.datasets
@@ -1339,15 +1337,10 @@ def _compare_wetted_fraction(
                 print(
                     f"  dataset {ds_name!r} of comparison {comparison.name!r} has no "
                     "x_values (and the comparison sets none to fall back on); "
-                    "wetted_fraction needs one numeric value per case, skipped"
+                    f"{what} needs one numeric value per case, skipped"
                 )
                 continue
-            x_by_case = dict(zip(ds.cases, ds.x_values))
-            xs, ys = _wetted_fraction_xy(
-                ds.labelled_cases(), x_by_case, cases, comparison,
-                target_psi=target_psi, bins=bins, psi_range=psi_range,
-                threshold=threshold, steps=steps,
-            )
+            xs, ys = xy_for(ds.labelled_cases(), _x_by_case(ds.cases, ds.x_values))
             if not xs:
                 continue
             series.append((ds.series_label, xs, ys))
@@ -1356,7 +1349,7 @@ def _compare_wetted_fraction(
         if not series:
             return
         out = plot_wetted_fraction_datasets(
-            series, out_dir / f"{comparison.name}_wetted_fraction.png",
+            series, out_dir / f"{out_stem}.png",
             xlabel=comparison.x_label, colors=colors, **kwargs,
         )
         print(f"  {out}")
@@ -1365,24 +1358,50 @@ def _compare_wetted_fraction(
     if comparison.x_values is None:
         print(
             f"  comparison {comparison.name!r} has no x_values configured; "
-            "wetted_fraction needs one numeric value per case, skipped"
+            f"{what} needs one numeric value per case, skipped"
         )
         return
 
-    x_by_case = dict(zip(comparison.cases, comparison.x_values))
-    xs, ys = _wetted_fraction_xy(
-        comparison.labelled_cases(), x_by_case, cases, comparison,
-        target_psi=target_psi, bins=bins, psi_range=psi_range,
-        threshold=threshold, steps=steps,
+    xs, ys = xy_for(
+        comparison.labelled_cases(),
+        _x_by_case(comparison.cases, comparison.x_values),
     )
     if not xs:
         return
 
     out = plot_wetted_fraction_vs_x(
-        xs, ys, out_dir / f"{comparison.name}_wetted_fraction.png",
-        xlabel=comparison.x_label, **kwargs,
+        xs, ys, out_dir / f"{out_stem}.png", xlabel=comparison.x_label, **kwargs,
     )
     print(f"  {out}")
+
+
+def _compare_wetted_fraction(
+    comparison: Comparison,
+    cases: dict[str, Case],
+    *,
+    target_psi: float | None,
+    bins: int | None,
+    psi_range: tuple[float, float] | None,
+    threshold: float | None,
+    dpi: int | None,
+    steps: list[int] | None,
+    dataset_names: list[str] | None = None,
+) -> None:
+    """The fraction of each case's (pooled) theta_hist bins exceeding a
+    threshold, against a numeric x-axis -- e.g. wetted fraction vs. eta.
+    See :func:`_compare_scan_vs_x` for the shared scan-vs-x machinery."""
+    _compare_scan_vs_x(
+        comparison,
+        lambda labelled, x_by_case: _wetted_fraction_xy(
+            labelled, x_by_case, cases, comparison,
+            target_psi=target_psi, bins=bins, psi_range=psi_range,
+            threshold=threshold, steps=steps,
+        ),
+        what="wetted_fraction",
+        out_stem=f"{comparison.name}_wetted_fraction",
+        dpi=dpi,
+        dataset_names=dataset_names,
+    )
 
 
 def _delta_b_xy(
@@ -1512,71 +1531,19 @@ def _compare_delta_b(
         ylabel = f"\N{GREEK SMALL LETTER DELTA}B/B ({quantity})"
     else:
         ylabel = f"\N{GREEK SMALL LETTER DELTA}B [T] ({quantity})"
-    out_stem = f"{comparison.name}_{variable}_{quantity}"
-    out_dir = Path.cwd() / "figures"
-    kwargs = _dpi_kwargs(dpi)
 
-    if comparison.datasets:
-        chosen = comparison.datasets
-        if dataset_names is not None:
-            unknown = [n for n in dataset_names if n not in comparison.datasets]
-            if unknown:
-                print(
-                    f"  comparison {comparison.name!r} has no dataset(s) {unknown}; "
-                    f"known: {list(comparison.datasets)}"
-                )
-                return
-            chosen = {n: comparison.datasets[n] for n in dataset_names}
-
-        series: list[tuple[str, list[float], list[float]]] = []
-        colors: list[str | None] = []
-        for ds_name, ds in chosen.items():
-            if ds.x_values is None:
-                print(
-                    f"  dataset {ds_name!r} of comparison {comparison.name!r} has no "
-                    "x_values (and the comparison sets none to fall back on); "
-                    f"{variable} needs one numeric value per case, skipped"
-                )
-                continue
-            x_by_case = dict(zip(ds.cases, ds.x_values))
-            xs, ys = _delta_b_xy(
-                ds.labelled_cases(), x_by_case, cases,
-                variable=variable, quantity=quantity, mode=mode, steps=steps,
-            )
-            if not xs:
-                continue
-            series.append((ds.series_label, xs, ys))
-            colors.append(ds.color)
-
-        if not series:
-            return
-        out = plot_wetted_fraction_datasets(
-            series, out_dir / f"{out_stem}.png",
-            xlabel=comparison.x_label, ylabel=ylabel, colors=colors, **kwargs,
-        )
-        print(f"  {out}")
-        return
-
-    if comparison.x_values is None:
-        print(
-            f"  comparison {comparison.name!r} has no x_values configured; "
-            f"{variable} needs one numeric value per case, skipped"
-        )
-        return
-
-    x_by_case = dict(zip(comparison.cases, comparison.x_values))
-    xs, ys = _delta_b_xy(
-        comparison.labelled_cases(), x_by_case, cases,
-        variable=variable, quantity=quantity, mode=mode, steps=steps,
+    _compare_scan_vs_x(
+        comparison,
+        lambda labelled, x_by_case: _delta_b_xy(
+            labelled, x_by_case, cases,
+            variable=variable, quantity=quantity, mode=mode, steps=steps,
+        ),
+        what=variable,
+        out_stem=f"{comparison.name}_{variable}_{quantity}",
+        dpi=dpi,
+        dataset_names=dataset_names,
+        ylabel=ylabel,
     )
-    if not xs:
-        return
-
-    out = plot_wetted_fraction_vs_x(
-        xs, ys, out_dir / f"{out_stem}.png",
-        xlabel=comparison.x_label, ylabel=ylabel, **kwargs,
-    )
-    print(f"  {out}")
 
 
 def _resolve_n_workers(args) -> int:
@@ -1729,31 +1696,20 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.show_config:
-        try:
-            site = load_site(args.site)
-        except SiteConfigError as exc:
-            print(f"error: {exc}")
-            return 1
-        print(site.describe())
-        return 0
+        return show_config(args.site)
 
-    try:
-        cases = load_cases(args.cases)
-    except CasesError as exc:
-        print(f"error: {exc}")
+    cases = load_cases_or_exit(args.cases)
+    if cases is None:
         return 1
 
     try:
         comparisons = load_comparisons(args.cases, cases)
     except CasesError as exc:
-        print(f"error: {exc}")
+        error(str(exc))
         return 1
 
     if args.list:
-        for name, case in cases.items():
-            note = f" -- {case.note}" if case.note else ""
-            print(f"{name} ({len(case.steps)} steps){note}")
-        return 0
+        return print_case_list(cases)
 
     if args.list_comparisons:
         for name, comparison in comparisons.items():
@@ -1779,7 +1735,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.delta_b_mode is not None:
         parts = args.delta_b_mode.split(",")
         if len(parts) != 2 or not all(p.strip().lstrip("-").isdigit() for p in parts):
-            print(f"error: --delta-b-mode must be 'M,N', got {args.delta_b_mode!r}")
+            error(f"--delta-b-mode must be 'M,N', got {args.delta_b_mode!r}")
             return 1
         delta_b_mode = (int(parts[0]), int(parts[1]))
 
@@ -1796,15 +1752,17 @@ def main(argv: list[str] | None = None) -> int:
             delta_b_mode=delta_b_mode,
         )
 
-    selected = args.selected or list(cases)
-    unknown = [name for name in selected if name not in cases]
-    if unknown:
-        print(f"error: unknown case(s) {unknown}; --list to see defined cases")
+    selected = resolve_selection(args.selected, cases)
+    if selected is None:
         return 1
 
     n_workers = _resolve_n_workers(args)
     psi_range = tuple(args.psi_range) if args.psi_range is not None else None
 
+    # One bad case is reported and skipped, not fatal -- same reasoning as
+    # analyse's loop. PaddingError (a run folder with no jorek*.h5 in it) is
+    # the one a new user hits first; it used to escape as a raw traceback.
+    failed: list[str] = []
     for name in selected:
         print(f"==== {name} ====")
         try:
@@ -1828,8 +1786,12 @@ def main(argv: list[str] | None = None) -> int:
                 profile_cmap=args.profile_cmap,
                 animate=args.animate,
             )
-        except FileNotFoundError as exc:
-            print(f"error: {exc}")
-            return 1
+        except CASE_ERRORS as exc:
+            error(f"{name}: {exc}")
+            failed.append(name)
+
+    if failed:
+        error(f"{len(failed)} of {len(selected)} case(s) failed: {', '.join(failed)}")
+        return 1
 
     return 0

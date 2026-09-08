@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ashen.cli._common import error
 from ashen.diagnostics.timestep import StepTime, step_time
 from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError
 from ashen.paths import PaddingError, RunPaths
@@ -48,14 +49,14 @@ def _format(result: StepTime) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if len(args.steps) > 2:
-        print("error: pass at most two steps")
+        error("pass at most two steps")
         return 1
 
     run_dir = Path.cwd()
     try:
         paths = RunPaths.detect(run_dir)
     except PaddingError as exc:
-        print(f"error: {exc}")
+        error(str(exc))
         return 1
     jrun = Jorek2Run(
         run_dir=run_dir,
@@ -69,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             results.append(step_time(jrun, paths, step))
         except (FileNotFoundError, MissingRestartError, Jorek2Error) as exc:
-            print(f"error: {exc}")
+            error(str(exc))
             return 1
 
     for result in results:
