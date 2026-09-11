@@ -255,6 +255,12 @@ def resolve_start_points(
         made_here = not fs_file.is_file()
         if made_here:
             _write_flux_surface(run, step, psi_n, run.namelist.name)
+            # Re-resolve: the path above was the canonical spelling for a
+            # file that did not exist yet, and the tool may have padded the
+            # step differently (paths.JOREK_PAD_WIDTHS). Asking again now
+            # that it is on disk picks up whichever name it actually used --
+            # and keeps the unlink below pointed at the right file.
+            fs_file = paths.flux_surface(psi_n, step)
             if not fs_file.is_file():
                 raise Jorek2Error(_no_surface_message(paths, fs_file, psi_n, step))
         try:

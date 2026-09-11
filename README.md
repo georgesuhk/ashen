@@ -225,6 +225,35 @@ omp_threads = 0   # OpenMP threads per process; 0 = min(8, cpu_count)
 `--n-workers` / `--omp-threads` override per invocation. None of JOREK's
 `jorek2_*` tools use MPI, so these two are the only axes that exist.
 
+### Step padding differs between postproc builds
+
+JOREK's two halves are not symmetric about how wide a step index is, which
+is what makes a mismatch quiet. *Importing* a restart tries both widths
+(`mod_import_restart.f90:2686`), so `jorek08002.h5` and `jorek008002.h5`
+read equally well. *Naming an output* uses `rst_file_ind_fmt(1)` alone
+(`step_range_string`, `exec_commands.f90:1068`) -- one fixed width,
+whatever the restarts happen to use. Builds differ in which entry comes
+first, so the width is a property of the binary you ran, not of the run.
+
+The visible symptom was a tool that "succeeded" and a reader that then
+failed on a file sitting right there under a name one character longer.
+
+Ashen resolves this on read. Anything **JOREK** writes -- restarts,
+`zeroD_quantities_*`, `fluxsurface_at_psi_*`, `qprofile_*`, and the
+profile tables collected out of a scratch dir -- is looked up at this run's
+own width first and then at the other, so a folder may hold both spellings,
+including a run continued under a different build. What gets *collected*
+into a cache is filed under one spelling, so nothing downstream needs to
+know which build produced it.
+
+Anything **ashen** writes -- the Poincare, profile and jorek2_four caches --
+keeps exactly one spelling. A second accepted name there would be a way to
+end up with two caches for one step rather than a way to find the one that
+exists.
+
+Nothing is renamed on disk: JOREK's output keeps the name JOREK gave it, so
+legacy tooling reading the same run folder is unaffected.
+
 ### Seeing what the jorek2_* tools are doing
 
 By default a tool's stdout is discarded and its stderr kept back to be quoted

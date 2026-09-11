@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from ashen.paths import RunPaths
+from ashen.paths import RunPaths, step_name_variants
 
 __all__ = [
     "Jorek2Error", "MissingRestartError", "Jorek2Run", "ToolResult", "run_tool", "run_zero_d",
@@ -220,6 +220,21 @@ class Jorek2Run:
         return self.run_dir / f"jorek{step:0{self.pad_width}d}.h5"
 
 
+
+def _first_existing_variant(workdir: Path, output: str, step: int) -> Path | None:
+    """The step-padding variant of ``output`` that the tool actually wrote.
+
+    ``output`` is a path relative to the scratch dir; only its filename is
+    re-padded, never its directory.
+    """
+    rel = Path(output)
+    for name in step_name_variants(rel.name, step):
+        candidate = workdir / rel.with_name(name)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def run_tool(
     run: Jorek2Run,
     tool: str,
@@ -356,10 +371,18 @@ def run_tool(
         for output in outputs:
             src = workdir / output
             if not src.is_file():
+                # The tool may have padded the step to a different width than
+                # this run's restarts use -- that is a property of the
+                # postproc binary, not of the run (paths.JOREK_PAD_WIDTHS).
+                src = _first_existing_variant(workdir, output, step)
+            if src is None:
                 raise Jorek2Error(
                     f"{tool} did not produce expected output {output!r} for "
-                    f"step {step} in {run.run_dir}"
+                    f"step {step} in {run.run_dir} (nor under any other step "
+                    f"padding: {', '.join(step_name_variants(Path(output).name, step))})"
                 )
+            # Named by what was *asked for*, not by what the tool wrote, so
+            # everything downstream of here sees one spelling.
             dst = dest_dir / Path(output).name
             shutil.copy(src, dst)
             collected[output] = dst

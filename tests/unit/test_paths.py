@@ -12,9 +12,11 @@ import pytest
 
 from ashen.paths import (
     DEFAULT_PAD_WIDTH,
+    JOREK_PAD_WIDTHS,
     PaddingError,
     RunPaths,
     detect_pad_width,
+    step_name_variants,
     step_str,
 )
 
@@ -193,3 +195,89 @@ def test_flux_surface_psi_uses_three_decimals(tmp_path):
 
     assert "psi_0.010_" in paths.flux_surface(0.01, 0).name
     assert "psi_0.950_" in paths.flux_surface(0.95, 0).name
+
+
+# --- mixed step padding between JOREK builds -------------------------------
+#
+# A postproc binary names its outputs with rst_file_ind_fmt(1) alone, while
+# its importer accepts either width -- so which spelling lands in a run
+# folder is a property of the binary, not of the run, and one folder can end
+# up holding both. See paths.JOREK_PAD_WIDTHS.
+
+
+def test_step_name_variants_repads_only_the_step():
+    """The psi value in a flux-surface name must survive untouched."""
+    assert step_name_variants("fluxsurface_at_psi_0.200_s08002.dat", 8002) == [
+        "fluxsurface_at_psi_0.200_s008002.dat"
+    ]
+
+
+def test_step_name_variants_excludes_the_spelling_given():
+    """These are the alternatives to what the caller already tried."""
+    variants = step_name_variants("zeroD_quantities_s008002.dat", 8002)
+    assert "zeroD_quantities_s008002.dat" not in variants
+    assert variants == ["zeroD_quantities_s08002.dat"]
+
+
+def test_zero_d_finds_the_other_width(tmp_path):
+    """pad_width 5 from the restarts, but the tool wrote a 6-wide name."""
+    paths = RunPaths(tmp_path, pad_width=5)
+    paths.postproc_dir.mkdir()
+    written = paths.postproc_dir / "zeroD_quantities_s008002.dat"
+    written.write_text("x", encoding="utf-8")
+    assert paths.zero_d(8002) == written
+
+
+def test_flux_surface_finds_the_other_width(tmp_path):
+    paths = RunPaths(tmp_path, pad_width=5)
+    paths.postproc_dir.mkdir()
+    written = paths.postproc_dir / "fluxsurface_at_psi_0.200_s008002.dat"
+    written.write_text("x", encoding="utf-8")
+    assert paths.flux_surface(0.2, 8002) == written
+
+
+def test_qprofile_finds_the_other_width(tmp_path):
+    paths = RunPaths(tmp_path, pad_width=6)
+    paths.postproc_dir.mkdir()
+    written = paths.postproc_dir / "qprofile_s08002.dat"
+    written.write_text("x", encoding="utf-8")
+    assert paths.qprofile(8002) == written
+
+
+def test_restart_finds_the_other_width(tmp_path):
+    """A run continued under a different build holds both spellings; neither
+    half of its steps should become unreachable."""
+    paths = RunPaths(tmp_path, pad_width=6)
+    written = tmp_path / "jorek08002.h5"
+    written.write_bytes(b"x")
+    assert paths.restart(8002) == written
+
+
+def test_the_run_s_own_width_wins_when_both_exist(tmp_path):
+    """Resolution is a fallback, not a search: an exact match is never
+    displaced by a variant that also happens to be there."""
+    paths = RunPaths(tmp_path, pad_width=5)
+    paths.postproc_dir.mkdir()
+    canonical = paths.postproc_dir / "zeroD_quantities_s08002.dat"
+    canonical.write_text("mine", encoding="utf-8")
+    (paths.postproc_dir / "zeroD_quantities_s008002.dat").write_text(
+        "other", encoding="utf-8"
+    )
+    assert paths.zero_d(8002) == canonical
+
+
+def test_missing_resolves_to_the_canonical_name(tmp_path):
+    """With nothing on disk the canonical spelling comes back, so the path
+    stays usable as a write target and "expected <path>" stays predictable."""
+    paths = RunPaths(tmp_path, pad_width=5)
+    assert paths.zero_d(8002).name == "zeroD_quantities_s08002.dat"
+
+
+def test_caches_ashen_writes_are_not_width_tolerant(tmp_path):
+    """The Poincare/profile/four caches are written and read only by ashen.
+    A second accepted spelling there would be a way to end up with two
+    caches for one step, not a way to find the one that exists."""
+    paths = RunPaths(tmp_path, pad_width=5)
+    paths.poinc_dir.mkdir()
+    (paths.poinc_dir / "poinc_s008002.h5").write_bytes(b"x")
+    assert paths.poincare_cache(8002).name == "poinc_s08002.h5"

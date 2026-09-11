@@ -21,16 +21,65 @@ from pathlib import Path
 
 __all__ = [
     "DEFAULT_PAD_WIDTH",
+    "JOREK_PAD_WIDTHS",
     "PaddingError",
     "RunPaths",
     "read_float",
     "write_float",
     "detect_pad_width",
+    "step_name_variants",
     "step_str",
 ]
 
 #: Only a fallback for synthetic cases. Real runs must sniff the width.
 DEFAULT_PAD_WIDTH = 6
+
+#: Step-index widths a JOREK build may use in a filename, preferred first.
+#: Mirrors ``rst_file_ind_fmt = (/'(a,i6.6)', '(a,i5.5)'/)``
+#: (``communication/mod_import_restart.f90:5``).
+#:
+#: The two halves of JOREK are not symmetric about this, which is what makes
+#: a mismatch so quiet. *Importing* a restart loops over both entries
+#: (``mod_import_restart.f90:2686``), so ``jorek08002.h5`` and
+#: ``jorek008002.h5`` are equally readable. *Naming an output* takes
+#: ``rst_file_ind_fmt(1)`` alone (``step_range_string``,
+#: ``exec_commands.f90:1068``) -- one fixed width, whatever the restarts
+#: happen to use. So a build reads your run happily and then writes
+#: ``..._s008002.dat`` next to ``jorek08002.h5``, and a reader that derived
+#: its width from the restart filenames looks for a file that is right there
+#: under a name one character longer.
+#:
+#: Different postproc builds differ in which entry is first, so this is a
+#: property of the binary in use, not of the run.
+JOREK_PAD_WIDTHS = (6, 5)
+
+_STEP_DIGITS_RE = re.compile(r"\d+")
+
+
+def step_name_variants(
+    name: str, step: int | float, widths: tuple[int, ...] = JOREK_PAD_WIDTHS
+) -> list[str]:
+    """``name`` with the step index re-padded to each width in ``widths``.
+
+    Only digit runs that *are* the step are touched, so
+    ``fluxsurface_at_psi_0.200_s08002.dat`` re-pads the ``08002`` and leaves
+    the ``0`` and ``200`` of the psi value alone. A psi value that happened
+    to read as the step number would be rewritten too; with psi formatted to
+    three decimals and steps in the thousands that cannot arise.
+
+    The original spelling is never included -- these are the *alternatives*
+    to whatever the caller already tried.
+    """
+    target = int(step)
+    variants: list[str] = []
+    for width in widths:
+        padded = step_str(target, width)
+        variant = _STEP_DIGITS_RE.sub(
+            lambda m: padded if int(m.group()) == target else m.group(), name
+        )
+        if variant != name and variant not in variants:
+            variants.append(variant)
+    return variants
 
 _RESTART_RE = re.compile(r"^jorek.*?(\d+)\.h5$")
 
@@ -93,10 +142,45 @@ class RunPaths:
     def step_str(self, step: int | float) -> str:
         return step_str(step, self.pad_width)
 
+    def _resolve(self, step: int | float, build) -> Path:
+        """The existing file among this step's padding variants, else the
+        canonical one.
+
+        Used only for paths **JOREK writes**, whose width comes from the
+        postproc binary rather than from this run (see JOREK_PAD_WIDTHS).
+        Paths *ashen* writes -- the Poincare, profile and jorek2_four caches
+        -- keep one spelling at ``self.pad_width`` and must not go through
+        here: they are only ever written and read by this package, so a
+        second accepted spelling would be a way to end up with two caches
+        for one step rather than a way to find the one that exists.
+
+        Falling back to the canonical name rather than raising keeps this
+        usable as a write target and keeps "expected <path>" messages
+        predictable when nothing exists yet.
+        """
+        canonical = build(self.step_str(step))
+        if canonical.exists():
+            return canonical
+        for name in step_name_variants(canonical.name, step):
+            alt = canonical.with_name(name)
+            if alt.exists():
+                return alt
+        return canonical
+
     # --- JOREK outputs ---
 
     def restart(self, step: int | float, prefix: str = "jorek", ext: str = ".h5") -> Path:
-        return self.run_dir / f"{prefix}{self.step_str(step)}{ext}"
+        """One step's restart file.
+
+        Width-tolerant like the rest of the JOREK-written paths, even though
+        ``detect_pad_width`` took the majority width from these very files:
+        a folder that holds both spellings (a run continued with a different
+        build) would otherwise have half its steps unreachable, and JOREK's
+        own importer accepts either.
+        """
+        return self._resolve(
+            step, lambda s: self.run_dir / f"{prefix}{s}{ext}"
+        )
 
     @property
     def live_restart(self) -> Path:
@@ -110,21 +194,20 @@ class RunPaths:
         return self.run_dir / "postproc"
 
     def zero_d(self, step: int | float, *, si_units: bool = True) -> Path:
-        if si_units:
-            return self.postproc_dir / f"zeroD_quantities_s{self.step_str(step)}.dat"
-        return self.postproc_dir / f"zeroD_quantities_jorek_s{self.step_str(step)}.dat"
+        stem = "zeroD_quantities" if si_units else "zeroD_quantities_jorek"
+        return self._resolve(step, lambda s: self.postproc_dir / f"{stem}_s{s}.dat")
 
     def flux_surface(self, psi_n: float, step: int | float) -> Path:
-        return (
-            self.postproc_dir
-            / f"fluxsurface_at_psi_{psi_n:.3f}_s{self.step_str(step)}.dat"
+        return self._resolve(
+            step,
+            lambda s: self.postproc_dir / f"fluxsurface_at_psi_{psi_n:.3f}_s{s}.dat",
         )
 
     def qprofile(self, step: int | float) -> Path:
         """One step's ``Psi_n``/``q`` table -- ``exec_commands.f90::qprofile``'s
         own naming for a single-step ``for step`` loop (``loop_min_step ==
         loop_max_step``): ``qprofile_s<step>.dat``, no range suffix."""
-        return self.postproc_dir / f"qprofile_s{self.step_str(step)}.dat"
+        return self._resolve(step, lambda s: self.postproc_dir / f"qprofile_s{s}.dat")
 
     def profile_cache(
         self,

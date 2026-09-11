@@ -544,3 +544,30 @@ def test_failure_message_points_at_the_live_output(stub_run, tmp_path, monkeypat
             stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
             outputs=["stdin_echo.txt"], stdin_text="x",
         )
+
+
+# --- a tool that pads the step differently than this run's restarts --------
+
+
+def test_output_collected_under_the_other_step_padding(stub_run, tmp_path, monkeypatch):
+    """stub_run's restarts are 6-wide, so run.pad_width is 6; the tool here
+    writes a 5-wide name, as a postproc binary with the other
+    rst_file_ind_fmt ordering would. It must still be collected."""
+    monkeypatch.setenv("STUB_GLOB_FILES", "zeroD_quantities_s00100.dat")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["zeroD_quantities_s000100.dat"], stdin_text="x",
+    )
+    dst = result["zeroD_quantities_s000100.dat"]
+    assert dst.is_file()
+    # Filed under the name that was asked for, not the one the tool used, so
+    # nothing downstream has to know which build produced it.
+    assert dst.name == "zeroD_quantities_s000100.dat"
+
+
+def test_missing_output_names_the_paddings_tried(stub_run, tmp_path):
+    with pytest.raises(Jorek2Error, match="nor under any other step padding"):
+        run_tool(
+            stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+            outputs=["zeroD_quantities_s000100.dat"], stdin_text="x",
+        )
