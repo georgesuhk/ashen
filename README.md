@@ -773,6 +773,47 @@ one with no `n != 0` modes at all, prints a note and skips the
 rational-surface figure rather than erroring -- `four_quantities = ["max"]`
 (the default) is unaffected either way.
 
+**Radial eigenfunctions / `four_quantities = ["radial"]`.** `max` and
+`rational_surface` are both scalar-per-step time series -- they reduce each
+mode's radial profile to one number. `radial` draws the profile itself:
+`|amplitude|` against `psi_n`, one figure per variable
+(`four_dir/<var>_eigenfunction_psin.png`), one panel per `(n, m)`, one
+colour-graded line per step.
+
+```toml
+four_quantities = ["radial"]            # eigenfunctions only
+four_quantities = ["max", "radial"]     # both: time series and eigenfunctions
+```
+
+No extra gathering is needed -- `jorek2_four` already writes the whole radial
+table and `analyse --diag four` already caches it; the scalar quantities were
+simply discarding it. A case that has been analysed can be plotted this way
+with no further `analyse` run.
+
+Unlike the time-series quantities, this figure's x-axis is `psi_n`, so it
+needs **no zeroD cache**: there is no step-to-time conversion to make, and a
+`radial`-only case neither requires nor warns about one. Steps colour the
+lines instead, on the shared colourbar.
+
+When `modes` is set, each mode's `q = m/n` surface is marked as a dashed
+vertical line, taken from the **last** plotted step's q-profile cache -- q
+evolves through a run, and the last step is the state the eigenfunctions have
+grown into. One shared set of markers is drawn on every panel (each labelled
+and coloured by mode), so a panel shows its neighbours' surfaces too. Missing
+q-profile cache prints a note and draws the curves without markers.
+
+The y-axis is shared across panels and logarithmic by default
+(`--four-linear` switches it), which is usually what you want for modes
+spanning orders of magnitude -- but a mode whose profile decays into a very
+small tail can stretch the shared range enough to flatten everything else.
+`four_ylim` (keyed by variable, as for the time-series figures) pins it.
+
+`delta_b`/`delta_b_over_b` have no radial form here: `b_r ~ (m/R_axis^2)
+|Psi_mn|` scales by a **constant**, so a radial `delta_b` curve would be the
+`Psi` eigenfunction with a relabelled y-axis. Requesting one under `radial`
+falls back to that `Psi` eigenfunction rather than drawing a rescaling that
+carries no extra information.
+
 **Growth rate.** `four_growth_rate = true` (case field, plot-time only) fits
 each drawn mode's exponential growth rate -- `gamma` [1/s], the slope of
 `ln|amplitude|` vs real time -- and shows it two ways: appended to that

@@ -51,6 +51,7 @@ from ashen.diagnostics.four_modes import (
     format_growth_rates,
     growth_rate_series,
     max_amplitude_series,
+    radial_amplitude_series,
     rational_surface_series,
 )
 from ashen.diagnostics.poincare_cache import read_step
@@ -76,7 +77,7 @@ from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.colors import DISCRETE_PALETTE
 from ashen.plotting.connection_length import plot_connection_length_map
-from ashen.plotting.four_modes import plot_mode_amplitudes
+from ashen.plotting.four_modes import plot_mode_amplitudes, plot_mode_radial
 from ashen.plotting.poincare import plot_poincare_step
 from ashen.plotting.profiles import (
     RationalBand,
@@ -637,12 +638,63 @@ def _value_at_step(series: dict, variable: str, steps: list[int], step: int) -> 
     return float(max(finite)) if finite else None
 
 
+def _plot_four_radial(
+    case: Case, paths: RunPaths, steps: list[int], *,
+    fetch_vars: list[str] | None, mode_filter: list[tuple[int, int]] | None,
+    log: bool, dpi: int | None,
+) -> None:
+    """`four_quantities = ["radial"]`: each mode's |amp|(psi_n) eigenfunction,
+    one figure per variable, one panel per (n, m), one line per step.
+
+    Deliberately independent of the amplitude-vs-time path in
+    `_plot_four_modes`: this figure's x-axis is psi_n, so it needs no zeroD
+    cache to convert steps to physical time, and a radial-only case must not
+    be made to gather one. Steps colour the lines instead.
+    """
+    series = radial_amplitude_series(
+        paths, steps, variables=fetch_vars, modes=mode_filter
+    )
+    if not series:
+        print("  no jorek2_four cache found for any requested step/variable/mode "
+              "(run analyse --diag four)")
+        return
+
+    # q=m/n crossings at the last plotted step -- the run's q-profile evolves,
+    # so one step has to be picked, and the last is the state the eigenfunctions
+    # have grown into. plot_profile_comparison draws one shared set on every
+    # panel (it takes a single rational_lines list), so a panel shows its
+    # neighbours' surfaces too; the per-mode colour and legend label say which
+    # is which.
+    rational_lines = None
+    if case.modes:
+        rational_lines = _rational_lines_for_step(case, paths, steps[-1])
+        if rational_lines is None:
+            print(f"  radial: no qprofile cache for step {steps[-1]}, drawing "
+                  "without rational-surface markers")
+
+    kwargs = _dpi_kwargs(dpi)
+    for variable in sorted({var for var, _, _ in series}):
+        per_var = {key: curves for key, curves in series.items() if key[0] == variable}
+        out = paths.four_dir / f"{variable}_eigenfunction_psin.png"
+        ylim = case.four_ylim.get(variable)
+        plot_mode_radial(
+            per_var, variable, out,
+            rational_lines=rational_lines,
+            log=log,
+            ylim=(ylim[0], ylim[1]) if ylim else None,
+            cmap=case.profile_cmap,
+            **kwargs,
+        )
+        print(f"  {out}")
+
+
 def _plot_four_modes(
     case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None,
     n_workers: int = 1,
 ) -> None:
     want_max = "max" in case.four_quantities
     want_rational = "rational_surface" in case.four_quantities
+    want_radial = "radial" in case.four_quantities
 
     # delta_b/delta_b_over_b are derived from the "Psi" cache variable, not a
     # raw jorek2_four output -- only computed when explicitly requested
@@ -660,13 +712,30 @@ def _plot_four_modes(
     # case.modes entries are [m, n] pairs (user-facing); the diagnostics
     # layer's ModeKey/modes filter is (n, m), matching FourRecord's own
     # (variable, n, m) field order -- swap here, at the one point they meet.
-    # Computed unconditionally: it's the only place mode/variable keys are
-    # discovered from the cache (cheap -- just reading what's on disk), and
-    # is itself the primary series whenever "max" is selected.
+    mode_filter = [(n, m) for m, n in case.modes] if case.modes else None
+
+    # Radial eigenfunctions are their own figures on a psi_n axis, sharing
+    # only the variable/mode selection with the amplitude-vs-time plots below
+    # -- drawn first so a "radial"-only case never reaches the time-series
+    # path's zeroD requirement. fetch_vars, not requested_vars: delta_b and
+    # delta_b_over_b are scalar-vs-time quantities only -- _b_r_from_psi scales
+    # |Psi_mn| by a constant m/R_axis**2, so a radial delta_b curve would be
+    # the Psi eigenfunction with a relabelled y-axis. Asking for one here
+    # therefore falls back to that eigenfunction rather than inventing a
+    # rescaling that adds no information.
+    if want_radial:
+        _plot_four_radial(
+            case, paths, steps,
+            fetch_vars=fetch_vars, mode_filter=mode_filter, log=log, dpi=dpi,
+        )
+    if not (want_max or want_rational):
+        return
+
+    # Computed unconditionally from here: it's the only place mode/variable
+    # keys are discovered from the cache (cheap -- just reading what's on
+    # disk), and is itself the primary series whenever "max" is selected.
     series = max_amplitude_series(
-        paths, steps,
-        variables=fetch_vars,
-        modes=[(n, m) for m, n in case.modes] if case.modes else None,
+        paths, steps, variables=fetch_vars, modes=mode_filter,
     )
     if not series:
         print("  no jorek2_four cache found for any requested step/variable/mode "

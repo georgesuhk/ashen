@@ -16,6 +16,7 @@ from ashen.diagnostics.four_modes import (
     format_growth_rates,
     growth_rate_series,
     max_amplitude_series,
+    radial_amplitude_series,
     rational_surface_series,
 )
 from ashen.paths import RunPaths
@@ -347,3 +348,103 @@ def test_format_growth_rates_sorted_by_variable_then_m_then_n():
     assert "Psi" in lines[1] and lines[1].split()[1] == "2"  # m=2 first
     assert "Psi" in lines[2] and lines[2].split()[1] == "3"  # m=3 second
     assert lines[3].startswith("u")
+
+
+# --- radial_amplitude_series: the whole eigenfunction, not a scalar ---------
+
+
+def test_radial_series_returns_the_cached_arrays_verbatim(paths):
+    record = _record("Psi", 2, 3, real_peak=1.0)
+    fc.write_cache(paths.four_cache(100), step=100, pad_width=6, records=[record])
+
+    series = radial_amplitude_series(paths, [100])
+
+    psi_n, amp = series[("Psi", 2, 3)][100]
+    np.testing.assert_allclose(psi_n, record.psi_n)
+    np.testing.assert_allclose(amp, record.abs)
+
+
+def test_radial_series_keeps_one_curve_per_step(paths):
+    for step, peak in [(100, 1.0), (200, 4.0)]:
+        fc.write_cache(
+            paths.four_cache(step), step=step, pad_width=6,
+            records=[_record("Psi", 2, 3, real_peak=peak)],
+        )
+
+    curves = radial_amplitude_series(paths, [100, 200])[("Psi", 2, 3)]
+
+    assert sorted(curves) == [100, 200]
+    assert max(curves[200][1]) > max(curves[100][1])
+
+
+def test_radial_series_omits_a_step_with_no_cache(paths):
+    """Absence, not nan -- a curve has no fixed length to pad, so a missing
+    step simply has no entry and the plotting layer draws nothing for it."""
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 2, 3, real_peak=1.0)],
+    )
+
+    curves = radial_amplitude_series(paths, [100, 200])[("Psi", 2, 3)]
+
+    assert list(curves) == [100]
+
+
+def test_radial_series_omits_a_mode_absent_from_one_step(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 2, 3, real_peak=1.0), _record("Psi", 1, 1, real_peak=2.0)],
+    )
+    fc.write_cache(
+        paths.four_cache(200), step=200, pad_width=6,
+        records=[_record("Psi", 2, 3, real_peak=1.5)],
+    )
+
+    series = radial_amplitude_series(paths, [100, 200])
+
+    assert list(series[("Psi", 1, 1)]) == [100]
+    assert sorted(series[("Psi", 2, 3)]) == [100, 200]
+
+
+def test_radial_series_variables_filter(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 2, 3, real_peak=1.0), _record("u", 2, 3, real_peak=2.0)],
+    )
+
+    series = radial_amplitude_series(paths, [100], variables=["Psi"])
+
+    assert list(series) == [("Psi", 2, 3)]
+
+
+def test_radial_series_modes_filter_is_n_m(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 2, 3, real_peak=1.0), _record("Psi", 1, 1, real_peak=2.0)],
+    )
+
+    series = radial_amplitude_series(paths, [100], modes=[(2, 3)])
+
+    assert list(series) == [("Psi", 2, 3)]
+
+
+def test_radial_series_no_caches_returns_empty(paths):
+    assert radial_amplitude_series(paths, [100, 200]) == {}
+
+
+def test_radial_and_max_series_agree_on_which_keys_a_filter_selects(paths):
+    """Both go through _select_keys -- the regression that keeps them from
+    drifting apart as the filters grow."""
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[
+            _record("Psi", 2, 3, real_peak=1.0),
+            _record("Psi", 1, 1, real_peak=2.0),
+            _record("u", 2, 3, real_peak=3.0),
+        ],
+    )
+
+    kwargs = dict(variables=["Psi"], modes=[(2, 3), (1, 1)])
+    assert set(radial_amplitude_series(paths, [100], **kwargs)) == set(
+        max_amplitude_series(paths, [100], **kwargs)
+    )

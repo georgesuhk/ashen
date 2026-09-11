@@ -416,3 +416,44 @@ def test_animation_legend_covers_every_step_and_is_built_once(series, tmp_path):
 
     assert len(legends) == 1, "legend rebuilt per frame"
     assert [h.get_label() for h in legends[0]] == ["n=1, m=2", "n=2, m=3"]
+
+
+# --- logy ---------------------------------------------------------------------------
+
+
+def test_y_axis_is_linear_by_default(series):
+    """Off by default: physical profiles (density, temperature) must keep the
+    linear axis they have always had."""
+    fig, ax = plt.subplots()
+    draw_profile_family(ax, series)
+    assert ax.get_yscale() == "linear"
+    plt.close(fig)
+
+
+def test_logy_switches_the_y_axis_to_log(series):
+    fig, ax = plt.subplots()
+    draw_profile_family(ax, series, logy=True)
+    assert ax.get_yscale() == "log"
+    plt.close(fig)
+
+
+def test_logy_reaches_every_panel_through_the_figure_wrapper(tmp_path, series):
+    axes = []
+    real = draw_profile_family
+
+    def spy(ax, *args, **kwargs):
+        axes.append(ax)
+        return real(ax, *args, **kwargs)
+
+    import ashen.plotting.profiles as mod
+
+    mod.draw_profile_family = spy
+    try:
+        plot_profile_comparison(
+            {"midplane": series, "average": series}, "T", tmp_path / "log.png", logy=True
+        )
+    finally:
+        mod.draw_profile_family = real
+
+    assert len(axes) == 2
+    assert all(ax.get_yscale() == "log" for ax in axes)

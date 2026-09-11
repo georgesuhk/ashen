@@ -13,7 +13,12 @@ from pathlib import Path
 
 import numpy as np
 
-__all__ = ["Case", "CasesError", "load_cases"]
+__all__ = ["Case", "CasesError", "FOUR_QUANTITIES", "load_cases"]
+
+#: Accepted `four_quantities` entries. "max"/"rational_surface" are scalar
+#: time series drawn onto one amplitude-vs-time axes; "radial" is the whole
+#: |amp|(psi_n) eigenfunction and gets its own figure -- see Case.four_quantities.
+FOUR_QUANTITIES = ("max", "rational_surface", "radial")
 
 #: Case fields that come from [defaults] or a case table, not computed.
 _CASE_KEYS = (
@@ -169,7 +174,10 @@ class Case:
     poincare_point_size: float = 0.1
     #: Amplitude quantity(ies) `plot --diag four` draws. "max"=domain-wide
     #: max|amp|; "rational_surface"=value at q=m/n. Both = max solid +
-    #: rational_surface dashed overlay.
+    #: rational_surface dashed overlay. Those two are scalar-per-step time
+    #: series; "radial" is the odd one out -- the whole |amp|(psi_n)
+    #: eigenfunction, one panel per mode, drawn to its own figure rather
+    #: than onto the time-series axes.
     four_quantities: list[str] = field(default_factory=lambda: ["max"])
     #: `--diag theta_hist`: user-facing psi_n a line must cross to count.
     #: real_psi_edge applied once at comparison time, never to traced data
@@ -455,11 +463,11 @@ def load_cases(path: Path | str) -> dict[str, Case]:
         if "four_quantities" in merged:
             spec = merged["four_quantities"]
             quantities = [spec] if isinstance(spec, str) else list(spec)
-            unknown_q = [q for q in quantities if q not in ("max", "rational_surface")]
+            unknown_q = [q for q in quantities if q not in FOUR_QUANTITIES]
             if unknown_q:
                 raise CasesError(
                     f"{path}: case {name!r} has unknown four_quantities {unknown_q}; "
-                    "expected 'max' and/or 'rational_surface'"
+                    f"expected any of {', '.join(repr(q) for q in FOUR_QUANTITIES)}"
                 )
             if not quantities:
                 raise CasesError(

@@ -19,7 +19,8 @@ from ashen.diagnostics.qprofile import find_rational_surfaces, read_qprofile
 from ashen.paths import RunPaths
 
 __all__ = [
-    "ModeKey", "max_amplitude_series", "rational_surface_series",
+    "ModeKey", "max_amplitude_series", "radial_amplitude_series",
+    "rational_surface_series",
     "DELTA_B", "delta_b_series", "DELTA_B_OVER_B", "delta_b_over_b_series",
     "GrowthFit", "fit_growth_rate", "growth_rate_series", "format_growth_rates",
 ]
@@ -32,6 +33,31 @@ ModeKey = tuple[str, int, int]
 #: gate on these names to request a derived quantity rather than a raw one.
 DELTA_B = "delta_b"
 DELTA_B_OVER_B = "delta_b_over_b"
+
+
+def _select_keys(
+    per_step: Sequence[Mapping[ModeKey, fc.FourRecord]],
+    variables: Sequence[str] | None,
+    modes: Sequence[tuple[int, int]] | None,
+) -> set[ModeKey]:
+    """Every (variable, n, m) present in any step's cache, narrowed by the
+    `variables`/`modes` filters -- None for either means "no filter", so the
+    result is the union across `per_step`.
+
+    Shared by max_amplitude_series and radial_amplitude_series so the two
+    cannot disagree about which keys a given filter selects. `modes` entries
+    are (n, m), matching FourRecord's own field order.
+    """
+    keys: set[ModeKey] = set()
+    for records in per_step:
+        keys.update(records)
+    if variables is not None:
+        wanted_vars = set(variables)
+        keys = {k for k in keys if k[0] in wanted_vars}
+    if modes is not None:
+        wanted_modes = {(int(n), int(m)) for n, m in modes}
+        keys = {k for k in keys if (k[1], k[2]) in wanted_modes}
+    return keys
 
 
 def max_amplitude_series(
@@ -54,16 +80,7 @@ def max_amplitude_series(
     per_step: list[dict[ModeKey, fc.FourRecord]] = [
         fc.read_cache(paths.four_cache(step)) for step in steps
     ]
-
-    keys: set[ModeKey] = set()
-    for records in per_step:
-        keys.update(records)
-    if variables is not None:
-        wanted_vars = set(variables)
-        keys = {k for k in keys if k[0] in wanted_vars}
-    if modes is not None:
-        wanted_modes = {(int(n), int(m)) for n, m in modes}
-        keys = {k for k in keys if (k[1], k[2]) in wanted_modes}
+    keys = _select_keys(per_step, variables, modes)
 
     series: dict[ModeKey, np.ndarray] = {}
     for key in keys:
@@ -73,6 +90,52 @@ def max_amplitude_series(
             if record is not None and record.abs.size:
                 values[i] = float(np.max(record.abs))
         series[key] = values
+    return series
+
+
+def radial_amplitude_series(
+    paths: RunPaths,
+    steps: Sequence[int],
+    *,
+    variables: Sequence[str] | None = None,
+    modes: Sequence[tuple[int, int]] | None = None,
+) -> dict[ModeKey, dict[int, tuple[np.ndarray, np.ndarray]]]:
+    """{(variable, n, m): {step: (psi_n, abs)}} -- each mode's radial
+    eigenfunction, one curve per step, rather than the scalar per step
+    max_amplitude_series reduces it to.
+
+    This is the whole radial structure jorek2_four already wrote and every
+    other consumer here discards: FourRecord carries psi_n/real/imag, and
+    both max_amplitude_series and rational_surface_series collapse it to one
+    number. Nothing is recomputed -- the arrays come straight off the cache.
+
+    abs, not the signed real part, for the reason rational_surface_series
+    gives: a component's phase is an arbitrary toroidal offset that flips as
+    the mode rotates, so the signed part is not comparable across steps.
+
+    Missing data is *absent*, not nan -- a step with no cache, or whose cache
+    lacks that key, simply has no entry for that step, and a key present in
+    no step at all is omitted entirely. The scalar series here are
+    fixed-length and aligned to `steps`, where nan is the only way to show a
+    hole; a curve has no such alignment, so absence says it directly and the
+    plotting layer draws nothing for that step.
+
+    variables/modes filter which keys come back -- see _select_keys.
+    """
+    per_step: list[dict[ModeKey, fc.FourRecord]] = [
+        fc.read_cache(paths.four_cache(step)) for step in steps
+    ]
+    keys = _select_keys(per_step, variables, modes)
+
+    series: dict[ModeKey, dict[int, tuple[np.ndarray, np.ndarray]]] = {}
+    for key in keys:
+        curves: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        for step, records in zip(steps, per_step):
+            record = records.get(key)
+            if record is not None and record.psi_n.size:
+                curves[int(step)] = (record.psi_n, record.abs)
+        if curves:
+            series[key] = curves
     return series
 
 

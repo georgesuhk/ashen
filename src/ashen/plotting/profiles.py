@@ -92,6 +92,7 @@ def draw_profile_family(
     rational_lines: list[tuple[float, str, str]] | None = None,
     rational_bands: Sequence[RationalBand] | None = None,
     ylim: tuple[float, float] | None = None,
+    logy: bool = False,
 ) -> PsiColorer:
     """Draw one line per step in series onto ax, in step order.
 
@@ -119,6 +120,12 @@ def draw_profile_family(
     the axis instead of matplotlib's auto-scaling -- since every panel
     shares one y-axis (plot_profile_comparison's sharey=True), setting it
     on any one panel is enough for all of them.
+
+    logy switches the y-axis to a log scale. Off by default, so physical
+    profiles (density, temperature) are unaffected; the jorek2_four mode
+    eigenfunctions this is here for span orders of magnitude between modes
+    and would otherwise show only the dominant one. Applied before ylim, so
+    an explicit ylim still wins.
     """
     steps = sorted(series)
     values = {step: float(step) for step in steps} if color_by is None else color_by
@@ -155,6 +162,8 @@ def draw_profile_family(
         ax.set_ylabel(ylabel)
     if title:
         ax.set_title(title)
+    if logy:
+        ax.set_yscale("log")
     if ylim is not None:
         ax.set_ylim(*ylim)
     return colors
@@ -174,6 +183,7 @@ def plot_profile_comparison(
     rational_bands: Sequence[RationalBand] | None = None,
     cmap: str = "turbo",
     ylim: tuple[float, float] | None = None,
+    logy: bool = False,
 ) -> Path:
     """One panel per tor_mode, sharing the y-axis, with a shared colourbar.
 
@@ -191,6 +201,9 @@ def plot_profile_comparison(
 
     ylim, if given, is a (min, max) pair pinning the shared y-axis instead
     of matplotlib's auto-scaling -- see draw_profile_family.
+
+    logy switches every panel's shared y-axis to a log scale -- see
+    draw_profile_family.
     """
     import matplotlib.pyplot as plt
 
@@ -218,7 +231,7 @@ def plot_profile_comparison(
                 ax, series, color_by=values, colors=colors,
                 xlabel=xlabel, title=mode if series else f"{mode} (no data)",
                 rational_lines=rational_lines, rational_bands=rational_bands,
-                ylim=ylim,
+                ylim=ylim, logy=logy,
             )
         row[0].set_ylabel(var)
 

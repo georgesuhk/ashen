@@ -20,7 +20,10 @@ from ashen.diagnostics.four_modes import GrowthFit, ModeKey
 from ashen.plotting import DEFAULT_DPI, style
 from ashen.plotting.colors import DISCRETE_PALETTE
 
-__all__ = ["draw_mode_amplitudes", "plot_mode_amplitudes"]
+__all__ = [
+    "draw_mode_amplitudes", "plot_mode_amplitudes",
+    "mode_panel_label", "plot_mode_radial",
+]
 
 
 def draw_mode_amplitudes(
@@ -171,3 +174,61 @@ def plot_mode_amplitudes(
         fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
     return out_path
+
+
+def mode_panel_label(key: ModeKey) -> str:
+    """A mode's panel title -- ``n=2, m=3``. Drops the variable, which
+    ``plot_mode_radial`` already carries on the y-axis and in the filename."""
+    _, n, m = key
+    return f"n={n}, m={m}"
+
+
+def plot_mode_radial(
+    series: Mapping[ModeKey, Mapping[int, "object"]],
+    variable: str,
+    out_path: Path | str,
+    *,
+    color_by: Mapping[int, float] | None = None,
+    color_label: str = "Time step",
+    xlabel: str = r"$\psi_N$",
+    ylabel: str | None = None,
+    rational_lines: list[tuple[float, str, str]] | None = None,
+    log: bool = True,
+    ylim: tuple[float, float] | None = None,
+    cmap: str = "turbo",
+    dpi: int = DEFAULT_DPI,
+) -> Path:
+    """Draw and save one variable's radial mode eigenfunctions: one panel per
+    ``(n, m)``, one colour-graded line per restart step.
+
+    A thin adapter over :func:`ashen.plotting.profiles.plot_profile_comparison`
+    rather than a drawing routine of its own -- that function already takes
+    exactly this shape ({panel: {step: (x, y)}}), grades lines by step across
+    one shared colourbar, and draws ``rational_lines``. The only translation
+    needed is ModeKey -> panel label.
+
+    Panels are ordered by ``(n, m)``, so a mode keeps its position across
+    figures and re-runs instead of following dict order -- the same stability
+    :func:`draw_mode_amplitudes` gives its colours.
+
+    ``series`` values are {step: (psi_n, abs)} as
+    :func:`ashen.diagnostics.four_modes.radial_amplitude_series` returns them;
+    a step absent from a mode's inner dict simply isn't drawn in that panel.
+    """
+    from ashen.plotting.profiles import plot_profile_comparison
+
+    ordered = sorted(series, key=lambda key: (key[1], key[2]))
+    series_by_panel = {mode_panel_label(key): series[key] for key in ordered}
+
+    return plot_profile_comparison(
+        series_by_panel,
+        ylabel if ylabel is not None else f"|{variable}| amplitude",
+        out_path,
+        color_by=color_by,
+        color_label=color_label,
+        xlabel=xlabel,
+        rational_lines=rational_lines,
+        cmap=cmap,
+        ylim=ylim,
+        logy=log,
+    )

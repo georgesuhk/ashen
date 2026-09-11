@@ -522,6 +522,22 @@ def test_four_quantities_settable_to_both(tmp_path):
     assert load_cases(path)["a"].four_quantities == ["max", "rational_surface"]
 
 
+def test_four_quantities_settable_to_radial(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\nfour_quantities = ["radial"]\n',
+    )
+    assert load_cases(path)["a"].four_quantities == ["radial"]
+
+
+def test_four_quantities_radial_combines_with_the_time_series_quantities(tmp_path):
+    path = _write(
+        tmp_path,
+        '[cases.a]\nsteps = [1]\nfour_quantities = ["max", "radial"]\n',
+    )
+    assert load_cases(path)["a"].four_quantities == ["max", "radial"]
+
+
 def test_four_quantities_rejects_unknown_value(tmp_path):
     path = _write(
         tmp_path,

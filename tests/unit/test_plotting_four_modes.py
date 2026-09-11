@@ -11,7 +11,12 @@ import numpy as np
 import pytest
 
 from ashen.diagnostics.four_modes import GrowthFit
-from ashen.plotting.four_modes import draw_mode_amplitudes, plot_mode_amplitudes
+from ashen.plotting.four_modes import (
+    draw_mode_amplitudes,
+    mode_panel_label,
+    plot_mode_amplitudes,
+    plot_mode_radial,
+)
 
 
 @pytest.fixture
@@ -290,3 +295,61 @@ def test_grid_can_be_turned_off(series):
     draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi", grid=False)
     assert not any(line.get_visible() for line in ax.get_xgridlines())
     plt.close(fig)
+
+
+# --- plot_mode_radial: eigenfunctions vs psi_n --------------------------------------
+
+
+@pytest.fixture
+def radial_series():
+    psi_n = np.array([0.1, 0.5, 0.9])
+    return {
+        ("Psi", 2, 3): {100: (psi_n, np.array([0.1, 1.0, 0.2])),
+                        200: (psi_n, np.array([0.2, 2.0, 0.3]))},
+        ("Psi", 1, 1): {100: (psi_n, np.array([0.5, 0.4, 0.3]))},
+    }
+
+
+def test_panel_label_drops_the_variable():
+    assert mode_panel_label(("Psi", 2, 3)) == "n=2, m=3"
+
+
+def test_radial_writes_the_figure(tmp_path, radial_series):
+    out = plot_mode_radial(radial_series, "Psi", tmp_path / "eig.png")
+    assert out.is_file()
+
+
+def test_radial_panels_are_ordered_by_n_then_m(tmp_path, radial_series, monkeypatch):
+    captured = {}
+    import ashen.plotting.profiles as profiles_mod
+
+    real = profiles_mod.plot_profile_comparison
+
+    def spy(series_by_panel, var, out_path, **kwargs):
+        captured["panels"] = list(series_by_panel)
+        captured["var"] = var
+        captured["kwargs"] = kwargs
+        return real(series_by_panel, var, out_path, **kwargs)
+
+    monkeypatch.setattr(profiles_mod, "plot_profile_comparison", spy)
+    plot_mode_radial(radial_series, "Psi", tmp_path / "eig.png")
+
+    assert captured["panels"] == ["n=1, m=1", "n=2, m=3"]
+    assert captured["var"] == "|Psi| amplitude"
+    assert captured["kwargs"]["logy"] is True
+
+
+def test_radial_log_false_reaches_the_wrapper_as_linear(tmp_path, radial_series, monkeypatch):
+    captured = {}
+    import ashen.plotting.profiles as profiles_mod
+
+    real = profiles_mod.plot_profile_comparison
+
+    def spy(series_by_panel, var, out_path, **kwargs):
+        captured.update(kwargs)
+        return real(series_by_panel, var, out_path, **kwargs)
+
+    monkeypatch.setattr(profiles_mod, "plot_profile_comparison", spy)
+    plot_mode_radial(radial_series, "Psi", tmp_path / "eig.png", log=False)
+
+    assert captured["logy"] is False

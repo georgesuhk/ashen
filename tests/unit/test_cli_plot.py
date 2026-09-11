@@ -756,6 +756,144 @@ def test_four_quantities_rational_surface_only_with_no_resonant_modes_reports_an
     assert "no rational-surface data to plot" in capsys.readouterr().out
 
 
+# --- four_quantities = "radial": the eigenfunction vs psi_n -----------------------
+
+
+def _spy_on_plot_mode_radial(monkeypatch):
+    captured = []
+    original = plot_cli.plot_mode_radial
+
+    def spy(*args, **kwargs):
+        captured.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_mode_radial", spy)
+    return captured
+
+
+def _radial_case(campaign, *, extra=""):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_quantities = ["radial"]\n' + extra,
+        encoding="utf-8",
+    )
+
+
+def test_radial_writes_one_eigenfunction_file_per_variable(campaign):
+    _write_four_cache(campaign, 100, records=[
+        _four_record("Psi", 1, 2, real_peak=1.0),
+        _four_record("u", 1, 2, real_peak=2.0),
+    ])
+    _write_four_cache(campaign, 200, records=[
+        _four_record("Psi", 1, 2, real_peak=1.5),
+        _four_record("u", 1, 2, real_peak=2.5),
+    ])
+    _radial_case(campaign)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    assert (campaign / "four_dir" / "Psi_eigenfunction_psin.png").is_file()
+    assert (campaign / "four_dir" / "u_eigenfunction_psin.png").is_file()
+
+
+def test_radial_only_writes_no_time_series_figures(campaign):
+    """"radial" is not "max" -- selecting it alone must not also produce the
+    amplitude-vs-time plots."""
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _radial_case(campaign)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    assert not (campaign / "four_dir" / "Psi_modes_step.png").exists()
+    assert not (campaign / "four_dir" / "Psi_modes_time.png").exists()
+
+
+def test_radial_needs_no_zerod_cache(campaign, capsys):
+    """The regression for the point of keeping this off the time-series path:
+    a psi_n x-axis needs no step->time conversion, so a radial-only case must
+    neither demand nor complain about the zeroD cache."""
+    for step in (100, 200):
+        (campaign / "postproc" / f"zeroD_quantities_s{step:06d}.dat").unlink()
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+    _radial_case(campaign)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    assert (campaign / "four_dir" / "Psi_eigenfunction_psin.png").is_file()
+    out = capsys.readouterr().out
+    assert "run analyse --diag zerod" not in out
+    assert "skipping time-axis four-mode plots" not in out
+
+
+def test_radial_passes_one_curve_per_step_to_the_plotter(campaign, monkeypatch):
+    captured = _spy_on_plot_mode_radial(monkeypatch)
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+    _radial_case(campaign)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    (series, variable, _out), _kwargs = captured[0]
+    assert variable == "Psi"
+    assert sorted(series[("Psi", 1, 2)]) == [100, 200]
+
+
+def test_radial_marks_rational_surfaces_from_the_last_step(campaign, monkeypatch):
+    """q evolves through a run, so the markers must come from the last plotted
+    step -- the state the eigenfunctions have grown into -- not the first."""
+    _write_qprofile_cache(campaign, 100, psi_n=[0.0, 0.5, 1.0], q=[1.0, 3.0, 5.0])
+    _write_qprofile_cache(campaign, 200, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+    _radial_case(campaign, extra="modes = [[2, 1]]\n")
+    captured = _spy_on_plot_mode_radial(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    lines = captured[0][1]["rational_lines"]
+    # q=m/n=2 sits at psi_n=0.25 in step 100's profile but at 0.5 in step 200's.
+    assert [psi_n for psi_n, _color, _label in lines] == [0.5]
+
+
+def test_radial_without_qprofile_cache_still_draws(campaign, capsys):
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+    _radial_case(campaign, extra="modes = [[2, 1]]\n")
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    assert (campaign / "four_dir" / "Psi_eigenfunction_psin.png").is_file()
+    assert "drawing without rational-surface markers" in capsys.readouterr().out
+
+
+def test_radial_with_no_cache_reports_and_does_not_crash(campaign, capsys):
+    _radial_case(campaign)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert "no jorek2_four cache found" in capsys.readouterr().out
+
+
+def test_radial_alongside_max_writes_both(campaign):
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+    _radial_case(campaign)
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        cases_toml.read_text(encoding="utf-8").replace(
+            '["radial"]', '["max", "radial"]'
+        ),
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    assert (campaign / "four_dir" / "Psi_eigenfunction_psin.png").is_file()
+    assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
+
+
 # --- delta_b_over_b: derived from Psi, requires a step-0 Btor profile -------------
 
 
