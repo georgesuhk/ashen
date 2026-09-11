@@ -14,7 +14,12 @@ from pathlib import Path
 
 from ashen.cli._common import error
 from ashen.diagnostics.timestep import StepTime, step_time
-from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError
+from ashen.jorek2 import (
+    Jorek2Error,
+    Jorek2Run,
+    MissingRestartError,
+    enable_tool_output,
+)
 from ashen.paths import PaddingError, RunPaths
 
 __all__ = ["build_parser", "main"]
@@ -36,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--namelist", default="in_main",
         help="namelist file to read (default: in_main)",
     )
+    parser.add_argument(
+        "--tool-output", action="store_true",
+        help="echo each jorek2_* tool's stdout and stderr to stderr as it "
+        "runs (default: discarded unless the tool fails)",
+    )
     return parser
 
 
@@ -48,6 +58,8 @@ def _format(result: StepTime) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.tool_output:
+        enable_tool_output()
     if len(args.steps) > 2:
         error("pass at most two steps")
         return 1

@@ -17,7 +17,16 @@ from pathlib import Path
 
 import pytest
 
-from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_tool, run_zero_d
+from ashen.jorek2 import (
+    TOOL_OUTPUT_ENV,
+    Jorek2Error,
+    Jorek2Run,
+    MissingRestartError,
+    enable_tool_output,
+    run_tool,
+    run_zero_d,
+    tool_output_enabled,
+)
 from ashen.paths import RunPaths
 
 TOOL_NAME = "stub_tool.cmd" if os.name == "nt" else "stub_tool"
@@ -217,9 +226,16 @@ def test_run_zero_d_missing_restart_raises(tmp_path):
 
 
 class _FakeCompleted:
-    def __init__(self, returncode: int = 0, stderr: bytes = b"") -> None:
+    """Stands in for a subprocess.CompletedProcess. `stdout` defaults to None,
+    which is what the real thing carries when stdout went to DEVNULL -- the
+    mode run_zero_d uses when it is not echoing."""
+
+    def __init__(
+        self, returncode: int = 0, stderr: bytes = b"", stdout: bytes | None = None
+    ) -> None:
         self.returncode = returncode
         self.stderr = stderr
+        self.stdout = stdout
 
 
 def _fake_zero_d_subprocess_run(run_dir: Path, *, value_si: float = 1.5, value_jorek: float = 9.0):
@@ -396,4 +412,135 @@ def test_output_glob_raises_when_nothing_matches(stub_run, tmp_path):
         run_tool(
             stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
             output_glob="*_modes_n???", stdin_text="x",
+        )
+
+
+# --- --tool-output / ASHEN_TOOL_OUTPUT ------------------------------------
+#
+# capfd, not capsys: the point of the feature is that the child inherits
+# this process's file descriptors, so its output never passes through
+# Python-level sys.stdout/sys.stderr at all.
+
+
+def test_tool_output_is_off_by_default(stub_run, tmp_path, monkeypatch, capfd):
+    monkeypatch.delenv(TOOL_OUTPUT_ENV, raising=False)
+    monkeypatch.setenv("STUB_STDOUT", "chatter")
+    monkeypatch.setenv("STUB_STDERR", "grumbling")
+    run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x",
+    )
+    captured = capfd.readouterr()
+    assert "chatter" not in captured.out + captured.err
+    assert "grumbling" not in captured.out + captured.err
+
+
+def test_tool_output_reaches_the_terminal_when_enabled(
+    stub_run, tmp_path, monkeypatch, capfd
+):
+    monkeypatch.setenv(TOOL_OUTPUT_ENV, "1")
+    monkeypatch.setenv("STUB_STDOUT", "chatter")
+    monkeypatch.setenv("STUB_STDERR", "grumbling")
+    run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x",
+    )
+    combined = "".join(capfd.readouterr())
+    assert "chatter" in combined
+    assert "grumbling" in combined
+
+
+def test_tool_output_announces_before_launching(stub_run, tmp_path, monkeypatch, capfd):
+    """The header must name the exe and cwd: a tool that hangs prints nothing
+    of its own, so the header is the only evidence of what was launched."""
+    monkeypatch.setenv(TOOL_OUTPUT_ENV, "1")
+    run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x",
+    )
+    err = capfd.readouterr().err
+    assert f"--- {TOOL_NAME} step 100" in err
+    assert "exe " in err and "cwd " in err
+
+
+def test_enable_tool_output_sets_the_env_for_children(monkeypatch):
+    """Set in the environment, not a module global: run_steps fans steps out
+    across a ProcessPoolExecutor, and a global would not survive a spawn."""
+    monkeypatch.delenv(TOOL_OUTPUT_ENV, raising=False)
+    assert not tool_output_enabled()
+    enable_tool_output()
+    assert os.environ[TOOL_OUTPUT_ENV] == "1"
+    assert tool_output_enabled()
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "OFF"])
+def test_falsey_env_values_leave_it_off(monkeypatch, value):
+    monkeypatch.setenv(TOOL_OUTPUT_ENV, value)
+    assert not tool_output_enabled()
+
+
+def test_capture_stdout_is_teed_not_taken_away(stub_run, tmp_path, monkeypatch, capfd):
+    """diagnostics.poincare parses the tool's progress messages to demux
+    field lines, so stdout must keep coming back on the result -- but with
+    echoing on it must also reach the terminal. Both, not either."""
+    monkeypatch.setenv(TOOL_OUTPUT_ENV, "1")
+    monkeypatch.setenv("STUB_STDOUT", "line 1 of 10\n")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x", capture_stdout=True,
+    )
+    assert result.stdout.strip() == "line 1 of 10"
+    assert "line 1 of 10" in "".join(capfd.readouterr())
+
+
+def test_teed_streams_stay_separate(stub_run, tmp_path, monkeypatch, capfd):
+    """Teeing must not merge the two streams on the result: `log` joins them
+    deliberately, and a caller reading `.stdout` should still get only that."""
+    monkeypatch.setenv(TOOL_OUTPUT_ENV, "1")
+    monkeypatch.setenv("STUB_STDOUT", "from-stdout\n")
+    monkeypatch.setenv("STUB_STDERR", "from-stderr\n")
+    result = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x", capture_stdout=True,
+    )
+    assert result.stdout.strip() == "from-stdout"
+    assert result.stderr.strip() == "from-stderr"
+
+
+def test_teed_output_goes_to_stderr_not_stdout(stub_run, tmp_path, monkeypatch, capfd):
+    """Both echoed streams land on stderr, so echoing never pollutes what a
+    caller parsing ashen's own stdout sees."""
+    monkeypatch.setenv(TOOL_OUTPUT_ENV, "1")
+    monkeypatch.setenv("STUB_STDOUT", "tool-chatter\n")
+    run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["stdin_echo.txt"], stdin_text="x", capture_stdout=True,
+    )
+    captured = capfd.readouterr()
+    assert "tool-chatter" in captured.err
+    assert "tool-chatter" not in captured.out
+
+
+def test_teed_failure_still_quotes_stderr(stub_run, tmp_path, monkeypatch):
+    """The tee keeps stderr, unlike the inherit path -- so the error message
+    can still name the complaint rather than pointing at the scrollback."""
+    monkeypatch.setenv(TOOL_OUTPUT_ENV, "1")
+    monkeypatch.setenv("STUB_STDERR", "no such expression\n")
+    monkeypatch.setenv("STUB_EXIT", "2")
+    with pytest.raises(Jorek2Error, match="no such expression"):
+        run_tool(
+            stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+            outputs=["stdin_echo.txt"], stdin_text="x", capture_stdout=True,
+        )
+
+
+def test_failure_message_points_at_the_live_output(stub_run, tmp_path, monkeypatch):
+    """With the streams inherited there is no captured stderr left to quote,
+    and it is already on screen -- so the error says where to look."""
+    monkeypatch.setenv(TOOL_OUTPUT_ENV, "1")
+    monkeypatch.setenv("STUB_EXIT", "3")
+    with pytest.raises(Jorek2Error, match="see its output above"):
+        run_tool(
+            stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+            outputs=["stdin_echo.txt"], stdin_text="x",
         )

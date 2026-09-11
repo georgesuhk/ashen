@@ -225,6 +225,57 @@ omp_threads = 0   # OpenMP threads per process; 0 = min(8, cpu_count)
 `--n-workers` / `--omp-threads` override per invocation. None of JOREK's
 `jorek2_*` tools use MPI, so these two are the only axes that exist.
 
+### Seeing what the jorek2_* tools are doing
+
+By default a tool's stdout is discarded and its stderr kept back to be quoted
+if it exits non-zero -- so a successful gather is quiet, and a failing one
+reports the tool's own complaint. Neither helps with a tool that *hangs*,
+which prints nothing either way.
+
+`--tool-output` (on `analyse`, `plot` and `timestep`) hands the tool this
+terminal instead of capturing it, so its output arrives **live**:
+
+```bash
+python ~/ashen/bin/analyse --case NAME --diag zerod --tool-output
+```
+
+```
+==== qa2.1_g2.3/eta1e-3_RE ====
+--- jorek2_postproc step 3000
+    exe /path/to/run/jorek2_postproc
+    cwd /path/to/run
+ reading namelist in_main
+ ...
+```
+
+The header is printed *before* the launch, so it appears even if the tool
+then hangs -- which distinguishes "the exe never started" from "it started
+and stopped partway". Because the streams are inherited, a non-zero exit no
+longer quotes stderr into the error message (it is already on screen) and
+`ToolResult.stdout`/`.stderr` come back empty.
+
+The flag drops `analyse` to one step at a time, since concurrent steps
+sharing one terminal interleave unreadably; pass `--n-workers` explicitly to
+override that.
+
+`jorek2_poincare` is a special case, but not an exception: its progress
+messages are *also* parsed, to tell which output block belongs to which field
+line. So rather than choosing, its streams are teed -- drained line by line
+and echoed as they arrive, while still being kept for the caller. A failing
+tee therefore does quote stderr in the error message, unlike the inherited
+case. Note that tracing prints one line per field line, so a wide `psi_n_in`
+is loud.
+
+Both echoed streams go to **stderr**, whichever they came from, so `analyse`'s
+own progress on stdout stays separable:
+
+```bash
+python ~/ashen/bin/analyse --case NAME --diag poincare --tool-output 2> trace.log
+```
+
+`ASHEN_TOOL_OUTPUT=1` does the same thing without a flag -- for a jobscript,
+or a notebook calling into `ashen` directly.
+
 ## Plotting
 
 `bin/plot` draws figures from data `analyse` already gathered, and reads the

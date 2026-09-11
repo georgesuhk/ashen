@@ -38,7 +38,7 @@ from ashen.diagnostics import four as four_diag
 from ashen.diagnostics import poincare as poincare_diag
 from ashen.diagnostics import profiles as profiles_diag
 from ashen.diagnostics import qprofile as qprofile_diag
-from ashen.jorek2 import Jorek2Run, run_zero_d
+from ashen.jorek2 import Jorek2Run, enable_tool_output, run_zero_d
 from ashen.paths import RunPaths, read_float
 from ashen.postproc import zero_d_is_usable
 
@@ -77,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--omp-threads", type=int, default=None,
         help="OpenMP threads per jorek2_* process (default: site.toml's "
         "[diagnostics] omp_threads)",
+    )
+    parser.add_argument(
+        "--tool-output", action="store_true",
+        help="echo each jorek2_* tool's stdout and stderr to stderr as it "
+        "runs (default: discarded unless the tool fails)",
     )
     parser.add_argument("--site", type=Path, default=None, help="explicit site.toml")
     parser.add_argument(
@@ -295,11 +300,24 @@ def _resolve_parallelism(args) -> tuple[int, int]:
             args.omp_threads if args.omp_threads is not None else diagnostics.omp_threads
         ),
     )
-    return diagnostics.resolve()
+    n_workers, omp_threads = diagnostics.resolve()
+
+    # --tool-output is a debugging flag, and concurrent steps writing to one
+    # inherited terminal interleave into something unreadable. Drop to serial
+    # unless the user asked for a specific width, in which case they meant it.
+    if args.tool_output and args.n_workers is None and n_workers > 1:
+        print("--tool-output: running steps serially (pass --n-workers to override)")
+        n_workers = 1
+    return n_workers, omp_threads
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Before any work, and via the environment, so the per-step workers
+    # run_steps fans out to inherit it (see jorek2.TOOL_OUTPUT_ENV).
+    if args.tool_output:
+        enable_tool_output()
 
     if args.show_config:
         return show_config(args.site)

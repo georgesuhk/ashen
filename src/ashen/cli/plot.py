@@ -71,7 +71,7 @@ from ashen.diagnostics.theta_histogram import (
     theta_histogram,
     wetted_fraction,
 )
-from ashen.jorek2 import Jorek2Error, Jorek2Run, run_zero_d
+from ashen.jorek2 import Jorek2Error, Jorek2Run, enable_tool_output, run_zero_d
 from ashen.logfile import LogfileError, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.colors import DISCRETE_PALETTE
@@ -268,6 +268,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dataset", action="append", dest="datasets_selected",
         help="wetted_fraction: which dataset(s) to draw from a datasets-style "
         "comparison (repeatable; default: every dataset)",
+    )
+    parser.add_argument(
+        "--tool-output", action="store_true",
+        help="echo each jorek2_* tool's stdout and stderr to stderr as it "
+        "runs (default: discarded unless the tool fails)",
     )
     parser.add_argument("--site", type=Path, default=None, help="explicit site.toml")
     parser.add_argument(
@@ -1782,6 +1787,11 @@ def _run_comparisons(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Before any work, and via the environment, so the per-step workers
+    # run_steps fans out to inherit it (see jorek2.TOOL_OUTPUT_ENV).
+    if args.tool_output:
+        enable_tool_output()
 
     if args.show_config:
         return show_config(args.site)

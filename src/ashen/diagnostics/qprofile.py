@@ -23,7 +23,14 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError
+from ashen.jorek2 import (
+    Jorek2Error,
+    Jorek2Run,
+    MissingRestartError,
+    _announce_tool,
+    _launch,
+    tool_output_enabled,
+)
 from ashen.paths import RunPaths
 from ashen.postproc import qprofile_script, read_postproc_profile
 
@@ -61,23 +68,27 @@ def run_qprofile_step(run: Jorek2Run, step: int, paths: RunPaths) -> Path:
         prefix="postproc_qprofile_script_", suffix=".in", dir=run.run_dir
     )
     script_path = Path(script_name)
+    echo = tool_output_enabled()
+    if echo:
+        _announce_tool(POSTPROC_TOOL, step, exe, run.run_dir)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(qprofile_script(run.namelist.name, paths.step_str(step)))
         with open(script_path, encoding="utf-8") as stdin_file:
-            result = subprocess.run(
+            result = _launch(
                 [str(exe)],
-                stdin=stdin_file,
+                stdin_file=stdin_file,
                 cwd=run.run_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                env=None,
+                capture_stdout=False,
+                echo=echo,
             )
     finally:
         script_path.unlink(missing_ok=True)
     if result.returncode != 0:
         raise Jorek2Error(
             f"jorek2_postproc exited {result.returncode} for qprofile at step "
-            f"{step} in {run.run_dir}: {result.stderr.decode(errors='replace')}"
+            f"{step} in {run.run_dir}: {result.stderr or 'see its output above'}"
         )
 
     out = paths.qprofile(step)

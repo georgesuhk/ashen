@@ -57,7 +57,15 @@ import numpy as np
 
 from ashen.castor_io import load_two_col_data
 from ashen.diagnostics import poincare_cache as pc
-from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_tool
+from ashen.jorek2 import (
+    Jorek2Error,
+    Jorek2Run,
+    MissingRestartError,
+    _announce_tool,
+    _launch,
+    run_tool,
+    tool_output_enabled,
+)
 from ashen.paths import RunPaths
 from ashen.postproc import flux_surface_script
 
@@ -139,21 +147,38 @@ def _write_flux_surface(run: Jorek2Run, step: int, psi_n: float, namelist_name: 
     exe = run.exe_dir / POSTPROC_TOOL
     if not exe.is_file():
         raise FileNotFoundError(f"{POSTPROC_TOOL} not found at {exe}")
+    # Checked here, as run_zero_d and run_qprofile_step already do. Without
+    # it a missing restart reaches jorek2_postproc as a `for step` loop that
+    # imports nothing: `fluxsurface` then fails check_step_imported, which
+    # returns *without* setting a non-zero exit status
+    # (exec_commands.f90:3056, check_step_imported at :861), so the tool
+    # "succeeds" having written no file and the caller falls over on a bare
+    # FileNotFoundError against the surface path instead.
+    restart_src = run.restart_path(step)
+    if not restart_src.is_file():
+        raise MissingRestartError(f"restart file not found: {restart_src}")
+
+    paths_out = run.run_dir / "postproc"
+    paths_out.mkdir(parents=True, exist_ok=True)
 
     fd, script_name = tempfile.mkstemp(
         prefix="postproc_fs_script_", suffix=".in", dir=run.run_dir
     )
     script_path = Path(script_name)
+    echo = tool_output_enabled()
+    if echo:
+        _announce_tool(POSTPROC_TOOL, step, exe, run.run_dir)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(flux_surface_script(namelist_name, step, psi_n))
         with open(script_path, encoding="utf-8") as stdin_file:
-            result = subprocess.run(
+            result = _launch(
                 [str(exe)],
-                stdin=stdin_file,
+                stdin_file=stdin_file,
                 cwd=run.run_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                env=None,
+                capture_stdout=False,
+                echo=echo,
             )
     finally:
         script_path.unlink(missing_ok=True)
@@ -161,8 +186,46 @@ def _write_flux_surface(run: Jorek2Run, step: int, psi_n: float, namelist_name: 
         raise Jorek2Error(
             f"jorek2_postproc exited {result.returncode} generating the flux "
             f"surface at psi_n={psi_n} for step {step} in {run.run_dir}: "
-            f"{result.stderr.decode(errors='replace')}"
+            f"{result.stderr or 'see its output above'}"
         )
+
+
+
+def _no_surface_message(paths: RunPaths, fs_file: Path, psi_n: float, step: int) -> str:
+    """Why jorek2_postproc can exit 0 having written no flux surface.
+
+    Every branch below is a `return` with ierr still 0 in
+    ``exec_commands.f90``'s ``fluxsurface`` (:3036), so the tool reports
+    success either way and the only previous symptom was a bare
+    ``FileNotFoundError`` on a path nothing had written.
+
+    The listing of what ``postproc/`` does hold is the useful half: the file
+    being there under a *different* step padding means JOREK named its output
+    with ``rst_file_ind_fmt(1)`` (``mod_import_restart.f90:5``) while
+    ``RunPaths`` derived a different width from the restart filenames.
+    Importing tries both widths, so a restart reads fine and only the output
+    name disagrees.
+    """
+    siblings = sorted(p.name for p in paths.postproc_dir.glob("fluxsurface_at_psi_*"))
+    lines = [
+        f"jorek2_postproc exited 0 but wrote no flux surface for psi_n="
+        f"{psi_n} at step {step}; expected {fs_file}",
+        "  jorek2_postproc reports success for all of these, so check:",
+        f"    - psi_n outside [0, 1] after scaling by real_psi_edge "
+        f"(this one is {psi_n:.6g})",
+        "    - the restart for this step holding no importable equilibrium",
+        "    - a step-padding mismatch between the restart files and "
+        "JOREK's output naming",
+    ]
+    if siblings:
+        lines.append("  postproc/ currently holds:")
+        lines.extend(f"    {name}" for name in siblings[:10])
+        if len(siblings) > 10:
+            lines.append(f"    ... and {len(siblings) - 10} more")
+    else:
+        lines.append("  postproc/ holds no fluxsurface_at_psi_* files at all")
+    lines.append("  re-run with --tool-output to see what the tool printed")
+    return "\n".join(lines)
 
 
 def resolve_start_points(
@@ -192,6 +255,8 @@ def resolve_start_points(
         made_here = not fs_file.is_file()
         if made_here:
             _write_flux_surface(run, step, psi_n, run.namelist.name)
+            if not fs_file.is_file():
+                raise Jorek2Error(_no_surface_message(paths, fs_file, psi_n, step))
         try:
             samples = _sampled_rz(fs_file, ang_sample_freq)
         finally:

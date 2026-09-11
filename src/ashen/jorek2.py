@@ -20,7 +20,9 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -29,7 +31,125 @@ from ashen.paths import RunPaths
 
 __all__ = [
     "Jorek2Error", "MissingRestartError", "Jorek2Run", "ToolResult", "run_tool", "run_zero_d",
+    "TOOL_OUTPUT_ENV", "enable_tool_output", "tool_output_enabled",
 ]
+
+#: Set to turn on echoing of every jorek2_* tool's stdout/stderr. An
+#: environment variable rather than a module global because per-step gathers
+#: fan out across a ProcessPoolExecutor: a global set in the parent survives
+#: a fork but not a spawn (Windows), while the environment is inherited by
+#: both. Also usable directly, without a CLI flag, from a notebook or a
+#: jobscript.
+TOOL_OUTPUT_ENV = "ASHEN_TOOL_OUTPUT"
+
+_FALSEY = {"", "0", "false", "no", "off"}
+
+
+def tool_output_enabled() -> bool:
+    """Whether jorek2_* child output should be echoed to stderr."""
+    return os.environ.get(TOOL_OUTPUT_ENV, "").strip().lower() not in _FALSEY
+
+
+def enable_tool_output() -> None:
+    """Turn echoing on for this process and every child it spawns."""
+    os.environ[TOOL_OUTPUT_ENV] = "1"
+
+
+def _announce_tool(tool: str, step: int, exe: Path, cwd: Path) -> None:
+    """Header printed before a tool is launched with its streams inherited.
+
+    Printed *before* the launch, not after: the case this exists for is a
+    tool that hangs, where anything printed afterwards never arrives. The
+    header is also what tells you the exe was found and the process really
+    started -- a hang before any tool output is a different problem from a
+    hang partway through one.
+    """
+    print(f"--- {tool} step {step}", file=sys.stderr)
+    print(f"    exe {exe}", file=sys.stderr)
+    print(f"    cwd {cwd}", file=sys.stderr, flush=True)
+
+
+def _tee(stream, chunks: list[str]) -> None:
+    """Drain one child stream, echoing each line as it arrives and keeping it.
+
+    Line-buffered rather than read-to-end: the whole point is to see output
+    from a tool that has not exited yet. Both streams go to *stderr*
+    regardless of which one they came from, so that a caller parsing our own
+    stdout is unaffected by the echo.
+
+    Reading both streams concurrently (one thread each, in _launch) is not
+    optional once both are pipes: a tool that fills the stderr pipe buffer
+    while we block reading stdout would deadlock, which is the failure mode
+    subprocess.communicate exists to avoid and that we lose by draining
+    incrementally.
+    """
+    for raw in iter(stream.readline, b""):
+        text = raw.decode(errors="replace")
+        chunks.append(text)
+        sys.stderr.write(text)
+        sys.stderr.flush()
+    stream.close()
+
+
+@dataclass(frozen=True)
+class _Completed:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def _launch(
+    argv: list[str],
+    *,
+    stdin_file,
+    cwd: Path,
+    env: Mapping[str, str] | None,
+    capture_stdout: bool,
+    echo: bool,
+) -> _Completed:
+    """Run one tool, in whichever of three stream modes applies.
+
+    - not echoing: stdout to a pipe only if the caller wants it, else
+      discarded; stderr piped so a non-zero exit can quote it.
+    - echoing, output not wanted back: inherit this process's streams. The
+      cheapest live passthrough there is -- no decoding, no threads, and the
+      tool's own buffering is all that stands between it and the terminal.
+    - echoing *and* wanted back (jorek2_poincare, whose progress messages
+      are parsed to demux field lines): tee. Piped, drained line by line in
+      a thread per stream, echoed as it arrives and kept for the caller.
+    """
+    if echo and capture_stdout:
+        proc = subprocess.Popen(
+            argv, stdin=stdin_file, cwd=cwd, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        out_chunks: list[str] = []
+        err_chunks: list[str] = []
+        threads = [
+            threading.Thread(target=_tee, args=(proc.stdout, out_chunks), daemon=True),
+            threading.Thread(target=_tee, args=(proc.stderr, err_chunks), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        returncode = proc.wait()
+        for thread in threads:
+            thread.join()
+        return _Completed(returncode, "".join(out_chunks), "".join(err_chunks))
+
+    if echo:
+        result = subprocess.run(argv, stdin=stdin_file, cwd=cwd, env=env)
+        return _Completed(result.returncode, "", "")
+
+    result = subprocess.run(
+        argv, stdin=stdin_file, cwd=cwd, env=env,
+        stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    return _Completed(
+        result.returncode,
+        result.stdout.decode(errors="replace") if result.stdout is not None else "",
+        result.stderr.decode(errors="replace") if result.stderr is not None else "",
+    )
 
 
 class Jorek2Error(RuntimeError):
@@ -204,19 +324,32 @@ def run_tool(
         if env:
             child_env = {**os.environ, **{k: str(v) for k, v in env.items()}}
 
+        # Echoing shows the tool's output as it is produced rather than
+        # replaying it afterwards: a captured stream only reaches the
+        # terminal once the child exits, which is exactly the output you do
+        # not get from a tool that hangs. See _launch for the three stream
+        # modes; a caller that also wants the output back (capture_stdout)
+        # gets it teed, not taken away.
+        echo = tool_output_enabled()
+        if echo:
+            _announce_tool(tool, step, exe_invoke, workdir)
         with open(stdin_path, encoding="utf-8") as stdin_file:
-            result = subprocess.run(
+            result = _launch(
                 [str(exe_invoke)],
-                stdin=stdin_file,
+                stdin_file=stdin_file,
                 cwd=workdir,
-                stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
                 env=child_env,
+                capture_stdout=capture_stdout,
+                echo=echo,
             )
         if result.returncode != 0:
+            # Inheriting the streams leaves no captured stderr to quote --
+            # and it is already on screen. Teeing does keep it, so that
+            # path quotes as usual.
+            detail = result.stderr or "see its output above"
             raise Jorek2Error(
                 f"{tool} exited {result.returncode} for step {step} in "
-                f"{run.run_dir}: {result.stderr.decode(errors='replace')}"
+                f"{run.run_dir}: {detail}"
             )
 
         collected: dict[str, Path] = {}
@@ -243,11 +376,11 @@ def run_tool(
                 shutil.copy(src, dst)
                 collected[src.name] = dst
 
-    stdout = ""
-    if capture_stdout and result.stdout is not None:
-        stdout = result.stdout.decode(errors="replace")
-    stderr = result.stderr.decode(errors="replace") if result.stderr is not None else ""
-    return ToolResult(outputs=collected, stdout=stdout, stderr=stderr)
+    # Both are empty when the streams were inherited rather than captured
+    # (_launch's echo-only mode); the caller gets nothing back because the
+    # user got the live output instead.
+    stdout = result.stdout if capture_stdout else ""
+    return ToolResult(outputs=collected, stdout=stdout, stderr=result.stderr)
 
 
 def run_zero_d(
@@ -312,20 +445,25 @@ def run_zero_d(
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(zero_d_script(run.namelist.name, paths.step_str(step), si_units=True))
+        echo = tool_output_enabled()
+        if echo:
+            _announce_tool("jorek2_postproc", step, exe, run.run_dir)
         with open(script_path, encoding="utf-8") as stdin_file:
-            result = subprocess.run(
+            result = _launch(
                 [str(exe)],
-                stdin=stdin_file,
+                stdin_file=stdin_file,
                 cwd=run.run_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                env=None,
+                capture_stdout=False,
+                echo=echo,
             )
     finally:
         script_path.unlink(missing_ok=True)
     if result.returncode != 0:
+        detail = result.stderr or "see its output above"
         raise Jorek2Error(
             f"jorek2_postproc exited {result.returncode} for zeroD at step "
-            f"{step} in {run.run_dir}: {result.stderr.decode(errors='replace')}"
+            f"{step} in {run.run_dir}: {detail}"
         )
 
     out = paths.zero_d(step, si_units=True)
