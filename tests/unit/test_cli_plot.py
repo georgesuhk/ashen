@@ -3024,3 +3024,261 @@ def test_mark_rational_marks_the_rest_when_one_step_lacks_a_qprofile(
 
     assert "no qprofile cache for step(s) [200]" in capsys.readouterr().out
     assert captured["rational_lines"] == [(0.5, plot_cli.DISCRETE_PALETTE[0], "n=1, m=2")]
+
+
+# --- scan_map: one point per run, from ashen.quantities --------------------
+
+
+def _write_scan_zerod(run_dir, step, *, pad_width=6, **columns):
+    paths = RunPaths(run_dir, pad_width=pad_width)
+    path = paths.zero_d(step)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    keys = " ".join(columns)
+    values = " ".join(str(v) for v in columns.values())
+    path.write_text(f"{keys}\n{values}\n", encoding="utf-8")
+
+
+@pytest.fixture
+def scan_campaign(tmp_path, monkeypatch):
+    """Two runs with everything a scan map reads: a namelist with eta, a
+    zeroD cache with Q95/li3 columns, and a jorek2_four Psi cache + log (for
+    delta_b_max) -- plus a [comparisons.scan] naming eta/q95/delta_b_max.
+
+    Separate from `campaign`: that fixture's zeroD carries only Time/Energy
+    and a dozen existing tests assert on it, so widening it would churn
+    them for no benefit.
+    """
+    etas = {"eta1e-3": "1.d-3", "eta1e-4": "1.d-4"}
+    q95s = {"eta1e-3": 3.5, "eta1e-4": 4.0}
+    lis = {"eta1e-3": 0.8, "eta1e-4": 0.9}
+    peaks = {"eta1e-3": 4.0, "eta1e-4": 2.0}
+
+    for name in etas:
+        run_dir = tmp_path / "scan" / name
+        run_dir.mkdir(parents=True)
+        (run_dir / "jorek000100.h5").write_bytes(b"")
+        (run_dir / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+        (run_dir / "in_main").write_text(
+            f"&in1\n  eta = {etas[name]}\n&end\n", encoding="utf-8",
+        )
+        write_float(run_dir / "real_psi_edge.dat", 1.0)
+        _write_scan_zerod(run_dir, 100, Time=1e-4, Q95=q95s[name], li3=lis[name])
+        _write_four_cache(
+            run_dir, 100, records=[_four_record("Psi", 1, 2, real_peak=peaks[name])],
+        )
+        # A Poincare cache too -- so a bare `plot --case X` (every diag by
+        # default) has something to draw for poincare/connection_length
+        # instead of crashing on an empty psi_n_in; not otherwise used by
+        # this fixture's own scan_map tests.
+        _write_cache(run_dir, 100)
+
+    cases_toml = tmp_path / "cases.toml"
+    cases_toml.write_text(
+        '[cases."scan/eta1e-3"]\n'
+        'steps = [100]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        '[cases."scan/eta1e-4"]\n'
+        'steps = [100]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        '[comparisons.scan]\n'
+        'cases      = ["scan/eta1e-3", "scan/eta1e-4"]\n'
+        'x_quantity = "eta"\n'
+        'y_quantity = "q95"\n'
+        'c_quantity = "delta_b_max"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def test_scan_map_writes_a_file(scan_campaign):
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map"]) == 0
+    out = scan_campaign / "figures" / "scan_scan_map_q95_vs_eta_delta_b_max.png"
+    assert out.is_file()
+    assert out.stat().st_size > 0
+
+
+def test_scan_map_reports_both_points(scan_campaign, capsys):
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map"]) == 0
+    out = capsys.readouterr().out
+    assert "eta=0.001, q95=3.5, delta_b_max=" in out
+    assert "eta=0.0001, q95=4, delta_b_max=" in out
+
+
+def test_scan_map_size_encoding_writes_the_same_file(scan_campaign):
+    assert plot_cli.main(
+        ["--compare", "scan", "--diag", "scan_map", "--map-encoding", "size"]
+    ) == 0
+    out = scan_campaign / "figures" / "scan_scan_map_q95_vs_eta_delta_b_max.png"
+    assert out.is_file()
+
+
+def test_scan_map_x_quantity_flag_overrides_the_comparison(scan_campaign, monkeypatch):
+    captured = {}
+    original = plot_cli.plot_scan_map
+
+    def spy(points, out_path, **kwargs):
+        captured["xlabel"] = kwargs.get("xlabel")
+        return original(points, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_scan_map", spy)
+    assert plot_cli.main(
+        ["--compare", "scan", "--diag", "scan_map", "--x-quantity", "li"]
+    ) == 0
+    assert captured["xlabel"] == plot_cli.quantity("li").label
+
+
+def test_scan_map_unknown_x_quantity_is_a_fatal_error(scan_campaign, capsys):
+    assert plot_cli.main(
+        ["--compare", "scan", "--diag", "scan_map", "--x-quantity", "bogus"]
+    ) == 1
+    assert "unknown quantity" in capsys.readouterr().err
+
+
+def test_list_quantities_works_with_no_cases_toml(tmp_path, monkeypatch):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+    assert plot_cli.main(["--list-quantities"]) == 0
+
+
+def test_list_quantities_prints_known_names(capsys, scan_campaign):
+    assert plot_cli.main(["--list-quantities"]) == 0
+    out = capsys.readouterr().out
+    assert "eta (log)" in out
+    assert "delta_b_over_b_max" in out
+
+
+def test_scan_map_diag_without_compare_is_comparison_only(scan_campaign, capsys):
+    assert plot_cli.main(["--case", "scan/eta1e-3", "--diag", "scan_map"]) == 0
+    assert "comparison-only" in capsys.readouterr().out
+
+
+def test_bare_case_run_does_not_mention_comparison_only(scan_campaign, capsys):
+    """explicit_diags regression: a bare `--case X` (no --diag) requests
+    every DIAG_CHOICES entry by default, including scan_map -- it must not
+    print the comparison-only note since the user never asked for it."""
+    assert plot_cli.main(["--case", "scan/eta1e-3"]) == 0
+    assert "comparison-only" not in capsys.readouterr().out
+
+
+def test_bare_compare_does_not_mention_scan_map(scan_campaign, capsys):
+    """The other half of the explicit_diags regression: a bare --compare
+    (no --diag) must not print scan_map's own "no x_quantity" skip note for
+    a comparison that already has one configured -- and here it does, so
+    the diag actually runs; the point is merely that nothing complains."""
+    assert plot_cli.main(["--compare", "scan"]) == 0
+    out = capsys.readouterr().out
+    assert "x_quantity" not in out
+
+
+def test_scan_map_missing_folder_is_dropped_with_a_note(scan_campaign, capsys):
+    cases_toml = scan_campaign / "cases.toml"
+    extra_case = '[cases."scan/ghost"]\nsteps = [100]\n\n'
+    text = cases_toml.read_text(encoding="utf-8")
+    text = text.replace(
+        'cases      = ["scan/eta1e-3", "scan/eta1e-4"]',
+        'cases      = ["scan/eta1e-3", "scan/eta1e-4", "scan/ghost"]',
+    )
+    text = text.replace("[comparisons.scan]", extra_case + "[comparisons.scan]", 1)
+    cases_toml.write_text(text, encoding="utf-8")
+
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map"]) == 0
+    out = capsys.readouterr().out
+    assert "scan/ghost: no such folder" in out
+
+
+def test_scan_map_missing_quantity_column_is_dropped_with_a_note(scan_campaign, capsys):
+    # Blow away eta1e-4's Q95 column so it can't supply y_quantity.
+    _write_scan_zerod(scan_campaign / "scan" / "eta1e-4", 100, Time=1e-4, li3=0.9)
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map"]) == 0
+    out = capsys.readouterr().out
+    assert "scan/eta1e-4: dropped from the scan map (missing ['q95'])" in out
+
+
+def test_map_log_x_off_overrides_etas_default_log_scale(scan_campaign, monkeypatch):
+    captured = {}
+    original = plot_cli.plot_scan_map
+
+    def spy(points, out_path, **kwargs):
+        captured["log_x"] = kwargs.get("log_x")
+        return original(points, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_scan_map", spy)
+    assert plot_cli.main(
+        ["--compare", "scan", "--diag", "scan_map", "--map-log-x", "off"]
+    ) == 0
+    assert captured["log_x"] is False
+
+
+def test_scan_map_datasets_comparison_calls_plot_scan_map_datasets(tmp_path, monkeypatch):
+    for name, eta, q95 in [("a", "1.d-3", 3.0), ("b", "1.d-4", 4.0)]:
+        run_dir = tmp_path / "scan" / name
+        run_dir.mkdir(parents=True)
+        (run_dir / "jorek000100.h5").write_bytes(b"")
+        (run_dir / "in_main").write_text(f"&in1\n  eta = {eta}\n&end\n", encoding="utf-8")
+        _write_scan_zerod(run_dir, 100, Time=1e-4, Q95=q95)
+
+    cases_toml = tmp_path / "cases.toml"
+    cases_toml.write_text(
+        '[cases."scan/a"]\nsteps = [100]\n'
+        '[cases."scan/b"]\nsteps = [100]\n'
+        '[comparisons.scan]\n'
+        'x_quantity = "eta"\n'
+        'y_quantity = "q95"\n'
+        '[comparisons.scan.datasets.normal]\n'
+        'cases = ["scan/a", "scan/b"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    called = []
+    original = plot_cli.plot_scan_map_datasets
+
+    def spy(series, out_path, **kwargs):
+        called.append(series)
+        return original(series, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_scan_map_datasets", spy)
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map"]) == 0
+    assert len(called) == 1
+    assert len(called[0]) == 1  # one dataset
+    assert len(called[0][0][1]) == 2  # two points
+
+
+def test_scan_map_dataset_flag_unknown_name_is_reported(tmp_path, monkeypatch, capsys):
+    run_dir = tmp_path / "scan" / "a"
+    run_dir.mkdir(parents=True)
+    (run_dir / "jorek000100.h5").write_bytes(b"")
+    (run_dir / "in_main").write_text("&in1\n  eta = 1.d-3\n&end\n", encoding="utf-8")
+    _write_scan_zerod(run_dir, 100, Time=1e-4, Q95=3.0)
+
+    cases_toml = tmp_path / "cases.toml"
+    cases_toml.write_text(
+        '[cases."scan/a"]\nsteps = [100]\n'
+        '[comparisons.scan]\n'
+        'x_quantity = "eta"\n'
+        'y_quantity = "q95"\n'
+        '[comparisons.scan.datasets.normal]\n'
+        'cases = ["scan/a"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert plot_cli.main(
+        ["--compare", "scan", "--diag", "scan_map", "--dataset", "nope"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "no dataset(s)" in out
+    assert not (tmp_path / "figures").exists()
+
+
+def test_compare_wetted_fraction_still_works_after_scan_map_added(
+    delta_b_comparison_campaign,
+):
+    """Guard that widening DIAG_CHOICES/COMPARABLE_DIAGS to add scan_map
+    left the existing `four` comparison renderer untouched."""
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "four"]) == 0
+    assert (
+        delta_b_comparison_campaign / "figures" / "eta_scan_delta_b_max.png"
+    ).is_file()

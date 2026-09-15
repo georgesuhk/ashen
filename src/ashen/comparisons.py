@@ -14,6 +14,15 @@ A comparison can carry an explicit x_values (parallel to cases) for
 plotting a derived scalar vs. a scan parameter across members -- e.g.
 wetted fraction vs. eta (ashen.plotting.wetted_fraction).
 
+A comparison can instead name per-run *quantities* for its axes
+(x_quantity/y_quantity/c_quantity, ashen.quantities) for a 2D scan map --
+one point per member, both axes and a third encoded quantity read from
+each run's own namelist and caches. Those need no x_values at all --
+nothing parallel to maintain means nothing to drift. x_values and
+x_quantity may coexist on one comparison: the same comparison can
+legitimately drive a wetted_fraction line (needs x_values) and a scan map
+(does not).
+
 A comparison names members one of two ways, never both:
 - cases (flat): one series, one point per member. Pre-datasets default;
   still the only form theta_hist's grid comparison understands (one panel
@@ -39,8 +48,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ashen.cases import Case, CasesError
+from ashen.quantities import is_known_quantity
 
 __all__ = ["Comparison", "Dataset", "load_comparisons"]
+
+#: Duplicated from ashen.plotting.scan_map.ENCODINGS, not imported: importing
+#: the plotting package here would drag matplotlib into TOML parsing.
+#: test_comparisons.py pins the two in sync.
+_MAP_ENCODINGS = ("color", "size")
 
 
 @dataclass(frozen=True)
@@ -60,6 +75,20 @@ class Dataset:
     color: str | None = None
     #: Legend text; falls back to `name` (the TOML table key) if empty.
     dataset_label: str = ""
+    #: Marker shape for this dataset on a `--diag scan_map` figure whose
+    #: third quantity is encoded as COLOUR -- colour is spent on the
+    #: colourbar there, so shape is what tells the datasets apart. None ->
+    #: assigned from plotting.MARKER_CYCLE by position among siblings,
+    #: exactly as `color` is from DISCRETE_PALETTE.
+    #:
+    #: Coexists with `color` rather than replacing it: the two encodings
+    #: are mutually exclusive per figure but a dataset is not per figure.
+    #: The same [comparisons.X.datasets.rho19] table drives a
+    #: wetted_fraction line (uses color), a colour-encoded scan map (uses
+    #: marker), and a size-encoded scan map (uses color again). Setting
+    #: both is normal and correct; cli/plot notes when a figure ignores
+    #: one, so a dataset that looks wrong is traceable.
+    marker: str | None = None
 
     def labelled_cases(self) -> list[tuple[str, str]]:
         """[(x_tick_label, case_name), ...] in point order."""
@@ -93,6 +122,46 @@ class Comparison:
     x_values: list[float] | None = None
     #: Axis label for x_values, e.g. "$\\eta$ [$\\Omega \\cdot$ m]".
     x_label: str = ""
+    #: Axis label for a `y`-quantity scan map, the counterpart of x_label.
+    #: Both are *overrides*: a scan map's axis labels default to the
+    #: chosen quantity's own Quantity.label, so a comparison only sets
+    #: these where it wants different wording. x_label keeps its original
+    #: meaning for the x_values-based figures, which is the same meaning
+    #: -- "what the x axis says" -- so it is reused rather than doubled.
+    y_label: str = ""
+    #: Colourbar / size-legend label for the third quantity.
+    c_label: str = ""
+    #: `--diag scan_map`: the named per-run scalar (ashen.quantities) on
+    #: each axis, and the third one encoded as colour or ring size.
+    #: x_quantity/y_quantity go together -- both or neither. c_quantity is
+    #: optional: without it the map is a plain 2D scatter of runs, which
+    #: is a legitimate (if less informative) figure.
+    x_quantity: str = ""
+    y_quantity: str = ""
+    c_quantity: str = ""
+    #: "color" (colourbar; datasets -> marker shape) or "size" (ring
+    #: radius; datasets -> colour). See plotting.scan_map.ENCODINGS.
+    map_encoding: str = "color"
+    #: Label each point with its case's x_tick_label. Off by default -- a
+    #: twenty-run scan annotates into illegibility.
+    map_annotate: bool = False
+    #: Axis/encoding scale overrides. None falls through to each chosen
+    #: quantity's own Quantity.log_scale (log for eta and the delta_b
+    #: family, linear for q95/li/edge_q) -- so the common case needs no
+    #: setting at all, and an unusual one is not stuck with it.
+    log_x: bool | None = None
+    log_y: bool | None = None
+    log_c: bool | None = None
+    #: psi_n the `edge_q` quantity interpolates the q-profile at. None ->
+    #: 1.0 (the separatrix). Lives on the comparison, not the case, for
+    #: the same reason theta_target_psi does: a scan is only a comparison
+    #: if every point used the same definition.
+    edge_q_psi_n: float | None = None
+    #: Step every equilibrium-type quantity (edge_q, q95, q99, li) is read
+    #: at. None -> each member case's own first plotted step. Explicit
+    #: here rather than per case because "q95 at step 200 for this run and
+    #: step 3000 for that one" is not a scan.
+    equilibrium_step: int | None = None
     #: Uniform overrides for every member case (see module docstring for
     #: why they live here, not per case). None falls through to the case's
     #: own setting.
@@ -135,6 +204,11 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
         unknown = sorted(
             set(raw) - {
                 "cases", "x_tick_labels", "datasets", "note", "n_cols", "x_values", "x_label",
+                "y_label", "c_label",
+                "x_quantity", "y_quantity", "c_quantity",
+                "map_encoding", "map_annotate",
+                "log_x", "log_y", "log_c",
+                "edge_q_psi_n", "equilibrium_step",
                 "theta_target_psi", "theta_bins", "theta_psi_n_range",
                 "theta_wetted_threshold",
             }
@@ -234,6 +308,59 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
                     f"must be positive, got {theta_wetted_threshold}"
                 )
 
+        # Scan-map fields (--diag scan_map). Validated at parse time, not
+        # mid-figure -- a typo here must not produce an empty PNG.
+        x_quantity = str(raw.get("x_quantity", ""))
+        y_quantity = str(raw.get("y_quantity", ""))
+        c_quantity = str(raw.get("c_quantity", ""))
+        if bool(x_quantity) != bool(y_quantity):
+            set_one, missing = (
+                ("x_quantity", "y_quantity") if x_quantity else ("y_quantity", "x_quantity")
+            )
+            raise CasesError(
+                f"{path}: comparison {name!r} sets {set_one!r} but not "
+                f"{missing!r} -- a scan map needs both axes (or neither)"
+            )
+        for key, value in (
+            ("x_quantity", x_quantity), ("y_quantity", y_quantity), ("c_quantity", c_quantity),
+        ):
+            if value and not is_known_quantity(value):
+                raise CasesError(
+                    f"{path}: comparison {name!r} {key} = {value!r} is not a "
+                    "known quantity; `plot --list-quantities` lists them"
+                )
+
+        map_encoding = str(raw.get("map_encoding", "color"))
+        if map_encoding not in _MAP_ENCODINGS:
+            raise CasesError(
+                f"{path}: comparison {name!r} map_encoding must be one of "
+                f"{_MAP_ENCODINGS}, got {map_encoding!r}"
+            )
+        if "map_encoding" in raw and not c_quantity:
+            raise CasesError(
+                f"{path}: comparison {name!r} sets map_encoding but no "
+                "c_quantity -- there is nothing to encode"
+            )
+
+        map_annotate = bool(raw.get("map_annotate", False))
+
+        log_x = bool(raw["log_x"]) if "log_x" in raw else None
+        log_y = bool(raw["log_y"]) if "log_y" in raw else None
+        log_c = bool(raw["log_c"]) if "log_c" in raw else None
+
+        edge_q_psi_n = None
+        if "edge_q_psi_n" in raw:
+            edge_q_psi_n = float(raw["edge_q_psi_n"])
+            if edge_q_psi_n <= 0:
+                raise CasesError(
+                    f"{path}: comparison {name!r} edge_q_psi_n must be "
+                    f"positive, got {edge_q_psi_n}"
+                )
+
+        equilibrium_step = None
+        if "equilibrium_step" in raw:
+            equilibrium_step = int(raw["equilibrium_step"])
+
         comparisons[name] = Comparison(
             name=name,
             cases=members,
@@ -243,6 +370,18 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
             n_cols=int(raw.get("n_cols", 4)),
             x_values=x_values,
             x_label=str(raw.get("x_label", "")),
+            y_label=str(raw.get("y_label", "")),
+            c_label=str(raw.get("c_label", "")),
+            x_quantity=x_quantity,
+            y_quantity=y_quantity,
+            c_quantity=c_quantity,
+            map_encoding=map_encoding,
+            map_annotate=map_annotate,
+            log_x=log_x,
+            log_y=log_y,
+            log_c=log_c,
+            edge_q_psi_n=edge_q_psi_n,
+            equilibrium_step=equilibrium_step,
             theta_target_psi=theta_target_psi,
             theta_bins=theta_bins,
             theta_psi_n_range=theta_psi_n_range,
@@ -263,7 +402,7 @@ def _parse_dataset(
 ) -> Dataset:
     """One ``[comparisons.NAME.datasets.DATASET]`` table."""
     unknown = sorted(
-        set(raw) - {"cases", "x_tick_labels", "x_values", "color", "dataset_label"}
+        set(raw) - {"cases", "x_tick_labels", "x_values", "color", "dataset_label", "marker"}
     )
     if unknown:
         raise CasesError(
@@ -311,9 +450,13 @@ def _parse_dataset(
     if color is not None:
         color = str(color)
 
+    marker = raw.get("marker")
+    if marker is not None:
+        marker = str(marker)
+
     dataset_label = str(raw.get("dataset_label", ""))
 
     return Dataset(
         name=dataset_name, cases=members, x_tick_labels=labels, x_values=x_values,
-        color=color, dataset_label=dataset_label,
+        color=color, dataset_label=dataset_label, marker=marker,
     )

@@ -480,3 +480,196 @@ def test_dataset_unknown_key_raises(tmp_path):
     cases = load_cases(path)
     with pytest.raises(CasesError, match="unknown key"):
         load_comparisons(path, cases)
+
+
+# --- scan_map: x_quantity/y_quantity/c_quantity, map_encoding -------------------
+
+
+def test_encodings_agree_with_plotting_scan_map():
+    """comparisons.py duplicates plotting.scan_map.ENCODINGS as a literal
+    (importing the plotting package here would drag matplotlib into TOML
+    parsing) -- this pins the duplicate in sync with the original."""
+    from ashen.comparisons import _MAP_ENCODINGS
+    from ashen.plotting.scan_map import ENCODINGS
+
+    assert _MAP_ENCODINGS == ENCODINGS
+
+
+def test_scan_map_quantities_round_trip(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + 'cases      = ["a", "b"]\n'
+        + 'x_quantity = "eta"\n'
+        + 'y_quantity = "li"\n'
+        + 'c_quantity = "delta_b_over_b_max"\n',
+    )
+    cases = load_cases(path)
+    comparison = load_comparisons(path, cases)["scan"]
+    assert comparison.x_quantity == "eta"
+    assert comparison.y_quantity == "li"
+    assert comparison.c_quantity == "delta_b_over_b_max"
+
+
+def test_scan_map_quantities_default_to_empty(tmp_path):
+    path = _write(tmp_path, _cases_block() + '[comparisons.scan]\ncases = ["a"]\n')
+    cases = load_cases(path)
+    comparison = load_comparisons(path, cases)["scan"]
+    assert comparison.x_quantity == ""
+    assert comparison.y_quantity == ""
+    assert comparison.c_quantity == ""
+    assert comparison.map_encoding == "color"
+    assert comparison.map_annotate is False
+
+
+def test_x_quantity_without_y_quantity_raises(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a"]\nx_quantity = "eta"\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="both axes"):
+        load_comparisons(path, cases)
+
+
+def test_y_quantity_without_x_quantity_raises(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a"]\ny_quantity = "li"\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="both axes"):
+        load_comparisons(path, cases)
+
+
+def test_unknown_quantity_name_raises(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\ncases = ["a"]\nx_quantity = "nope"\ny_quantity = "li"\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="not a known quantity"):
+        load_comparisons(path, cases)
+
+
+def test_bad_map_encoding_raises(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + 'cases        = ["a"]\n'
+        + 'x_quantity   = "eta"\n'
+        + 'y_quantity   = "li"\n'
+        + 'c_quantity   = "delta_b_max"\n'
+        + 'map_encoding = "rainbow"\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="map_encoding"):
+        load_comparisons(path, cases)
+
+
+def test_map_encoding_without_c_quantity_raises(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + 'cases        = ["a"]\n'
+        + 'x_quantity   = "eta"\n'
+        + 'y_quantity   = "li"\n'
+        + 'map_encoding = "size"\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="nothing to encode"):
+        load_comparisons(path, cases)
+
+
+def test_edge_q_psi_n_must_be_positive(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a"]\nedge_q_psi_n = 0\n',
+    )
+    cases = load_cases(path)
+    with pytest.raises(CasesError, match="edge_q_psi_n"):
+        load_comparisons(path, cases)
+
+
+def test_log_x_y_c_are_tri_state(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a"]\nlog_x = true\n',
+    )
+    cases = load_cases(path)
+    comparison = load_comparisons(path, cases)["scan"]
+    assert comparison.log_x is True
+    assert comparison.log_y is None
+    assert comparison.log_c is None
+
+
+def test_scan_map_comparison_needs_no_x_values(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + 'cases      = ["a"]\n'
+        + 'x_quantity = "eta"\n'
+        + 'y_quantity = "li"\n',
+    )
+    cases = load_cases(path)
+    comparison = load_comparisons(path, cases)["scan"]
+    assert comparison.x_values is None
+
+
+def test_x_values_and_x_quantity_may_coexist(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + 'cases      = ["a", "b"]\n'
+        + 'x_values   = [1e-3, 1e-4]\n'
+        + 'x_quantity = "eta"\n'
+        + 'y_quantity = "li"\n',
+    )
+    cases = load_cases(path)
+    comparison = load_comparisons(path, cases)["scan"]
+    assert comparison.x_values == pytest.approx([1e-3, 1e-4])
+    assert comparison.x_quantity == "eta"
+
+
+def test_equilibrium_step_is_parsed(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block() + '[comparisons.scan]\ncases = ["a"]\nequilibrium_step = 200\n',
+    )
+    cases = load_cases(path)
+    assert load_comparisons(path, cases)["scan"].equilibrium_step == 200
+
+
+def test_dataset_marker_round_trips_alongside_color(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + '[comparisons.scan.datasets.normal]\n'
+        + 'cases  = ["a"]\n'
+        + 'color  = "tab:red"\n'
+        + 'marker = "s"\n',
+    )
+    cases = load_cases(path)
+    ds = load_comparisons(path, cases)["scan"].datasets["normal"]
+    assert ds.color == "tab:red"
+    assert ds.marker == "s"
+
+
+def test_dataset_marker_defaults_to_none(tmp_path):
+    path = _write(
+        tmp_path,
+        _cases_block()
+        + '[comparisons.scan]\n'
+        + '[comparisons.scan.datasets.normal]\n'
+        + 'cases = ["a"]\n',
+    )
+    cases = load_cases(path)
+    ds = load_comparisons(path, cases)["scan"].datasets["normal"]
+    assert ds.marker is None

@@ -40,7 +40,7 @@ from ashen.cli._common import (
     run_steps,
     show_config,
 )
-from ashen.comparisons import Comparison, load_comparisons
+from ashen.comparisons import Comparison, Dataset, load_comparisons
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
 from ashen.diagnostics.four_modes import (
@@ -84,30 +84,53 @@ from ashen.plotting.profiles import (
     animate_profile_comparison,
     plot_profile_comparison,
 )
+from ashen.plotting.scan_map import ScanPoint, plot_scan_map, plot_scan_map_datasets
 from ashen.plotting.theta_histogram import plot_theta_histogram_grid
 from ashen.plotting.wetted_fraction import plot_wetted_fraction_datasets, plot_wetted_fraction_vs_x
 from ashen.postproc import read_zeroD, zero_d_is_usable
+from ashen.quantities import (
+    ZEROD_PREFIX,
+    QuantityContext,
+    _peak_of_variable,
+    _value_at_step,
+    describe_quantities,
+    is_known_quantity,
+    quantity,
+)
 
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
+    "scan_map",
 )
 
 #: Diags with a registered --compare renderer -- asking for one without (e.g.
 #: --compare X --diag profiles) is reported, not silently a no-op.
-COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction", "four")
+COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction", "four", "scan_map")
 
 #: Diags that only make sense across several cases (there is no single-case
 #: "vs. scan parameter" plot) -- valid under --compare, reported and skipped
 #: under the plain per-case loop rather than attempting something meaningless.
 #: wetted_fraction has a single-case renderer instead (its evolution across
-#: the case's own steps), so it is not listed here.
-COMPARISON_ONLY_DIAGS = ()
+#: the case's own steps), so it is not listed here. scan_map is the first
+#: real entry: its x, y and colour/size are each one number per RUN, so a
+#: single case is a single point and there is no figure to draw.
+COMPARISON_ONLY_DIAGS = ("scan_map",)
 
 
 def _dpi_kwargs(dpi: int | None) -> dict:
     """{"dpi": dpi} if the CLI overrode it, else {} so the plotting
     function's own default applies -- reused by every per-diag renderer."""
     return {} if dpi is None else {"dpi": dpi}
+
+
+def _jorek2_run(case: Case, paths: RunPaths) -> Jorek2Run:
+    """The four-field Jorek2Run literal three call sites had each spelled
+    out. One spelling means a case whose `namelist` is not the default
+    in_main cannot be honoured at two sites and forgotten at a third."""
+    return Jorek2Run(
+        run_dir=paths.run_dir, exe_dir=paths.run_dir,
+        namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
+    )
 
 
 #: four_vars entries that are derived from "Psi" at plot time rather than
@@ -267,8 +290,70 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dataset", action="append", dest="datasets_selected",
-        help="wetted_fraction: which dataset(s) to draw from a datasets-style "
-        "comparison (repeatable; default: every dataset)",
+        help="wetted_fraction / four / scan_map: which dataset(s) to draw "
+        "from a datasets-style comparison (repeatable; default: every dataset)",
+    )
+    parser.add_argument(
+        "--x-quantity", type=str, default=None, metavar="NAME",
+        help="scan_map: per-run scalar on the x axis, overriding the "
+        "comparison's x_quantity (--list-quantities for the names)",
+    )
+    parser.add_argument(
+        "--y-quantity", type=str, default=None, metavar="NAME",
+        help="scan_map: per-run scalar on the y axis, overriding the "
+        "comparison's y_quantity",
+    )
+    parser.add_argument(
+        "--c-quantity", type=str, default=None, metavar="NAME",
+        help="scan_map: the third per-run scalar, encoded as point colour "
+        "or ring size (see --map-encoding), overriding the comparison's "
+        "c_quantity; omit everywhere for a plain 2D scatter of runs",
+    )
+    parser.add_argument(
+        "--map-encoding", choices=("color", "size"), default=None,
+        help="scan_map: how --c-quantity is encoded -- 'color' (colourbar; "
+        "datasets told apart by marker shape) or 'size' (ring radius; "
+        "datasets told apart by colour); overrides the comparison's "
+        "map_encoding (default: color)",
+    )
+    parser.add_argument(
+        "--map-log-x", choices=("auto", "on", "off"), default="auto",
+        help="scan_map: x-axis scale -- 'auto' uses the chosen quantity's "
+        "own default (log for eta and delta-B, linear for q95/li/edge_q), "
+        "overriding the comparison's log_x",
+    )
+    parser.add_argument(
+        "--map-log-y", choices=("auto", "on", "off"), default="auto",
+        help="scan_map: y-axis scale; see --map-log-x",
+    )
+    parser.add_argument(
+        "--map-log-c", choices=("auto", "on", "off"), default="auto",
+        help="scan_map: scale of the colour/size-encoded quantity itself; "
+        "see --map-log-x",
+    )
+    parser.add_argument(
+        "--edge-q-psi-n", type=float, default=None, metavar="PSI_N",
+        help="scan_map: psi_n the 'edge_q' quantity interpolates the "
+        "q-profile at, overriding the comparison's edge_q_psi_n "
+        "(default: 1.0, the separatrix)",
+    )
+    parser.add_argument(
+        "--equilibrium-step", type=int, default=None, metavar="STEP",
+        help="scan_map: restart step every equilibrium-type quantity "
+        "(edge_q, q95, q99, li) is read at, overriding the comparison's "
+        "equilibrium_step (default: each case's own first plotted step)",
+    )
+    parser.add_argument(
+        "--annotate-points", action="store_true",
+        help="scan_map: label each point with its case's x_tick_label "
+        "(or name); turns this on regardless of the comparison's own "
+        "map_annotate -- off by default, since a twenty-run scan "
+        "annotates into illegibility",
+    )
+    parser.add_argument(
+        "--list-quantities", action="store_true",
+        help="list the per-run scalars --x-quantity/--y-quantity/"
+        "--c-quantity accept, and exit",
     )
     parser.add_argument(
         "--tool-output", action="store_true",
@@ -450,10 +535,7 @@ def _ensure(
         return
 
     print(f"  {label}: {report} for step(s) {missing}, gathering")
-    jrun = Jorek2Run(
-        run_dir=paths.run_dir, exe_dir=paths.run_dir,
-        namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
-    )
+    jrun = _jorek2_run(case, paths)
     run_steps(
         run_one_for(jrun),
         missing,
@@ -608,34 +690,10 @@ def _read_true_times(
     return true_times
 
 
-def _peak_of_variable(series: dict, variable: str) -> float | None:
-    """The largest finite value across every mode of ``variable`` in
-    ``series`` -- ``None`` if there isn't one (all-nan or no matching key).
-    Used to caption a figure with its peak delta-B/delta-B-over-B, a single
-    figure-level number that isn't tied to any one mode's legend entry.
-    """
-    arrays = [np.asarray(v, dtype=float) for (var, _, _), v in series.items() if var == variable]
-    if not arrays:
-        return None
-    values = np.concatenate(arrays)
-    finite = values[np.isfinite(values)]
-    return float(np.max(finite)) if finite.size else None
-
-
-def _value_at_step(series: dict, variable: str, steps: list[int], step: int) -> float | None:
-    """The largest finite value across every mode of ``variable`` at exactly
-    ``step`` -- ``None`` if ``step`` isn't one of ``steps`` (no interpolation,
-    same convention as connection_length's psi_n matching) or every mode is
-    nan there. ``series`` values are one entry per ``steps`` index (see
-    :func:`~ashen.diagnostics.four_modes.max_amplitude_series`), so ``step``
-    is resolved to that index positionally.
-    """
-    if step not in steps:
-        return None
-    idx = steps.index(step)
-    values = [v[idx] for (var, _, _), v in series.items() if var == variable]
-    finite = [v for v in values if np.isfinite(v)]
-    return float(max(finite)) if finite else None
+#: _peak_of_variable/_value_at_step moved to ashen.quantities (they're pure
+#: numpy reductions over a four_modes series with no CLI content, and that
+#: module is their other caller via its delta_b_* quantities) -- imported
+#: back here so _plot_four_modes' captions keep working unchanged.
 
 
 def _plot_four_radial(
@@ -776,10 +834,7 @@ def _plot_four_modes(
 
         b_ref = None
         if DELTA_B_OVER_B in remaining:
-            jrun = Jorek2Run(
-                run_dir=paths.run_dir, exe_dir=paths.run_dir,
-                namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
-            )
+            jrun = _jorek2_run(case, paths)
             try:
                 b_ref = ensure_edge_toroidal_field(jrun, paths)
             except (FileNotFoundError, Jorek2Error) as exc:
@@ -1247,6 +1302,18 @@ def _resolve_theta_range(
     return tuple(chosen) if chosen is not None else None
 
 
+def _resolve_log(cli_choice: str, comparison_value: bool | None, quantity_default: bool) -> bool:
+    """CLI "auto"/"on"/"off" > the comparison's own log_* > the quantity's
+    Quantity.log_scale -- the same precedence shape as _first_not_none,
+    spelled with an explicit "auto" because a store_true flag cannot say
+    "leave it alone" and a store_false one cannot say "force it on"."""
+    if cli_choice == "on":
+        return True
+    if cli_choice == "off":
+        return False
+    return comparison_value if comparison_value is not None else quantity_default
+
+
 #: Each theta_* field's declared default, read off Case itself rather than
 #: hardcoded a second time here -- used only to detect "this case explicitly
 #: set a non-default value that a comparison override is about to shadow".
@@ -1460,6 +1527,28 @@ def _wetted_fraction_xy(
     return xs, ys
 
 
+def _chosen_datasets(
+    comparison: Comparison, dataset_names: list[str] | None
+) -> dict[str, Dataset] | None:
+    """The datasets a --dataset selection asks for, or None if it names one
+    that does not exist (already reported).
+
+    Shared by _compare_scan_vs_x and _compare_scan_map so the selection and
+    its error message can't drift apart between the two renderers.
+    """
+    chosen = comparison.datasets
+    if dataset_names is not None:
+        unknown = [n for n in dataset_names if n not in comparison.datasets]
+        if unknown:
+            print(
+                f"  comparison {comparison.name!r} has no dataset(s) {unknown}; "
+                f"known: {list(comparison.datasets)}"
+            )
+            return None
+        chosen = {n: comparison.datasets[n] for n in dataset_names}
+    return chosen
+
+
 def _compare_scan_vs_x(
     comparison: Comparison,
     xy_for: Callable[[list[tuple[str, str]], dict[str, float]], tuple[list[float], list[float]]],
@@ -1491,16 +1580,9 @@ def _compare_scan_vs_x(
         kwargs["ylabel"] = ylabel
 
     if comparison.datasets:
-        chosen = comparison.datasets
-        if dataset_names is not None:
-            unknown = [n for n in dataset_names if n not in comparison.datasets]
-            if unknown:
-                print(
-                    f"  comparison {comparison.name!r} has no dataset(s) {unknown}; "
-                    f"known: {list(comparison.datasets)}"
-                )
-                return
-            chosen = {n: comparison.datasets[n] for n in dataset_names}
+        chosen = _chosen_datasets(comparison, dataset_names)
+        if chosen is None:
+            return
 
         series: list[tuple[str, list[float], list[float]]] = []
         colors: list[str | None] = []
@@ -1628,10 +1710,7 @@ def _delta_b_xy(
             continue
 
         if variable == DELTA_B_OVER_B:
-            jrun = Jorek2Run(
-                run_dir=paths.run_dir, exe_dir=paths.run_dir,
-                namelist=paths.run_dir / case.namelist, pad_width=paths.pad_width,
-            )
+            jrun = _jorek2_run(case, paths)
             try:
                 b_ref = ensure_edge_toroidal_field(jrun, paths)
             except (FileNotFoundError, Jorek2Error) as exc:
@@ -1718,6 +1797,282 @@ def _compare_delta_b(
     )
 
 
+def _b_ref_for(case: Case, paths: RunPaths) -> float | None:
+    """Btor at the plasma edge for this run, gathering the profile if
+    needed -- the ensure_b_ref callback ashen.quantities' delta_b_over_b_*
+    quantities call. Lifted from _delta_b_xy's own try/except reporting,
+    which stays there until that function moves onto the registry too
+    (see quantities.py's module docstring)."""
+    jrun = _jorek2_run(case, paths)
+    try:
+        return ensure_edge_toroidal_field(jrun, paths)
+    except (FileNotFoundError, Jorek2Error):
+        return None
+
+
+def _quantity_context(
+    case: Case,
+    paths: RunPaths,
+    quantity_name: str,
+    *,
+    comparison: Comparison,
+    cli_steps: list[int] | None,
+    n_workers: int,
+    edge_q_psi_n: float | None,
+    equilibrium_step: int | None,
+    theta_target_psi: float | None,
+    theta_bins: int | None,
+    theta_psi_range: tuple[float, float] | None,
+    theta_wetted_threshold: float | None,
+    delta_b_mode: tuple[int, int] | None,
+) -> QuantityContext:
+    """Resolve every setting one quantity might read, for one case, and bind
+    the cache top-up callbacks.
+
+    Precedence is the project's usual one throughout -- CLI flag >
+    comparison setting > member case setting > the quantity's or
+    diagnostic's own default (_first_not_none) -- so a scan map computes
+    each point exactly the way the comparison's own wetted_fraction and
+    four figures already do.
+
+    The step list comes from Quantity.steps_diag: --step if given, else the
+    case's [cases.NAME.<diag>] override for the diag that quantity reduces
+    over, else the case's plain steps. That is what keeps delta_b_over_b_max
+    on a scan map identical to the same number on the --diag four figure,
+    which reads steps_for("four").
+    """
+    q = quantity(quantity_name)
+    steps = cli_steps or (case.steps_for(q.steps_diag) if q.steps_diag else case.steps)
+
+    # Only warn about theta_* shadowing for a quantity that actually reads
+    # them -- otherwise a scan map of eta vs. q95 would print four
+    # irrelevant "comparison overrides this case's theta_*" notes per case.
+    if q.steps_diag == "theta_hist":
+        for field_name, cli_value in (
+            ("theta_target_psi", theta_target_psi),
+            ("theta_bins", theta_bins),
+            ("theta_psi_n_range", theta_psi_range),
+            ("theta_wetted_threshold", theta_wetted_threshold),
+        ):
+            _warn_if_case_value_shadowed(
+                field_name, cli_value=cli_value, comparison=comparison,
+                case=case, case_name=case.name,
+            )
+
+    target = _first_not_none(theta_target_psi, comparison.theta_target_psi, case.theta_target_psi)
+    n_bins = _first_not_none(theta_bins, comparison.theta_bins, case.theta_bins)
+    resolved_theta_range = _resolve_theta_range(
+        theta_psi_range, comparison.theta_psi_n_range, case.theta_psi_n_range
+    )
+    threshold = _first_not_none(
+        theta_wetted_threshold, comparison.theta_wetted_threshold, case.theta_wetted_threshold,
+    )
+
+    resolved_edge_q_psi_n = _first_not_none(edge_q_psi_n, comparison.edge_q_psi_n, 1.0)
+    resolved_equilibrium_step = _first_not_none(equilibrium_step, comparison.equilibrium_step)
+
+    return QuantityContext(
+        case=case, paths=paths, steps=steps,
+        equilibrium_step=resolved_equilibrium_step,
+        edge_q_psi_n=resolved_edge_q_psi_n,
+        theta_target_psi=target, theta_bins=n_bins,
+        theta_psi_n_range=resolved_theta_range,
+        theta_wetted_threshold=threshold,
+        delta_b_mode=delta_b_mode,
+        ensure_zero_d=partial(_ensure_zero_d, case, paths, n_workers=n_workers),
+        ensure_qprofile=partial(_ensure_qprofile, case, paths, n_workers=n_workers),
+        ensure_b_ref=partial(_b_ref_for, case, paths),
+    )
+
+
+def _scan_points(
+    labelled_cases: list[tuple[str, str]],
+    cases: dict[str, Case],
+    comparison: Comparison,
+    *,
+    x_quantity: str,
+    y_quantity: str,
+    c_quantity: str | None,
+    **context_kwargs,
+) -> list[ScanPoint]:
+    """One ScanPoint per case that yielded all of its quantities.
+
+    A case whose folder is missing, or any of whose quantities has no
+    value, is dropped with a note naming the quantity -- never plotted at a
+    partial position. A point at (eta, <missing>) is not a point, and
+    silently substituting 0 or nan would put a run somewhere it has never
+    been, which is worse than a nine-point scan.
+    """
+    points: list[ScanPoint] = []
+    for label, case_name in labelled_cases:
+        case = cases[case_name]
+        run_dir = Path.cwd() / case.name
+        if not run_dir.is_dir():
+            print(f"  {case_name}: no such folder {run_dir}, skipped")
+            continue
+        paths = RunPaths.detect(run_dir)
+
+        def _value(name: str) -> float | None:
+            ctx = _quantity_context(
+                case, paths, name, comparison=comparison, **context_kwargs,
+            )
+            return quantity(name).extract(ctx)
+
+        x = _value(x_quantity)
+        y = _value(y_quantity)
+        c = _value(c_quantity) if c_quantity else None
+
+        missing = [
+            name for name, value in (
+                (x_quantity, x), (y_quantity, y), (c_quantity, c),
+            )
+            if name and value is None
+        ]
+        if missing:
+            print(f"  {case_name}: dropped from the scan map (missing {missing})")
+            continue
+
+        summary = f"{x_quantity}={x:.3g}, {y_quantity}={y:.3g}"
+        if c_quantity:
+            summary += f", {c_quantity}={c:.3g}"
+        print(f"  {case_name}: {summary}")
+        points.append(ScanPoint(x=x, y=y, c=c, label=label))
+    return points
+
+
+def _compare_scan_map(
+    comparison: Comparison,
+    cases: dict[str, Case],
+    *,
+    x_quantity: str | None,
+    y_quantity: str | None,
+    c_quantity: str | None,
+    encoding: str | None,
+    log_x_choice: str,
+    log_y_choice: str,
+    log_c_choice: str,
+    edge_q_psi_n: float | None,
+    equilibrium_step: int | None,
+    annotate: bool,
+    theta_target_psi: float | None,
+    theta_bins: int | None,
+    theta_psi_range: tuple[float, float] | None,
+    theta_wetted_threshold: float | None,
+    delta_b_mode: tuple[int, int] | None,
+    dpi: int | None,
+    steps: list[int] | None,
+    n_workers: int,
+    dataset_names: list[str] | None,
+    explicit: bool,
+) -> None:
+    """One point per member run, x and y each a named per-run scalar
+    (ashen.quantities), a third encoded as point colour or ring size.
+
+    Deliberately NOT built on _compare_scan_vs_x: that helper's whole job is
+    resolving x_values, which a scan map does not have (x comes from the
+    run itself). What the two do share -- dataset selection -- is
+    _chosen_datasets, called by both.
+
+    Needs no x_values and no x_label: axis labels default to each chosen
+    quantity's own Quantity.label, so the figure is self-describing with
+    zero configuration beyond naming the quantities.
+    """
+    x_name = _first_not_none(x_quantity, comparison.x_quantity or None)
+    y_name = _first_not_none(y_quantity, comparison.y_quantity or None)
+    if not x_name or not y_name:
+        if explicit:
+            print(
+                f"  comparison {comparison.name!r} has no x_quantity/y_quantity "
+                "configured; scan_map needs both, skipped"
+            )
+        return
+    c_name = _first_not_none(c_quantity, comparison.c_quantity or None)
+
+    encode = _first_not_none(encoding, comparison.map_encoding)
+    resolved_annotate = annotate or comparison.map_annotate
+
+    x_q, y_q = quantity(x_name), quantity(y_name)
+    c_q = quantity(c_name) if c_name else None
+
+    log_x = _resolve_log(log_x_choice, comparison.log_x, x_q.log_scale)
+    log_y = _resolve_log(log_y_choice, comparison.log_y, y_q.log_scale)
+    log_c = _resolve_log(log_c_choice, comparison.log_c, c_q.log_scale if c_q else False)
+
+    xlabel = comparison.x_label or x_q.label
+    ylabel = comparison.y_label or y_q.label
+    clabel = comparison.c_label or (c_q.label if c_q else "")
+
+    out_dir = Path.cwd() / "figures"
+    out_stem = f"{comparison.name}_scan_map_{y_name}_vs_{x_name}"
+    if c_name:
+        out_stem += f"_{c_name}"
+    kwargs = _dpi_kwargs(dpi)
+
+    context_kwargs = dict(
+        cli_steps=steps, n_workers=n_workers, edge_q_psi_n=edge_q_psi_n,
+        equilibrium_step=equilibrium_step, theta_target_psi=theta_target_psi,
+        theta_bins=theta_bins, theta_psi_range=theta_psi_range,
+        theta_wetted_threshold=theta_wetted_threshold, delta_b_mode=delta_b_mode,
+    )
+
+    if comparison.datasets:
+        chosen = _chosen_datasets(comparison, dataset_names)
+        if chosen is None:
+            return
+
+        series: list[tuple[str, list[ScanPoint]]] = []
+        colors: list[str | None] = []
+        markers: list[str | None] = []
+        for ds_name, ds in chosen.items():
+            if encode == "size" and ds.marker is not None:
+                print(
+                    f"  dataset {ds_name!r}: marker is ignored under "
+                    "map_encoding='size' (colour tells datasets apart there)"
+                )
+            if encode == "color" and ds.color is not None:
+                print(
+                    f"  dataset {ds_name!r}: color is ignored under "
+                    "map_encoding='color' (marker tells datasets apart there)"
+                )
+            points = _scan_points(
+                ds.labelled_cases(), cases, comparison,
+                x_quantity=x_name, y_quantity=y_name, c_quantity=c_name,
+                **context_kwargs,
+            )
+            if not points:
+                continue
+            series.append((ds.series_label, points))
+            colors.append(ds.color)
+            markers.append(ds.marker)
+
+        if not series:
+            return
+        out = plot_scan_map_datasets(
+            series, out_dir / f"{out_stem}.png", encode=encode,
+            xlabel=xlabel, ylabel=ylabel, clabel=clabel,
+            log_x=log_x, log_y=log_y, log_c=log_c,
+            colors=colors, markers=markers, annotate=resolved_annotate,
+            **kwargs,
+        )
+        print(f"  {out}")
+        return
+
+    points = _scan_points(
+        comparison.labelled_cases(), cases, comparison,
+        x_quantity=x_name, y_quantity=y_name, c_quantity=c_name,
+        **context_kwargs,
+    )
+    if not points:
+        return
+    out = plot_scan_map(
+        points, out_dir / f"{out_stem}.png", encode=encode,
+        xlabel=xlabel, ylabel=ylabel, clabel=clabel,
+        log_x=log_x, log_y=log_y, log_c=log_c, annotate=resolved_annotate,
+        **kwargs,
+    )
+    print(f"  {out}")
+
+
 def _resolve_n_workers(args) -> int:
     """--n-workers if given, else site.toml's [diagnostics] n_workers if
     explicitly set, else 1 (serial).
@@ -1756,6 +2111,7 @@ def _run_case(
     mark_rational: bool = False,
     profile_cmap: str | None = None,
     animate: bool = False,
+    explicit_diags: bool = False,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -1805,7 +2161,11 @@ def _run_case(
             threshold=theta_wetted_threshold, dpi=dpi,
         )
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
-    if comparison_only:
+    if comparison_only and explicit_diags:
+        # Gated on explicit_diags: a bare `plot --case X` (no --diag) asks
+        # for every DIAG_CHOICES entry by default, which would otherwise
+        # print this on *every* per-case invocation once scan_map joined
+        # DIAG_CHOICES -- it didn't ask for scan_map, it got it by default.
         print(f"  diag(s) {comparison_only} are comparison-only (use --compare), skipped")
 
 
@@ -1826,6 +2186,18 @@ def _run_comparisons(
     delta_b_variable: str,
     delta_b_quantity: str,
     delta_b_mode: tuple[int, int] | None,
+    n_workers: int = 1,
+    x_quantity: str | None = None,
+    y_quantity: str | None = None,
+    c_quantity: str | None = None,
+    map_encoding: str | None = None,
+    map_log_x: str = "auto",
+    map_log_y: str = "auto",
+    map_log_c: str = "auto",
+    edge_q_psi_n: float | None = None,
+    equilibrium_step: int | None = None,
+    annotate_points: bool = False,
+    explicit_diags: bool = False,
 ) -> int:
     unknown = [name for name in names if name not in comparisons]
     if unknown:
@@ -1861,6 +2233,20 @@ def _run_comparisons(
                 variable=delta_b_variable, quantity=delta_b_quantity, mode=delta_b_mode,
                 dpi=dpi, steps=steps, dataset_names=dataset_names,
             )
+        if "scan_map" in comparable:
+            _compare_scan_map(
+                comparison, cases,
+                x_quantity=x_quantity, y_quantity=y_quantity, c_quantity=c_quantity,
+                encoding=map_encoding,
+                log_x_choice=map_log_x, log_y_choice=map_log_y, log_c_choice=map_log_c,
+                edge_q_psi_n=edge_q_psi_n, equilibrium_step=equilibrium_step,
+                annotate=annotate_points,
+                theta_target_psi=theta_target_psi, theta_bins=theta_bins,
+                theta_psi_range=theta_psi_range, theta_wetted_threshold=wetted_threshold,
+                delta_b_mode=delta_b_mode,
+                dpi=dpi, steps=steps, n_workers=n_workers,
+                dataset_names=dataset_names, explicit=explicit_diags,
+            )
     return 0
 
 
@@ -1874,6 +2260,20 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.show_config:
         return show_config(args.site)
+
+    # Unlike --list and --list-comparisons below, this needs no cases.toml
+    # at all -- deliberately ordered here, ahead of load_cases_or_exit, so
+    # it works from anywhere, which is the point of an introspection flag
+    # reached for while *writing* a cases.toml.
+    if args.list_quantities:
+        for name, scale, note in describe_quantities():
+            suffix = f" -- {note}" if note else ""
+            print(f"{name} ({scale}){suffix}")
+        print(
+            f"{ZEROD_PREFIX}<COLUMN> (linear) -- any zeroD column, at the "
+            "equilibrium step"
+        )
+        return 0
 
     cases = load_cases_or_exit(args.cases)
     if cases is None:
@@ -1900,6 +2300,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     diags = args.diags or list(DIAG_CHOICES)
+    # Whether the user named diags explicitly. A default-everything run must
+    # not print a "scan_map is comparison-only" or "no x_quantity configured"
+    # note for every case and every comparison in the file -- it did not ask
+    # for scan_map, it got it by default.
+    explicit_diags = args.diags is not None
     dpi = args.dpi
     theta_target_psi = args.theta_target_psi
     theta_bins = args.theta_bins
@@ -1916,6 +2321,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         delta_b_mode = (int(parts[0]), int(parts[1]))
 
+    # A CLI-given quantity name is a typo, not data -- fatal here rather than
+    # report-and-skip mid-figure like a missing per-run value is.
+    for flag, value in (
+        ("--x-quantity", args.x_quantity), ("--y-quantity", args.y_quantity),
+        ("--c-quantity", args.c_quantity),
+    ):
+        if value is not None and not is_known_quantity(value):
+            error(f"{flag}: unknown quantity {value!r}; --list-quantities to see them")
+            return 1
+
+    # Resolved before the --compare branch too: a scan map's on-demand
+    # zeroD/qprofile top-up needs it, and _run_comparisons didn't take it at
+    # all before scan_map existed.
+    n_workers = _resolve_n_workers(args)
+
     if args.comparisons:
         return _run_comparisons(
             args.comparisons, comparisons, cases,
@@ -1927,13 +2347,20 @@ def main(argv: list[str] | None = None) -> int:
             delta_b_variable=DELTA_B_OVER_B if args.delta_b_over_b else DELTA_B,
             delta_b_quantity=args.delta_b_quantity,
             delta_b_mode=delta_b_mode,
+            n_workers=n_workers,
+            x_quantity=args.x_quantity, y_quantity=args.y_quantity,
+            c_quantity=args.c_quantity, map_encoding=args.map_encoding,
+            map_log_x=args.map_log_x, map_log_y=args.map_log_y,
+            map_log_c=args.map_log_c,
+            edge_q_psi_n=args.edge_q_psi_n, equilibrium_step=args.equilibrium_step,
+            annotate_points=args.annotate_points,
+            explicit_diags=explicit_diags,
         )
 
     selected = resolve_selection(args.selected, cases)
     if selected is None:
         return 1
 
-    n_workers = _resolve_n_workers(args)
     psi_range = tuple(args.psi_range) if args.psi_range is not None else None
 
     # One bad case is reported and skipped, not fatal -- same reasoning as
@@ -1962,6 +2389,7 @@ def main(argv: list[str] | None = None) -> int:
                 mark_rational=args.mark_rational,
                 profile_cmap=args.profile_cmap,
                 animate=args.animate,
+                explicit_diags=explicit_diags,
             )
         except CASE_ERRORS as exc:
             error(f"{name}: {exc}")
