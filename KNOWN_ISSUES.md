@@ -394,3 +394,38 @@ under which `tor_mode`, needs confirming against a real run before
 recommending it -- `postproc_get_q`, the actual q/`dJ/dr` consumer of these
 components, was never ported to `ashen` in the first place (#8), so this
 path had no prior end-to-end exercise.
+
+---
+
+## 11. `edge_q`'s default `psi_n = 1.0` is a clamp, not an interpolation
+
+**Status:** open, 2026-09 (introduced alongside the `ashen.quantities`
+scan-map registry).
+
+**What happens:** `jorek2_postproc`'s q-profile is written over the case's
+`rad_range`, whose default outer bound is `0.999` (`Case.rad_range`,
+`cases.py`), not `1.0`. The `edge_q` quantity
+(`ashen.quantities._edge_q`) interpolates the cached q-profile at a
+configurable `psi_n`, defaulting to `1.0` -- the separatrix -- which on
+essentially every run lands just past the end of the actual grid.
+`np.interp` would clamp there silently; `_edge_q` clamps too, but reports
+that it did so (`EDGE_Q_CLAMP_TOL`, currently `0.05`), and returns no value
+at all for a target further off the grid than that tolerance.
+
+**Why this needs a physics call, not just a code fix:** a figure axis
+labelled `$q_\mathrm{edge}$` is, by default, actually q at 99.9% flux, not
+at the separatrix. For a diverted equilibrium q diverges at the true
+separatrix, so "the correct value at psi_n=1.0" does not exist as a finite
+number in the first place -- there is no grid extension that would fix
+this, only a decision about what the axis should actually claim to show.
+
+**What ashen does about it:** the clamp is deliberate (the alternative is
+no value at all rather than a number the cached data doesn't contain), and
+it is reported at plot time (`ctx.report`, printed alongside every other
+scan-map skip note) rather than silent.
+
+**Not fixed:** whether the default `edge_q_psi_n` should instead be
+`0.95`/`0.99` (which would make `edge_q` largely redundant with the zeroD
+`q95` quantity, computed by JOREK's own method), or whether the axis label
+should say `q(\psi_n=0.999)` explicitly instead of `q_\mathrm{edge}`, is
+George's call to make -- not something the code can resolve on its own.

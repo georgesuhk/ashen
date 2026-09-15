@@ -341,6 +341,14 @@ touching the gathering path.
 - `--compare NAME` (repeatable) draws a `[comparisons.*]` figure instead of
   per-case figures; `--list-comparisons` shows what's defined (see below).
 - `--dpi N` overrides the figure resolution.
+- `scan_map` (comparison-only, see below): `--x-quantity`/`--y-quantity`/
+  `--c-quantity NAME` pick the per-run scalars; `--map-encoding
+  {color,size}` picks how the third is shown; `--map-log-x`/`--map-log-y`/
+  `--map-log-c {auto,on,off}` override each axis/encoding's scale;
+  `--edge-q-psi-n PSI_N` and `--equilibrium-step STEP` configure the
+  `edge_q`/`q95`/`li` family; `--annotate-points` labels each point.
+  `--list-quantities` lists the per-run scalars these accept and exits --
+  works with no `cases.toml` present, for use while writing one.
 
 ### Different step ranges for different diags
 
@@ -524,10 +532,11 @@ Asking for a diag without a comparison renderer (e.g. `--compare eta_scan
 
 #### Wetted fraction vs. a scan parameter
 
-`--diag wetted_fraction` is **comparison-only** -- there is no single-run
-version of "plot Y against eta", so it needs `--compare` and errors out
-(reported, not crashed) under the plain per-case `--case` mode. For each
-member case it pools the same theta-crossing histogram `theta_hist` would,
+`--diag wetted_fraction` also has a single-run figure under plain `--case`
+mode -- that case's own wetted-fraction evolution across its own steps, one
+point per step rather than one pooled point per case. The `--compare`
+renderer described here is the cross-run one: for each member case it pools
+the same theta-crossing histogram `theta_hist` would,
 then reduces it to one scalar: the fraction of bins whose count exceeds a
 threshold, so "wetted" means "above what uniform spreading over theta would
 give". That one number per case is plotted against `x_values`, an explicit
@@ -605,9 +614,10 @@ whatever the next "scalar vs. scan parameter" plot turns out to need.
 A comparison names its members one of two ways, never both: flat `cases`
 (above), or nested `[comparisons.NAME.datasets.DATASET]` tables -- for more
 than one *related* scan sharing the same x-axis, e.g. a resistivity scan
-repeated under two different profile assumptions. Only `wetted_fraction`
-draws `datasets`; `theta_hist` needs flat `cases` and reports/skips a
-`datasets`-only comparison rather than silently drawing nothing.
+repeated under two different profile assumptions. `wetted_fraction`, `four`
+and `scan_map` (below) all draw `datasets`; `theta_hist` needs flat `cases`
+and reports/skips a `datasets`-only comparison rather than silently drawing
+nothing.
 
 ```toml
 [comparisons.wetted_vs_eta]
@@ -671,6 +681,92 @@ else; `x_values` is required, same as `wetted_fraction`. Written to
 `figures/<comparison-name>_<delta_b|delta_b_over_b>_<quantity>.png`. Also
 draws `datasets`-style comparisons (one legend-labelled series per dataset,
 `--dataset NAME` to restrict), the same split as `wetted_fraction` above.
+
+#### 2D scan map: one point per run
+
+`--compare NAME --diag scan_map` is the most general cross-run figure: one
+point per member run, **x and y each a named per-run scalar** (not
+`x_values` -- see below), and optionally a third scalar encoded as point
+colour or ring size. `ashen.quantities` is the registry of what a "named
+scalar" can be -- `plot --list-quantities` is the authority on the current
+list (do not duplicate it here; it will only drift):
+
+```
+$ python ~/ashen/bin/plot --list-quantities
+eta (log) -- resistivity, read from the run's own namelist
+edge_q (linear) -- qprofile interpolated at edge_q_psi_n (default 1.0)
+q95 (linear) -- zeroD column, at the equilibrium step
+li (linear) -- zeroD li3, at the equilibrium step
+wetted_fraction (linear) -- fraction of theta_hist bins above threshold, pooled over steps
+delta_b_max (log) -- domain-wide peak delta-B over every mode and step
+delta_b_over_b_max (log) -- domain-wide peak delta-B/B over every mode and step
+...
+zerod:<COLUMN> (linear) -- any zeroD column, at the equilibrium step
+```
+
+Each name is **one unambiguous scalar** -- the over-time reduction is part
+of the name (`delta_b_over_b_max` vs. `delta_b_over_b_at_deconfinement`),
+not a separate knob, so a figure axis labelled "delta_b/B" cannot silently
+mean "max" for one run and "final value" for another. `edge_q` and `q95`
+are two different definitions on purpose: `edge_q` interpolates the cached
+q-profile at a configurable `psi_n` (default 1.0, the separatrix), while
+`q95` is JOREK's own zeroD column computed its own way -- registering both
+separately keeps a figure honest about which one it plotted.
+
+```toml
+[comparisons.eta_q_map]
+note       = "max delta-B/B across the (eta, q95) plane"
+cases      = ["qa2.1_g2.3/eta1e-3_RE", "qa2.1_g2.3/eta1e-4_RE", "qa2.1_g2.3/eta1e-5_RE"]
+x_quantity = "eta"
+y_quantity = "q95"
+c_quantity = "delta_b_over_b_max"
+```
+
+```bash
+python ~/ashen/bin/plot --compare eta_q_map --diag scan_map
+python ~/ashen/bin/plot --compare eta_q_map --diag scan_map --map-encoding size
+```
+
+**No `x_values` needed.** `eta` is read from the run's own namelist, `q95`
+and `delta_b_over_b_max` from its own caches -- there is no hand-maintained
+parallel array to keep in sync with what the run actually solved, and
+nothing parses the run folder's name (the CASTOR3D hazard `CLAUDE.md` warns
+about). A comparison may still carry `x_values` for its `wetted_fraction`/
+`four` figures alongside `x_quantity`/`y_quantity` for its `scan_map` --
+the two coexist without conflict.
+
+**The two encodings** (`map_encoding`, default `"color"`):
+
+| encoding | third quantity shown as | datasets told apart by |
+|---|---|---|
+| `color` | point colour + colourbar | marker shape (`plotting.MARKER_CYCLE`) |
+| `size`  | ring radius + a size legend | colour (`DISCRETE_PALETTE`) |
+
+Whichever encoding is *not* active is free for datasets to use instead --
+under `size` encoding a dataset's `color` distinguishes it; under `color`
+encoding its `marker` does. Both fields can be set on the same
+`[comparisons.X.datasets.Y]` table regardless of which figure is drawn from
+it; `plot` notes when a figure ignores the one it doesn't need. `c_quantity`
+is optional -- omitted, the figure is a plain 2D scatter of runs with no
+third quantity at all.
+
+**`edge_q`'s clamping.** `jorek2_postproc` writes the q-profile over the
+case's `rad_range`, whose default outer bound is `0.999` -- so the default
+`edge_q_psi_n = 1.0` lands just off the end of the grid on essentially every
+run. Rather than silently extrapolating, `edge_q` **clamps** to the nearest
+grid point within a small tolerance and reports that it did so; a target
+further off the grid than that returns no value at all rather than a number
+the cached data doesn't actually contain. See `KNOWN_ISSUES.md` for the
+open physics question this raises about what `edge_q`'s default should mean.
+
+Axis/colourbar labels default to each chosen quantity's own label
+(`ashen.quantities.Quantity.label`); a comparison's `x_label`/`y_label`/
+`c_label` override that default the same way `x_label` already does for
+`wetted_fraction`. `equilibrium_step` (comparison-level, default: each
+case's own first plotted step) is what `edge_q`/`q95`/`li` are read at --
+deliberately not per-case, since a scan mixing "q95 at step 200 for this run
+and step 3000 for that one" isn't a scan. Written to
+`figures/<comparison-name>_scan_map_<y>_vs_<x>[_<c>].png`.
 
 ### Radial profiles
 

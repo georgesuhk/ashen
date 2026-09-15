@@ -286,16 +286,50 @@ note  = "internal kink investigation"
 # theta_psi_n_range       = [0.2, 0.9]
 # theta_wetted_threshold  = 0.002
 
+# x_quantity/y_quantity/c_quantity turn a comparison into a 2D scan map
+# instead (`--diag scan_map`): one point per member run, x and y each a
+# NAMED PER-RUN SCALAR read straight from that run's own namelist/caches --
+# `bin/plot --list-quantities` is the authority on the available names, not
+# duplicated here since a second list here would only drift from it. Unlike
+# x_values above, a scan map needs no numeric array to maintain by hand at
+# all -- x_values and x_quantity may coexist on one comparison (the same
+# table can drive both a wetted_fraction line and a scan_map figure).
+# [comparisons.eta_q_map]
+# note         = "max delta-B/B across the (eta, q95) plane"
+# cases        = [
+#   "qa2.1_g2.3/eta1e-3_RE",
+#   "qa2.1_g2.3/eta1e-4_RE",
+#   "qa2.1_g2.3/eta1e-5_RE",
+# ]
+# x_quantity   = "eta"
+# y_quantity   = "q95"
+# c_quantity   = "delta_b_over_b_max"
+# c_label      = "max $\\delta B / B$"
+# map_encoding = "size"          # "color" (default) or "size"
+# map_annotate = false
+# log_x        = true            # None (unset) -> the quantity's own default
+# log_y        = false
+# log_c        = true
+# edge_q_psi_n = 1.0              # only used if x/y/c_quantity = "edge_q"
+# equilibrium_step = 100          # None (unset) -> each case's own first step
+
 # A comparison names its members one of two ways, never both: flat `cases`
 # (above) or nested `datasets` (below) -- several *related* scans overlaid on
 # one axes, e.g. the same resistivity scan under two profile assumptions.
-# Only `wetted_fraction` draws `datasets`; `theta_hist` needs flat `cases`.
+# `wetted_fraction`, `four` and `scan_map` all draw `datasets`; `theta_hist`
+# needs flat `cases`.
 #
 # Each [comparisons.NAME.datasets.DATASET] table is its own group of cases.
 # `x_values`/`x_tick_labels` fall back to the comparison's own (set once,
 # below) -- give a dataset its own only if that one scan's points genuinely
 # differ. `color` is optional; omitted, each dataset gets one from
-# ashen.plotting.colors.DISCRETE_PALETTE by position. `dataset_label` is the
+# ashen.plotting.colors.DISCRETE_PALETTE by position -- used for the legend
+# on wetted_fraction/four, and for telling datasets apart on a scan_map
+# under map_encoding = "size". `marker` is scan_map's counterpart for
+# map_encoding = "color" (where colour is already spent on the colourbar);
+# omitted, it's assigned from ashen.plotting.MARKER_CYCLE by position. Both
+# may be set on the same dataset -- which one a given figure actually uses
+# depends only on that figure's own map_encoding. `dataset_label` is the
 # series' legend text, defaulting to the dataset's own table name (e.g.
 # "rho19"). `--dataset NAME` (repeatable, on `bin/plot`) restricts a draw to
 # only the named dataset(s).
