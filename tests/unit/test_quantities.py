@@ -497,3 +497,121 @@ def test_delta_b_no_cache_reports_and_returns_none(tmp_path):
     ctx = _ctx(case, paths, report=reports.append)
     assert quantity("delta_b_max").extract(ctx) is None
     assert reports
+
+
+# --- energy_32_over_21: (3,2)/(2,1) mode energy fraction ---------------------
+
+
+def test_energy_32_over_21_max(tmp_path):
+    paths = _paths(tmp_path)
+    _write_log(paths, r_axis=1.363245)
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[
+            _four_record("Psi", n=2, m=3, real_peak=1.0),
+            _four_record("Psi", n=1, m=2, real_peak=2.0),
+        ],
+    )
+    case = _case(steps=[100])
+    value = quantity("energy_32_over_21_max").extract(_ctx(case, paths))
+    r0 = 1.363245
+    db32 = 1.0 * abs(3) / r0**2
+    db21 = 2.0 * abs(2) / r0**2
+    assert value == pytest.approx((db32 / db21) ** 2)
+
+
+def test_energy_32_over_21_max_picks_the_largest_step(tmp_path):
+    paths = _paths(tmp_path)
+    _write_log(paths, r_axis=1.0)
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[
+            _four_record("Psi", n=2, m=3, real_peak=1.0),
+            _four_record("Psi", n=1, m=2, real_peak=10.0),  # small ratio here
+        ],
+    )
+    fc.write_cache(
+        paths.four_cache(200), step=200, pad_width=6,
+        records=[
+            _four_record("Psi", n=2, m=3, real_peak=5.0),
+            _four_record("Psi", n=1, m=2, real_peak=1.0),  # large ratio here
+        ],
+    )
+    case = _case(steps=[100, 200])
+    value = quantity("energy_32_over_21_max").extract(_ctx(case, paths))
+    db32 = 5.0 * abs(3)
+    db21 = 1.0 * abs(2)
+    assert value == pytest.approx((db32 / db21) ** 2)
+
+
+def test_energy_32_over_21_at_deconfinement_reads_the_configured_step(tmp_path):
+    paths = _paths(tmp_path)
+    _write_log(paths, r_axis=1.0)
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[
+            _four_record("Psi", n=2, m=3, real_peak=1.0),
+            _four_record("Psi", n=1, m=2, real_peak=1.0),
+        ],
+    )
+    fc.write_cache(
+        paths.four_cache(200), step=200, pad_width=6,
+        records=[
+            _four_record("Psi", n=2, m=3, real_peak=4.0),
+            _four_record("Psi", n=1, m=2, real_peak=2.0),
+        ],
+    )
+    case = _case(steps=[100, 200], four_deconfinement_step=200)
+    value = quantity("energy_32_over_21_at_deconfinement").extract(_ctx(case, paths))
+    db32 = 4.0 * abs(3)
+    db21 = 2.0 * abs(2)
+    assert value == pytest.approx((db32 / db21) ** 2)
+
+
+def test_energy_32_over_21_at_deconfinement_needs_the_case_field(tmp_path):
+    paths = _paths(tmp_path)
+    _write_log(paths)
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[
+            _four_record("Psi", n=2, m=3, real_peak=1.0),
+            _four_record("Psi", n=1, m=2, real_peak=1.0),
+        ],
+    )
+    case = _case(steps=[100])  # no four_deconfinement_step set
+    reports = []
+    ctx = _ctx(case, paths, report=reports.append)
+    assert quantity("energy_32_over_21_at_deconfinement").extract(ctx) is None
+    assert reports
+
+
+def test_energy_32_over_21_missing_one_mode_reports_and_returns_none(tmp_path):
+    paths = _paths(tmp_path)
+    _write_log(paths)
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_four_record("Psi", n=2, m=3, real_peak=1.0)],  # (2,1) missing
+    )
+    case = _case(steps=[100])
+    reports = []
+    ctx = _ctx(case, paths, report=reports.append)
+    assert quantity("energy_32_over_21_max").extract(ctx) is None
+    assert reports
+
+
+def test_energy_32_over_21_needs_no_b_ref(tmp_path):
+    """Unlike delta_b_over_b_*, this ratio needs no ensure_b_ref callback --
+    r_axis cancels in the division, so no reference Btor profile is needed."""
+    paths = _paths(tmp_path)
+    _write_log(paths)
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[
+            _four_record("Psi", n=2, m=3, real_peak=1.0),
+            _four_record("Psi", n=1, m=2, real_peak=2.0),
+        ],
+    )
+    case = _case(steps=[100])
+    ctx = _ctx(case, paths)  # ensure_b_ref left unset (None)
+    value = quantity("energy_32_over_21_max").extract(ctx)
+    assert value is not None
