@@ -824,12 +824,16 @@ needs **no zeroD cache**: there is no step-to-time conversion to make, and a
 `radial`-only case neither requires nor warns about one. Steps colour the
 lines instead, on the shared colourbar.
 
-When `modes` is set, each mode's `q = m/n` surface is marked as a dashed
-vertical line, taken from the **last** plotted step's q-profile cache -- q
-evolves through a run, and the last step is the state the eigenfunctions have
-grown into. One shared set of markers is drawn on every panel (each labelled
-and coloured by mode), so a panel shows its neighbours' surfaces too. Missing
-q-profile cache prints a note and draws the curves without markers.
+When `modes` is set, each mode's `q = m/n` surface is resolved **per step**,
+since q evolves through a run and every step's curve is on the figure. The
+q-profile cache is gathered on demand for any step missing one (in parallel
+under `--n-workers`). Each surface is shaded over the range it swept across
+the plotted steps, with a dashed vertical line where it sat at the last step
+-- the same treatment as `plot --diag profiles --mark_rational`. One shared
+set of markers is drawn on every panel (each labelled and coloured by mode),
+so a panel shows its neighbours' surfaces too. A step whose q-profile can't
+be gathered is reported and left out of the band; if none can, the curves
+are drawn without markers.
 
 The y-axis is shared across panels and logarithmic by default
 (`--four-linear` switches it), which is usually what you want for modes

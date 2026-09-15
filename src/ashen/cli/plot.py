@@ -641,7 +641,7 @@ def _value_at_step(series: dict, variable: str, steps: list[int], step: int) -> 
 def _plot_four_radial(
     case: Case, paths: RunPaths, steps: list[int], *,
     fetch_vars: list[str] | None, mode_filter: list[tuple[int, int]] | None,
-    log: bool, dpi: int | None,
+    log: bool, dpi: int | None, n_workers: int = 1,
 ) -> None:
     """`four_quantities = ["radial"]`: each mode's |amp|(psi_n) eigenfunction,
     one figure per variable, one panel per (n, m), one line per step.
@@ -659,18 +659,26 @@ def _plot_four_radial(
               "(run analyse --diag four)")
         return
 
-    # q=m/n crossings at the last plotted step -- the run's q-profile evolves,
-    # so one step has to be picked, and the last is the state the eigenfunctions
-    # have grown into. plot_profile_comparison draws one shared set on every
-    # panel (it takes a single rational_lines list), so a panel shows its
-    # neighbours' surfaces too; the per-mode colour and legend label say which
-    # is which.
+    # Same per-step treatment as _plot_profiles' mark_rational: every step's
+    # curve is overlaid, so each surface is shaded over its excursion with a
+    # line at the last step that has a q-profile. One shared set goes on every
+    # panel, so a panel shows its neighbours' surfaces too; the per-mode colour
+    # and legend label say which is which.
     rational_lines = None
+    rational_bands = None
     if case.modes:
-        rational_lines = _rational_lines_for_step(case, paths, steps[-1])
-        if rational_lines is None:
-            print(f"  radial: no qprofile cache for step {steps[-1]}, drawing "
+        _ensure_qprofile(case, paths, steps, n_workers=n_workers)
+        lines_by_step = _rational_lines_by_step(case, paths, steps)
+        if not lines_by_step:
+            print("  radial: no qprofile cache for any requested step, drawing "
                   "without rational-surface markers")
+        else:
+            missing = [step for step in steps if step not in lines_by_step]
+            if missing:
+                print(f"  radial: no qprofile cache for step(s) {missing}, "
+                      "marking the rest")
+            rational_lines = lines_by_step[max(lines_by_step)]
+            rational_bands = _rational_bands(lines_by_step)
 
     kwargs = _dpi_kwargs(dpi)
     for variable in sorted({var for var, _, _ in series}):
@@ -680,6 +688,7 @@ def _plot_four_radial(
         plot_mode_radial(
             per_var, variable, out,
             rational_lines=rational_lines,
+            rational_bands=rational_bands,
             log=log,
             ylim=(ylim[0], ylim[1]) if ylim else None,
             cmap=case.profile_cmap,
@@ -727,6 +736,7 @@ def _plot_four_modes(
         _plot_four_radial(
             case, paths, steps,
             fetch_vars=fetch_vars, mode_filter=mode_filter, log=log, dpi=dpi,
+            n_workers=n_workers,
         )
     if not (want_max or want_rational):
         return

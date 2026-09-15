@@ -14,11 +14,14 @@ so a categorical palette is the right tool here, not a colormap.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
 
 from ashen.diagnostics.four_modes import GrowthFit, ModeKey
 from ashen.plotting import DEFAULT_DPI, style
 from ashen.plotting.colors import DISCRETE_PALETTE
+
+if TYPE_CHECKING:
+    from ashen.plotting.profiles import RationalBand
 
 __all__ = [
     "draw_mode_amplitudes", "plot_mode_amplitudes",
@@ -193,6 +196,7 @@ def plot_mode_radial(
     xlabel: str = r"$\psi_N$",
     ylabel: str | None = None,
     rational_lines: list[tuple[float, str, str]] | None = None,
+    rational_bands: Sequence[RationalBand] | None = None,
     log: bool = True,
     ylim: tuple[float, float] | None = None,
     cmap: str = "turbo",
@@ -228,6 +232,7 @@ def plot_mode_radial(
         color_label=color_label,
         xlabel=xlabel,
         rational_lines=rational_lines,
+        rational_bands=rational_bands,
         cmap=cmap,
         ylim=ylim,
         logy=log,

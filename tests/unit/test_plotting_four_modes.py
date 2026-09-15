@@ -353,3 +353,25 @@ def test_radial_log_false_reaches_the_wrapper_as_linear(tmp_path, radial_series,
     plot_mode_radial(radial_series, "Psi", tmp_path / "eig.png", log=False)
 
     assert captured["logy"] is False
+
+
+def test_radial_forwards_rational_bands(tmp_path, radial_series, monkeypatch):
+    from ashen.plotting.profiles import RationalBand
+    import ashen.plotting.profiles as profiles_mod
+
+    captured = {}
+    real = profiles_mod.plot_profile_comparison
+
+    def spy(series_by_panel, var, out_path, **kwargs):
+        captured.update(kwargs)
+        return real(series_by_panel, var, out_path, **kwargs)
+
+    monkeypatch.setattr(profiles_mod, "plot_profile_comparison", spy)
+    bands = [RationalBand(low=0.3, high=0.5, final=0.5, color="C0", label="n=1, m=2")]
+    out = plot_mode_radial(
+        radial_series, "Psi", tmp_path / "eig.png",
+        rational_lines=[(0.5, "C0", "n=1, m=2")], rational_bands=bands,
+    )
+
+    assert out.is_file()
+    assert captured["rational_bands"] == bands

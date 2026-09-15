@@ -841,9 +841,11 @@ def test_radial_passes_one_curve_per_step_to_the_plotter(campaign, monkeypatch):
     assert sorted(series[("Psi", 1, 2)]) == [100, 200]
 
 
-def test_radial_marks_rational_surfaces_from_the_last_step(campaign, monkeypatch):
-    """q evolves through a run, so the markers must come from the last plotted
-    step -- the state the eigenfunctions have grown into -- not the first."""
+def test_radial_bands_each_steps_rational_surface_with_line_at_the_last(
+    campaign, monkeypatch
+):
+    """q evolves through a run, so every step's surface counts: the band spans
+    the excursion, the line sits where the surface ended up."""
     _write_qprofile_cache(campaign, 100, psi_n=[0.0, 0.5, 1.0], q=[1.0, 3.0, 5.0])
     _write_qprofile_cache(campaign, 200, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
     _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
@@ -853,9 +855,32 @@ def test_radial_marks_rational_surfaces_from_the_last_step(campaign, monkeypatch
 
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
 
-    lines = captured[0][1]["rational_lines"]
+    kwargs = captured[0][1]
     # q=m/n=2 sits at psi_n=0.25 in step 100's profile but at 0.5 in step 200's.
-    assert [psi_n for psi_n, _color, _label in lines] == [0.5]
+    assert [psi_n for psi_n, _color, _label in kwargs["rational_lines"]] == [0.5]
+    (band,) = kwargs["rational_bands"]
+    assert (band.low, band.high) == (0.25, 0.5)
+    assert band.final == 0.5
+
+
+def test_radial_marks_the_rest_when_one_step_lacks_a_qprofile(
+    campaign, monkeypatch, capsys
+):
+    """A missing step drops out of the band rather than being filled in, and
+    the line falls back to the latest step that does have a q-profile."""
+    _write_qprofile_cache(campaign, 100, psi_n=[0.0, 0.5, 1.0], q=[1.0, 3.0, 5.0])
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+    _radial_case(campaign, extra="modes = [[2, 1]]\n")
+    captured = _spy_on_plot_mode_radial(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    assert "no qprofile cache for step(s) [200]" in capsys.readouterr().out
+    kwargs = captured[0][1]
+    assert [psi_n for psi_n, _color, _label in kwargs["rational_lines"]] == [0.25]
+    (band,) = kwargs["rational_bands"]
+    assert band.is_static
 
 
 def test_radial_without_qprofile_cache_still_draws(campaign, capsys):
