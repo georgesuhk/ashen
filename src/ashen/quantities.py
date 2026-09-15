@@ -486,6 +486,82 @@ def _delta_b_value(ctx: QuantityContext, *, variable: str, reduction: str) -> fl
     return value
 
 
+#: The two rational modes this project compares most often -- cases.toml's
+#: own `modes = [[3, 2], [2, 1], [1, 1]]` convention: [m, n] pairs. Fixed
+#: here rather than a --delta-b-mode-style parameter, because a named
+#: quantity is one unambiguous scalar and "which two modes" is exactly the
+#: kind of silent-drift knob this registry exists to make impossible. Add a
+#: second pair of quantities (following this one's shape) if another mode
+#: ratio is ever needed -- there is no generic "ratio of any two modes"
+#: quantity by design.
+_MODE_32 = (3, 2)  # (m, n)
+_MODE_21 = (2, 1)  # (m, n)
+
+
+def _mode_energy_fraction(ctx: QuantityContext, *, reduction: str) -> float | None:
+    """(3,2) mode's magnetic energy as a fraction of (2,1)'s.
+
+    Energy is taken proportional to delta_b^2 (Tesla^2, ashen.diagnostics.
+    four_modes.delta_b_series) rather than the raw |Psi_mn| amplitude:
+    delta_b already carries each mode's own m/r_axis**2 scale factor, so
+    "3/2's energy relative to 2/1's" means what it says even though the two
+    modes don't share a scale factor. r_axis itself cancels in the ratio,
+    so this needs no b_ref (unlike delta_b_over_b) and never skips for
+    lacking one.
+
+    reduction is "max" (the largest instantaneous ratio over the requested
+    steps -- when is (3,2) most competitive with (2,1)) or
+    "at_deconfinement" (the ratio at the case's own four_deconfinement_step)
+    -- same reduction-is-part-of-the-name convention as the delta_b family.
+    """
+    case, paths = ctx.case, ctx.paths
+    steps = ctx.steps
+    if not steps:
+        ctx.report(f"  {case.name}: mode energy fraction needs a step list, none available")
+        return None
+
+    m32, n32 = _MODE_32
+    m21, n21 = _MODE_21
+    series = max_amplitude_series(
+        paths, steps, variables=["Psi"], modes=[(n32, m32), (n21, m21)],
+    )
+    key32, key21 = ("Psi", n32, m32), ("Psi", n21, m21)
+    if key32 not in series or key21 not in series:
+        ctx.report(
+            f"  {case.name}: no jorek2_four cache for mode (m={m32},n={n32}) or "
+            f"(m={m21},n={n21}), skipped (run analyse --diag four)"
+        )
+        return None
+
+    try:
+        r0 = r_axis(paths.log)
+    except LogfileError as exc:
+        ctx.report(f"  {case.name}: skipping ({exc})")
+        return None
+
+    db32 = delta_b_series({key32: series[key32]}, r_axis=r0)[(DELTA_B, n32, m32)]
+    db21 = delta_b_series({key21: series[key21]}, r_axis=r0)[(DELTA_B, n21, m21)]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = (db32**2) / (db21**2)
+
+    if reduction == "at_deconfinement":
+        if case.four_deconfinement_step is None:
+            ctx.report(f"  {case.name}: no four_deconfinement_step set, skipped")
+            return None
+        value = _value_at_step(
+            {("ratio", n32, m32): ratio}, "ratio", steps, case.four_deconfinement_step
+        )
+    else:  # "max"
+        finite = ratio[np.isfinite(ratio)]
+        value = float(np.max(finite)) if finite.size else None
+
+    if value is None:
+        ctx.report(
+            f"  {case.name}: no finite (3,2)/(2,1) energy fraction ({reduction}), skipped"
+        )
+    return value
+
+
 # --- the registry --------------------------------------------------------
 
 QUANTITIES: dict[str, Quantity] = {}
@@ -561,6 +637,18 @@ _register(
         partial(_delta_b_value, variable=DELTA_B_OVER_B, reduction="mode_max"),
         log_scale=True, steps_diag="four",
         note="one (m, n) mode's own peak delta-B/B (needs delta_b_mode)",
+    ),
+    Quantity(
+        "energy_32_over_21_max", r"$W_{(3,2)} / W_{(2,1)}$",
+        partial(_mode_energy_fraction, reduction="max"),
+        log_scale=True, steps_diag="four",
+        note="peak (delta_B_(3,2)/delta_B_(2,1))^2 over every requested step",
+    ),
+    Quantity(
+        "energy_32_over_21_at_deconfinement", r"$W_{(3,2)} / W_{(2,1)}$ at deconfinement",
+        partial(_mode_energy_fraction, reduction="at_deconfinement"),
+        log_scale=True, steps_diag="four",
+        note="(delta_B_(3,2)/delta_B_(2,1))^2 at the case's own four_deconfinement_step",
     ),
 )
 
