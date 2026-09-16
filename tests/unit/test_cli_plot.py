@@ -715,6 +715,27 @@ def test_four_quantities_rational_surface_only_has_no_overlay_and_custom_ylabel(
     assert (campaign / "four_dir" / "Psi_modes_step.png").is_file()
 
 
+def test_four_mode_colors_reach_the_amplitude_plot(campaign, monkeypatch):
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'modes = [[2, 1], [3, 2]]\n'
+        'mode_colors = { "2,1" = "tab:red" }\n',
+        encoding="utf-8",
+    )
+    captured = _spy_on_plot_mode_amplitudes(monkeypatch)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+    assert captured
+    for kwargs in captured:
+        assert kwargs["colors"][(1, 2)] == "tab:red"
+        assert (2, 3) in kwargs["colors"]  # un-overridden mode still gets a colour
+
+
 def test_four_quantities_both_reproduces_max_solid_and_rational_dashed(campaign, monkeypatch):
     _write_qprofile_cache(campaign, 100, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])
     _write_qprofile_cache(campaign, 200, psi_n=[0.0, 0.5, 1.0], q=[1.0, 2.0, 3.0])

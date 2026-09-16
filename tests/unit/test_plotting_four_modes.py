@@ -50,6 +50,20 @@ def test_modes_get_distinct_colors(series):
     plt.close(fig)
 
 
+def test_colors_override_named_modes_only(series):
+    rational = {("Psi", 1, 0): np.array([0.1, 0.1, 0.1])}
+    fig, ax = plt.subplots()
+    draw_mode_amplitudes(
+        ax, [100, 200, 300], series, variable="Psi", rational_series=rational,
+        colors={(1, 0): "#5b198b"},
+    )
+    by_label = {line.get_label(): line.get_color() for line in ax.lines}
+    assert by_label["n=1, m=0"] == "#5b198b"
+    assert by_label["n=1, m=0 @ q=0 surface"] == "#5b198b"
+    assert by_label["n=0, m=1"] != "#5b198b"  # unnamed mode keeps its palette slot
+    plt.close(fig)
+
+
 def test_legend_labels_encode_n_and_m(series):
     fig, ax = plt.subplots()
     draw_mode_amplitudes(ax, [100, 200, 300], series, variable="Psi")

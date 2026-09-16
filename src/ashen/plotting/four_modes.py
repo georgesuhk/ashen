@@ -46,6 +46,7 @@ def draw_mode_amplitudes(
     grid: bool = True,
     ylim: tuple[float, float] | None = None,
     vline: tuple[float, str] | None = None,
+    colors: Mapping[tuple[int, int], str] | None = None,
 ) -> None:
     """Draw every ``(n, m)`` mode of ``variable`` present in ``series`` onto
     ``ax``, each a differently-coloured line.
@@ -94,12 +95,20 @@ def draw_mode_amplitudes(
     manually-determined deconfinement time. ``x`` must already be in the
     same units as ``x`` above (seconds vs. microseconds vs. step index is the
     caller's problem, not this function's).
+
+    ``colors``, if given, is ``{(n, m): colour}`` -- a mode it names is drawn
+    in that colour (solid line and its rational-surface overlay alike), so
+    the CLI can match the colours ``poincare_highlight``/``mark_rational``
+    use for the same mode. Modes it doesn't name keep their sorted-index
+    ``DISCRETE_PALETTE`` colour.
     """
     modes = sorted((n, m) for (var, n, m) in series if var == variable)
 
     for i, (n, m) in enumerate(modes):
         y = series[(variable, n, m)]
         color = DISCRETE_PALETTE[i % len(DISCRETE_PALETTE)]
+        if colors is not None and (n, m) in colors:
+            color = colors[(n, m)]
         key = (variable, n, m)
         label = f"n={n}, m={m}{label_suffix}"
         if growth_fits is not None and key in growth_fits:
@@ -156,6 +165,7 @@ def plot_mode_amplitudes(
     grid: bool = True,
     ylim: tuple[float, float] | None = None,
     vline: tuple[float, str] | None = None,
+    colors: Mapping[tuple[int, int], str] | None = None,
     figsize: tuple[float, float] = (7, 5),
     dpi: int = DEFAULT_DPI,
 ) -> Path:
@@ -171,7 +181,7 @@ def plot_mode_amplitudes(
             ax, x, series, variable=variable, rational_series=rational_series,
             growth_fits=growth_fits, log=log, xlabel=xlabel, ylabel=ylabel,
             label_suffix=label_suffix, caption=caption, title=title, grid=grid,
-            ylim=ylim, vline=vline,
+            ylim=ylim, vline=vline, colors=colors,
         )
         fig.tight_layout()
         fig.savefig(out_path, dpi=dpi)

@@ -142,11 +142,8 @@ def _mode_colors(
     modes: list[list[int]], overrides: dict[str, str] | None = None
 ) -> dict[tuple[int, int], str]:
     """{(n, m): color} for case.modes, sorted by (n, m) so the same mode
-    gets the same colour on every figure that draws it -- poincare_highlight
-    and mark_rational both need a colour per mode; `four` doesn't (its own
-    draw_mode_amplitudes assigns colour from whatever's actually in its
-    cache), but this sorted-index-into-DISCRETE_PALETTE convention matches
-    it, same "same mode, same colour" intent.
+    gets the same colour on every figure that draws it -- poincare_highlight,
+    mark_rational and `four`'s mode-amplitude lines all colour from this.
 
     overrides (case.mode_colors, "m,n" -> colour) replaces the
     auto-assigned colour for the modes it names; every other mode keeps its
@@ -943,6 +940,12 @@ def _plot_four_modes(
         else:
             deconfinement_time_us = step_time[0] * 1e6
 
+    # Same per-mode colours as poincare_highlight/mark_rational, including
+    # any mode_colors overrides. Empty case.modes means an unfiltered cache
+    # (and mode_colors is necessarily empty), so leave the palette to
+    # draw_mode_amplitudes.
+    mode_colors = _mode_colors(case.modes, case.mode_colors) if case.modes else None
+
     kwargs = _dpi_kwargs(dpi)
     for suffix, x, xlabel in variants:
         vline = None
@@ -989,7 +992,8 @@ def _plot_four_modes(
                 x, primary_series, variable, out, rational_series=overlay_series or None,
                 growth_fits=growth_fits or None, log=log, xlabel=xlabel,
                 ylabel=ylabel, label_suffix=label_suffix, caption=caption,
-                ylim=(ylim[0], ylim[1]) if ylim else None, vline=vline, **kwargs,
+                ylim=(ylim[0], ylim[1]) if ylim else None, vline=vline,
+                colors=mode_colors, **kwargs,
             )
             print(f"  {out}")
 
