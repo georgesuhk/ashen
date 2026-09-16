@@ -96,9 +96,8 @@ class Case:
     #: Optional per-mode colour override, keyed "m,n" matching a `modes`
     #: entry, e.g. {"3,2" = "red"}. Only overrides the modes listed; every
     #: other mode keeps its auto-assigned DISCRETE_PALETTE colour. Affects
-    #: poincare_highlight and mark_rational only -- `four`'s own
-    #: mode-amplitude lines colour from whatever's actually in the jorek2_
-    #: four cache, not from this.
+    #: poincare_highlight, mark_rational and `four`'s mode-amplitude lines
+    #: (not the radial eigenfunctions, which are coloured by step).
     mode_colors: dict[str, str] = field(default_factory=dict)
     #: Fit+mark each mode's growth rate (gamma [1/s] = d ln|amp|/dt).
     #: Plot-time, needs zeroD cache for real time. Default off.

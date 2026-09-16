@@ -421,7 +421,8 @@ resonant surface, dimming everything else to grey. Colour is auto-assigned
 per mode (sorted `(n, m)` order into `plotting.colors.DISCRETE_PALETTE`) --
 the same mode always gets the same colour on every figure that draws it.
 Override individual modes with `mode_colors`, a table keyed `"m,n"` matching
-a `modes` entry; any mode left out keeps its auto-assigned colour:
+a `modes` entry; any mode left out keeps its auto-assigned colour. The
+same colours are used for `plot --diag four`'s mode-amplitude lines:
 
 ```toml
 modes       = [[3, 2], [2, 1]]

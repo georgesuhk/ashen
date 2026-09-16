@@ -167,7 +167,8 @@ n_points        = 100
 # moving, not a bug. Uses `modes` (above, same [m, n] convention as four) --
 # colour is auto-assigned per mode (sorted (n, m) into DISCRETE_PALETTE),
 # unless overridden per mode via mode_colors -- keyed "m,n" matching a
-# modes entry; any mode left out keeps its auto-assigned colour.
+# modes entry; any mode left out keeps its auto-assigned colour. The same
+# colours apply to `plot --diag four`'s mode-amplitude lines.
 # poincare_highlight = true
 # modes = [[3, 2], [2, 1]]
 # mode_colors = { "3,2" = "red", "2,1" = "blue" }
