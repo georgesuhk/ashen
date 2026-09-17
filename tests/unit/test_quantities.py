@@ -615,3 +615,114 @@ def test_energy_32_over_21_needs_no_b_ref(tmp_path):
     ctx = _ctx(case, paths)  # ensure_b_ref left unset (None)
     value = quantity("energy_32_over_21_max").extract(ctx)
     assert value is not None
+
+
+# --- lc_finite_psi_n: innermost surface with a finite connection length -------
+
+
+def _write_lc_cache(paths, step, surfaces, *, real_psi_edge=1.0):
+    """One Poincare cache step. `surfaces` maps user-facing psi_n_in ->
+    "open" (a line that crosses psi_n = 1, so finite L_c) or "confined"
+    (stays inside for every turn, so L_c = inf). Keys are traced at
+    psi_n * real_psi_edge, as cli/analyse does."""
+    from ashen.diagnostics import poincare_cache as pc
+
+    with pc.open_cache(paths.poincare_cache(step), step=step, pad_width=6) as h:
+        for psi_n, kind in surfaces.items():
+            if kind == "open":
+                psi_track = np.array([0.3, 1.5, 1.6]) * real_psi_edge
+            else:
+                psi_track = np.array([0.3, 0.4, 0.5]) * real_psi_edge
+            key = pc.LineKey(psi_n=psi_n * real_psi_edge, R=1.7, Z=0.0, phi=0.0)
+            pc.append_line(
+                h, key,
+                {
+                    "R": np.full(3, 1.7, dtype=np.float32),
+                    "Z": np.zeros(3, dtype=np.float32),
+                    "rho": np.sqrt(psi_track).astype(np.float32),
+                    "theta": np.zeros(3, dtype=np.float32),
+                },
+                n_turns=3, terminated=False,
+            )
+
+
+def _lc_paths(tmp_path, real_psi_edge=1.0):
+    paths = _paths(tmp_path)
+    write_float(paths.real_psi_edge, real_psi_edge)
+    _write_log(paths)
+    return paths
+
+
+def test_lc_finite_psi_n_min_is_innermost_open_surface(tmp_path):
+    paths = _lc_paths(tmp_path)
+    _write_lc_cache(paths, 100, {0.2: "confined", 0.5: "open", 0.8: "open"})
+    case = _case(steps=[100], psi_n_in=[0.2, 0.5, 0.8])
+    assert quantity("lc_finite_psi_n_min").extract(_ctx(case, paths)) == pytest.approx(0.5)
+
+
+def test_lc_finite_psi_n_min_takes_the_deepest_step(tmp_path):
+    paths = _lc_paths(tmp_path)
+    _write_lc_cache(paths, 100, {0.2: "confined", 0.5: "confined", 0.8: "open"})
+    _write_lc_cache(paths, 200, {0.2: "confined", 0.5: "open", 0.8: "open"})
+    case = _case(steps=[100, 200], psi_n_in=[0.2, 0.5, 0.8])
+    assert quantity("lc_finite_psi_n_min").extract(_ctx(case, paths)) == pytest.approx(0.5)
+
+
+def test_lc_finite_psi_n_scans_psi_n_in_not_the_lc_display_window(tmp_path):
+    """lc_psi_n_in is the LC map's display window; using it would clamp the
+    answer to its lower edge (0.7 here) instead of finding 0.5."""
+    paths = _lc_paths(tmp_path)
+    _write_lc_cache(paths, 100, {0.2: "confined", 0.5: "open", 0.8: "open"})
+    case = _case(steps=[100], psi_n_in=[0.2, 0.5, 0.8], lc_psi_n_in=[0.8])
+    assert quantity("lc_finite_psi_n_min").extract(_ctx(case, paths)) == pytest.approx(0.5)
+
+
+def test_lc_finite_psi_n_reports_user_facing_psi_n_when_edge_is_extended(tmp_path):
+    paths = _lc_paths(tmp_path, real_psi_edge=0.8)
+    _write_lc_cache(
+        paths, 100, {0.2: "confined", 0.5: "open", 0.8: "open"}, real_psi_edge=0.8,
+    )
+    case = _case(steps=[100], psi_n_in=[0.2, 0.5, 0.8])
+    assert quantity("lc_finite_psi_n_min").extract(_ctx(case, paths)) == pytest.approx(0.5)
+
+
+def test_lc_finite_psi_n_all_confined_is_none_not_one(tmp_path):
+    paths = _lc_paths(tmp_path)
+    _write_lc_cache(paths, 100, {0.2: "confined", 0.5: "confined"})
+    case = _case(steps=[100], psi_n_in=[0.2, 0.5])
+    reports = []
+    ctx = _ctx(case, paths, report=reports.append)
+    assert quantity("lc_finite_psi_n_min").extract(ctx) is None
+    assert len(reports) == 1 and "confined" in reports[0]
+
+
+def test_lc_finite_psi_n_no_poincare_cache_is_reported(tmp_path):
+    paths = _lc_paths(tmp_path)
+    case = _case(steps=[100], psi_n_in=[0.2, 0.5])
+    reports = []
+    ctx = _ctx(case, paths, report=reports.append)
+    assert quantity("lc_finite_psi_n_min").extract(ctx) is None
+    assert len(reports) == 1 and "Poincare" in reports[0]
+
+
+def test_lc_finite_psi_n_at_deconfinement_reads_only_that_step(tmp_path):
+    paths = _lc_paths(tmp_path)
+    _write_lc_cache(paths, 100, {0.2: "open", 0.5: "open"})
+    _write_lc_cache(paths, 200, {0.2: "confined", 0.5: "open"})
+    case = _case(steps=[100, 200], psi_n_in=[0.2, 0.5], four_deconfinement_step=200)
+    value = quantity("lc_finite_psi_n_at_deconfinement").extract(_ctx(case, paths))
+    assert value == pytest.approx(0.5)
+
+
+def test_lc_finite_psi_n_at_deconfinement_step_must_be_a_traced_step(tmp_path):
+    paths = _lc_paths(tmp_path)
+    _write_lc_cache(paths, 100, {0.2: "open"})
+    case = _case(steps=[100], psi_n_in=[0.2], four_deconfinement_step=300)
+    reports = []
+    ctx = _ctx(case, paths, report=reports.append)
+    assert quantity("lc_finite_psi_n_at_deconfinement").extract(ctx) is None
+    assert len(reports) == 1
+
+
+def test_lc_finite_psi_n_uses_connection_length_step_override():
+    assert quantity("lc_finite_psi_n_min").steps_diag == "connection_length"
