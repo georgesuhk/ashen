@@ -336,6 +336,9 @@ touching the gathering path.
   instead of the default log (and keeps the radial figures linear too).
   The radial eigenfunction figures are linear by default; `--four-radial-log`
   (or the case field `four_radial_log = true`) puts them on a log axis.
+- `--four-radial-quantity {abs,real,phase}` -- `four`: draw the radial
+  figures as `|amp|`, the phase-aligned signed part, or the phase; overrides
+  the case's `four_radial_quantity`.
 - `--theta_target_psi`, `--theta_bins`, `--theta_psi_n_range MIN MAX` override
   `theta_hist`'s case config; `--n-cols` sets its grid width (see below).
 - `--theta_wetted_threshold FLOAT` overrides `wetted_fraction`'s bin-count
@@ -947,6 +950,29 @@ both figure families linear, overriding a radial log request.
 four_quantities = ["max", "radial"]
 four_radial_log = true               # radial on a log axis (default: linear)
 ```
+
+**Signed eigenfunctions / `four_radial_quantity`.** `jorek2_four` writes the
+full complex coefficient `c(psi_n)` and the cache keeps its real and imaginary
+parts, so the radial figures can draw more than `|c|` with no regathering:
+
+```toml
+four_radial_quantity = "abs"     # |amplitude| (default)
+four_radial_quantity = "real"    # signed, phase-aligned
+four_radial_quantity = "phase"   # radians, relative to the peak
+```
+
+`--four-radial-quantity {abs,real,phase}` overrides it for one invocation.
+The raw `Re(c)` is **not** drawn: its phase is measured from `theta* = 0`,
+`phi = 0`, which drifts as the mode rotates, so the sign and shape would
+change between steps for no physical reason. Instead each step's profile is
+rotated by the phase at its `|c|` peak -- `Re(c e^{-i phi0})` is positive at
+the peak and comparable across steps, while a real sign change (e.g. across
+a tearing mode's rational surface) survives. `phase` is noise wherever `|c|`
+is near zero. Both are always drawn linear (a log request is reported and
+ignored), `phase` on fixed `[-pi, pi]` bounds instead of `four_ylim`, and
+each goes to its own `<var>_eigenfunction_real_psin.png` /
+`<var>_eigenfunction_phase_psin.png` so the `|c|` figure is never
+overwritten.
 
 `delta_b`/`delta_b_over_b` have no radial form here: `b_r ~ (m/R_axis^2)
 |Psi_mn|` scales by a **constant**, so a radial `delta_b` curve would be the

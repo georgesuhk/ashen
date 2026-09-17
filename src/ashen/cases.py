@@ -13,12 +13,19 @@ from pathlib import Path
 
 import numpy as np
 
-__all__ = ["Case", "CasesError", "FOUR_QUANTITIES", "load_cases"]
+__all__ = [
+    "Case", "CasesError", "FOUR_QUANTITIES", "FOUR_RADIAL_QUANTITIES", "load_cases",
+]
 
 #: Accepted `four_quantities` entries. "max"/"rational_surface" are scalar
 #: time series drawn onto one amplitude-vs-time axes; "radial" is the whole
 #: |amp|(psi_n) eigenfunction and gets its own figure -- see Case.four_quantities.
 FOUR_QUANTITIES = ("max", "rational_surface", "radial")
+
+#: Accepted `four_radial_quantity` values. Duplicates
+#: diagnostics.four_modes.RADIAL_QUANTITIES rather than importing it into TOML
+#: parsing; a unit test pins the two equal.
+FOUR_RADIAL_QUANTITIES = ("abs", "real", "phase")
 
 #: Case fields that come from [defaults] or a case table, not computed.
 _CASE_KEYS = (
@@ -26,7 +33,8 @@ _CASE_KEYS = (
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
     "lc_psi_n_in", "four_vars", "modes", "mode_colors", "four_growth_rate", "four_growth_steps",
-    "four_max_delta_b", "four_ylim", "four_radial_log", "four_deconfinement_step", "four_deconfinement_caption",
+    "four_max_delta_b", "four_ylim", "four_radial_log", "four_radial_quantity",
+    "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "profile_cmap", "profile_ylim", "animate",
     "poincare_highlight", "poincare_point_size", "mark_rational",
@@ -118,6 +126,12 @@ class Case:
     #: `--four-radial-log` forces it on for one invocation; `--four-linear`
     #: forces both figure families linear regardless.
     four_radial_log: bool = False
+    #: What the radial eigenfunction figures draw: "abs" (|amp|, default),
+    #: "real" (signed, phase-aligned to the |amp| peak per step) or "phase"
+    #: (radians, relative to the peak's). Plot-time only -- nothing to
+    #: regather, the four cache already holds real and imag.
+    #: `--four-radial-quantity` overrides it for one invocation.
+    four_radial_quantity: str = "abs"
     #: Step marked with a vline on four-mode figures: step-axis draws it
     #: directly, time-axis draws its real time from the zeroD cache
     #: (gathered on demand, same precedent as delta_b_over_b's Btor
@@ -480,6 +494,13 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                     f"{path}: case {name!r} four_quantities must not be empty"
                 )
             merged["four_quantities"] = quantities
+
+        if merged.get("four_radial_quantity", "abs") not in FOUR_RADIAL_QUANTITIES:
+            raise CasesError(
+                f"{path}: case {name!r} has unknown four_radial_quantity "
+                f"{merged['four_radial_quantity']!r}; expected one of "
+                f"{', '.join(repr(q) for q in FOUR_RADIAL_QUANTITIES)}"
+            )
 
         if "four_ylim" in merged:
             merged["four_ylim"] = _ylim_table_from_spec(

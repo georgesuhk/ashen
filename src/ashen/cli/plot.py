@@ -51,6 +51,7 @@ from ashen.diagnostics.four_modes import (
     format_growth_rates,
     growth_rate_series,
     max_amplitude_series,
+    RADIAL_QUANTITIES,
     radial_amplitude_series,
     rational_surface_series,
 )
@@ -220,6 +221,13 @@ def build_parser() -> argparse.ArgumentParser:
         "(four_quantities = [\"radial\"]), which are linear by default; "
         "turns this on for every case plotted, regardless of the case's own "
         "four_radial_log",
+    )
+    parser.add_argument(
+        "--four-radial-quantity", choices=RADIAL_QUANTITIES, default=None,
+        help="four: what the radial eigenfunction figures draw -- abs (|amp|), "
+        "real (signed, phase-aligned to the |amp| peak per step) or phase "
+        "(radians, relative to the peak); overrides each case's "
+        "four_radial_quantity (default abs). real and phase are always linear",
     )
     parser.add_argument(
         "--theta_target_psi", type=float, default=None,
@@ -705,10 +713,11 @@ def _read_true_times(
 def _plot_four_radial(
     case: Case, paths: RunPaths, steps: list[int], *,
     fetch_vars: list[str] | None, mode_filter: list[tuple[int, int]] | None,
-    log: bool, dpi: int | None, n_workers: int = 1,
+    log: bool, dpi: int | None, n_workers: int = 1, quantity: str = "abs",
 ) -> None:
-    """`four_quantities = ["radial"]`: each mode's |amp|(psi_n) eigenfunction,
-    one figure per variable, one panel per (n, m), one line per step.
+    """`four_quantities = ["radial"]`: each mode's |amp|(psi_n) eigenfunction
+    (or its phase-aligned real part / phase, per `quantity`), one figure per
+    variable, one panel per (n, m), one line per step.
 
     Deliberately independent of the amplitude-vs-time path in
     `_plot_four_modes`: this figure's x-axis is psi_n, so it needs no zeroD
@@ -716,8 +725,13 @@ def _plot_four_radial(
     be made to gather one. Steps colour the lines instead.
     """
     series = radial_amplitude_series(
-        paths, steps, variables=fetch_vars, modes=mode_filter
+        paths, steps, variables=fetch_vars, modes=mode_filter, quantity=quantity,
     )
+    if quantity != "abs" and log:
+        # A signed profile or an angle has no log form.
+        print(f"  radial: {quantity} can be negative, drawing on a linear axis "
+              "despite the log request")
+        log = False
     if not series:
         print("  no jorek2_four cache found for any requested step/variable/mode "
               "(run analyse --diag four)")
@@ -747,10 +761,20 @@ def _plot_four_radial(
     kwargs = _dpi_kwargs(dpi)
     for variable in sorted({var for var, _, _ in series}):
         per_var = {key: curves for key, curves in series.items() if key[0] == variable}
-        out = paths.four_dir / f"{variable}_eigenfunction_psin.png"
-        ylim = case.four_ylim.get(variable)
+        # abs keeps its original filename; the others get their own so
+        # switching quantity never overwrites the |amp| figure.
+        suffix = "" if quantity == "abs" else f"_{quantity}"
+        out = paths.four_dir / f"{variable}_eigenfunction{suffix}_psin.png"
+        # four_ylim bounds an amplitude; an angle has fixed bounds.
+        ylim = case.four_ylim.get(variable) if quantity != "phase" else (-np.pi, np.pi)
+        ylabel = {
+            "abs": None,
+            "real": f"Re({variable}), phase-aligned",
+            "phase": f"{variable} phase rel. to peak [rad]",
+        }[quantity]
         plot_mode_radial(
             per_var, variable, out,
+            ylabel=ylabel,
             rational_lines=rational_lines,
             rational_bands=rational_bands,
             log=log,
@@ -763,7 +787,7 @@ def _plot_four_radial(
 
 def _plot_four_modes(
     case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None,
-    n_workers: int = 1, radial_log: bool = False,
+    n_workers: int = 1, radial_log: bool = False, radial_quantity: str | None = None,
 ) -> None:
     want_max = "max" in case.four_quantities
     want_rational = "rational_surface" in case.four_quantities
@@ -805,6 +829,7 @@ def _plot_four_modes(
             # regardless, as it does the time-series figures.
             log=log and (case.four_radial_log or radial_log),
             dpi=dpi, n_workers=n_workers,
+            quantity=radial_quantity or case.four_radial_quantity,
         )
     if not (want_max or want_rational):
         return
@@ -2120,6 +2145,7 @@ def _run_case(
     psi_range: tuple[float, float] | None = None,
     four_log: bool = True,
     four_radial_log: bool = False,
+    four_radial_quantity: str | None = None,
     theta_target_psi: float | None = None,
     theta_bins: int | None = None,
     theta_psi_range: tuple[float, float] | None = None,
@@ -2159,6 +2185,7 @@ def _run_case(
         _plot_four_modes(
             case, paths, steps or case.steps_for("four"), log=four_log, dpi=dpi,
             n_workers=n_workers, radial_log=four_radial_log,
+            radial_quantity=four_radial_quantity,
         )
     if "profiles" in diags:
         _plot_profiles(
@@ -2399,6 +2426,7 @@ def main(argv: list[str] | None = None) -> int:
                 psi_range=psi_range,
                 four_log=not args.four_linear,
                 four_radial_log=args.four_radial_log,
+                four_radial_quantity=args.four_radial_quantity,
                 theta_target_psi=theta_target_psi,
                 theta_bins=theta_bins,
                 theta_psi_range=theta_psi_range,
