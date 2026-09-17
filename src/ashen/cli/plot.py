@@ -210,7 +210,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--four-linear", action="store_true",
-        help="four: linear amplitude scale instead of the default log",
+        help="four: linear amplitude scale instead of the default log on the "
+        "time-series figures; also keeps the radial eigenfunction figures "
+        "linear even under --four-radial-log / four_radial_log",
+    )
+    parser.add_argument(
+        "--four-radial-log", action="store_true",
+        help="four: log y-axis on the radial eigenfunction figures "
+        "(four_quantities = [\"radial\"]), which are linear by default; "
+        "turns this on for every case plotted, regardless of the case's own "
+        "four_radial_log",
     )
     parser.add_argument(
         "--theta_target_psi", type=float, default=None,
@@ -754,7 +763,7 @@ def _plot_four_radial(
 
 def _plot_four_modes(
     case: Case, paths: RunPaths, steps: list[int], *, log: bool, dpi: int | None,
-    n_workers: int = 1,
+    n_workers: int = 1, radial_log: bool = False,
 ) -> None:
     want_max = "max" in case.four_quantities
     want_rational = "rational_surface" in case.four_quantities
@@ -790,8 +799,12 @@ def _plot_four_modes(
     if want_radial:
         _plot_four_radial(
             case, paths, steps,
-            fetch_vars=fetch_vars, mode_filter=mode_filter, log=log, dpi=dpi,
-            n_workers=n_workers,
+            fetch_vars=fetch_vars, mode_filter=mode_filter,
+            # Radial is linear unless --four-radial-log or the case's
+            # four_radial_log asks for log; --four-linear keeps it linear
+            # regardless, as it does the time-series figures.
+            log=log and (case.four_radial_log or radial_log),
+            dpi=dpi, n_workers=n_workers,
         )
     if not (want_max or want_rational):
         return
@@ -2106,6 +2119,7 @@ def _run_case(
     n_workers: int = 1,
     psi_range: tuple[float, float] | None = None,
     four_log: bool = True,
+    four_radial_log: bool = False,
     theta_target_psi: float | None = None,
     theta_bins: int | None = None,
     theta_psi_range: tuple[float, float] | None = None,
@@ -2144,7 +2158,7 @@ def _run_case(
     if "four" in diags:
         _plot_four_modes(
             case, paths, steps or case.steps_for("four"), log=four_log, dpi=dpi,
-            n_workers=n_workers,
+            n_workers=n_workers, radial_log=four_radial_log,
         )
     if "profiles" in diags:
         _plot_profiles(
@@ -2384,6 +2398,7 @@ def main(argv: list[str] | None = None) -> int:
                 n_workers=n_workers,
                 psi_range=psi_range,
                 four_log=not args.four_linear,
+                four_radial_log=args.four_radial_log,
                 theta_target_psi=theta_target_psi,
                 theta_bins=theta_bins,
                 theta_psi_range=theta_psi_range,

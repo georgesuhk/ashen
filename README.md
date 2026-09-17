@@ -332,8 +332,10 @@ touching the gathering path.
 - `--psi-range MIN MAX` further bounds-filters whichever psi_n_in list is
   already in effect for connection-length -- plot-time only, no re-gather
   needed.
-- `--four-linear` draws four's mode amplitudes on a linear scale instead of
-  the default log.
+- `--four-linear` draws four's mode-amplitude time series on a linear scale
+  instead of the default log (and keeps the radial figures linear too).
+  The radial eigenfunction figures are linear by default; `--four-radial-log`
+  (or the case field `four_radial_log = true`) puts them on a log axis.
 - `--theta_target_psi`, `--theta_bins`, `--theta_psi_n_range MIN MAX` override
   `theta_hist`'s case config; `--n-cols` sets its grid width (see below).
 - `--theta_wetted_threshold FLOAT` overrides `wetted_fraction`'s bin-count
@@ -932,11 +934,19 @@ so a panel shows its neighbours' surfaces too. A step whose q-profile can't
 be gathered is reported and left out of the band; if none can, the curves
 are drawn without markers.
 
-The y-axis is shared across panels and logarithmic by default
-(`--four-linear` switches it), which is usually what you want for modes
-spanning orders of magnitude -- but a mode whose profile decays into a very
-small tail can stretch the shared range enough to flatten everything else.
-`four_ylim` (keyed by variable, as for the time-series figures) pins it.
+The y-axis is shared across panels and **linear by default**, which shows
+each eigenfunction's shape. For modes spanning orders of magnitude, set
+`four_radial_log = true` on the case, or pass `--four-radial-log` for one
+invocation; the time-series figures keep their own log default either way.
+On a log axis a mode whose profile decays into a very small tail can stretch
+the shared range enough to flatten everything else -- `four_ylim` (keyed by
+variable, as for the time-series figures) pins it. `--four-linear` keeps
+both figure families linear, overriding a radial log request.
+
+```toml
+four_quantities = ["max", "radial"]
+four_radial_log = true               # radial on a log axis (default: linear)
+```
 
 `delta_b`/`delta_b_over_b` have no radial form here: `b_r ~ (m/R_axis^2)
 |Psi_mn|` scales by a **constant**, so a radial `delta_b` curve would be the

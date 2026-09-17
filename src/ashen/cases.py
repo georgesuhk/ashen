@@ -26,7 +26,7 @@ _CASE_KEYS = (
     "vars", "coords_var", "tor_mode", "namelist", "n_points",
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
     "lc_psi_n_in", "four_vars", "modes", "mode_colors", "four_growth_rate", "four_growth_steps",
-    "four_max_delta_b", "four_ylim", "four_deconfinement_step", "four_deconfinement_caption",
+    "four_max_delta_b", "four_ylim", "four_radial_log", "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "profile_cmap", "profile_ylim", "animate",
     "poincare_highlight", "poincare_point_size", "mark_rational",
@@ -111,6 +111,13 @@ class Case:
     #: Per-variable y-axis bounds for `plot --diag four`, e.g.
     #: {"Psi" = [1e-6, 1e-1]}. Plot-time only. Unlisted var = auto-scale.
     four_ylim: dict[str, list[float]] = field(default_factory=dict)
+    #: Log y-axis on the `four_quantities = ["radial"]` eigenfunction
+    #: figures. Independent of the time-series figures' scale, since an
+    #: eigenfunction's shape reads better linear while amplitude growth
+    #: across decades needs log. Plot-time only, default off (linear).
+    #: `--four-radial-log` forces it on for one invocation; `--four-linear`
+    #: forces both figure families linear regardless.
+    four_radial_log: bool = False
     #: Step marked with a vline on four-mode figures: step-axis draws it
     #: directly, time-axis draws its real time from the zeroD cache
     #: (gathered on demand, same precedent as delta_b_over_b's Btor
