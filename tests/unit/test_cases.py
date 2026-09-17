@@ -540,6 +540,22 @@ def test_four_radial_log_can_be_turned_on(tmp_path):
     assert load_cases(path)["a"].four_radial_log is True
 
 
+def test_four_radial_quantity_defaults_to_abs(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    assert load_cases(path)["a"].four_radial_quantity == "abs"
+
+
+def test_four_radial_quantity_accepts_real(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\nfour_radial_quantity = "real"\n')
+    assert load_cases(path)["a"].four_radial_quantity == "real"
+
+
+def test_four_radial_quantity_rejects_unknown(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\nfour_radial_quantity = "imag"\n')
+    with pytest.raises(CasesError, match="four_radial_quantity"):
+        load_cases(path)
+
+
 def test_four_quantities_radial_combines_with_the_time_series_quantities(tmp_path):
     path = _write(
         tmp_path,

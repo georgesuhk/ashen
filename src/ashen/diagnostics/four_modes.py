@@ -20,6 +20,7 @@ from ashen.paths import RunPaths
 
 __all__ = [
     "ModeKey", "max_amplitude_series", "radial_amplitude_series",
+    "RADIAL_QUANTITIES", "radial_values",
     "rational_surface_series",
     "DELTA_B", "delta_b_series", "DELTA_B_OVER_B", "delta_b_over_b_series",
     "GrowthFit", "fit_growth_rate", "growth_rate_series", "format_growth_rates",
@@ -93,14 +94,49 @@ def max_amplitude_series(
     return series
 
 
+#: What radial_amplitude_series can return per psi_n point. "abs" is |c|;
+#: "real" and "phase" are phase-aligned -- see radial_values.
+RADIAL_QUANTITIES = ("abs", "real", "phase")
+
+
+def _check_radial_quantity(quantity: str) -> None:
+    if quantity not in RADIAL_QUANTITIES:
+        raise ValueError(
+            f"unknown radial quantity {quantity!r}; expected one of {RADIAL_QUANTITIES}"
+        )
+
+
+def radial_values(record: fc.FourRecord, quantity: str = "abs") -> np.ndarray:
+    """One mode's radial profile as `quantity` (a RADIAL_QUANTITIES entry).
+
+    jorek2_four's complex coefficient c(psi_n) has its phase measured from
+    theta_star = 0, phi = 0, which drifts as the mode rotates -- so Re(c) as
+    written flips sign and shape between steps for no physical reason. What
+    *is* physical is how the phase varies across psi_n within one step (e.g.
+    a tearing eigenfunction's sign change across its rational surface). So
+    "real" and "phase" first rotate the whole profile by one reference phase
+    phi0, taken where |c| peaks: Re(c e^{-i phi0}) is then positive at the
+    peak and comparable across steps, and the phase is relative to the
+    peak's, wrapped to (-pi, pi]. Phase is noise wherever |c| is near zero.
+    """
+    _check_radial_quantity(quantity)
+    if quantity == "abs":
+        return record.abs
+    c = record.real + 1j * record.imag
+    if c.size:
+        c = c * np.exp(-1j * np.angle(c[np.argmax(np.abs(c))]))
+    return c.real if quantity == "real" else np.angle(c)
+
+
 def radial_amplitude_series(
     paths: RunPaths,
     steps: Sequence[int],
     *,
     variables: Sequence[str] | None = None,
     modes: Sequence[tuple[int, int]] | None = None,
+    quantity: str = "abs",
 ) -> dict[ModeKey, dict[int, tuple[np.ndarray, np.ndarray]]]:
-    """{(variable, n, m): {step: (psi_n, abs)}} -- each mode's radial
+    """{(variable, n, m): {step: (psi_n, values)}} -- each mode's radial
     eigenfunction, one curve per step, rather than the scalar per step
     max_amplitude_series reduces it to.
 
@@ -109,9 +145,9 @@ def radial_amplitude_series(
     both max_amplitude_series and rational_surface_series collapse it to one
     number. Nothing is recomputed -- the arrays come straight off the cache.
 
-    abs, not the signed real part, for the reason rational_surface_series
-    gives: a component's phase is an arbitrary toroidal offset that flips as
-    the mode rotates, so the signed part is not comparable across steps.
+    `quantity` defaults to abs; "real"/"phase" give the signed structure,
+    phase-aligned per step so it stays comparable across steps -- see
+    radial_values for why the raw real part is not.
 
     Missing data is *absent*, not nan -- a step with no cache, or whose cache
     lacks that key, simply has no entry for that step, and a key present in
@@ -122,6 +158,7 @@ def radial_amplitude_series(
 
     variables/modes filter which keys come back -- see _select_keys.
     """
+    _check_radial_quantity(quantity)
     per_step: list[dict[ModeKey, fc.FourRecord]] = [
         fc.read_cache(paths.four_cache(step)) for step in steps
     ]
@@ -133,7 +170,7 @@ def radial_amplitude_series(
         for step, records in zip(steps, per_step):
             record = records.get(key)
             if record is not None and record.psi_n.size:
-                curves[int(step)] = (record.psi_n, record.abs)
+                curves[int(step)] = (record.psi_n, radial_values(record, quantity))
         if curves:
             series[key] = curves
     return series

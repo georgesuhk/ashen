@@ -857,6 +857,45 @@ def test_four_linear_keeps_radial_linear_even_when_log_requested(campaign, monke
     assert series_log is False
 
 
+def _radial_quantity_run(campaign, monkeypatch, *, extra="", argv=()):
+    radial = _spy_on_plot_mode_radial(monkeypatch)
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _radial_case(campaign, extra=extra)
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four", *argv]
+    ) == 0
+    return radial
+
+
+def test_radial_real_from_case_writes_its_own_file(campaign, monkeypatch):
+    radial = _radial_quantity_run(
+        campaign, monkeypatch, extra='four_radial_quantity = "real"\n',
+    )
+    (_series, _variable, out), kwargs = radial[0]
+    assert out.name == "Psi_eigenfunction_real_psin.png"
+    assert "phase-aligned" in kwargs["ylabel"]
+    assert (campaign / "four_dir" / "Psi_eigenfunction_real_psin.png").is_file()
+
+
+def test_four_radial_quantity_flag_overrides_case(campaign, monkeypatch):
+    radial = _radial_quantity_run(
+        campaign, monkeypatch, extra='four_radial_quantity = "real"\n',
+        argv=["--four-radial-quantity", "phase"],
+    )
+    (_series, _variable, out), kwargs = radial[0]
+    assert out.name == "Psi_eigenfunction_phase_psin.png"
+    assert kwargs["ylim"] == (-np.pi, np.pi)
+
+
+def test_radial_real_forces_linear_axis_despite_log_request(campaign, monkeypatch, capsys):
+    radial = _radial_quantity_run(
+        campaign, monkeypatch, extra="four_radial_log = true\n",
+        argv=["--four-radial-quantity", "real"],
+    )
+    assert radial[0][1]["log"] is False
+    assert "linear axis despite the log request" in capsys.readouterr().out
+
+
 def test_radial_writes_one_eigenfunction_file_per_variable(campaign):
     _write_four_cache(campaign, 100, records=[
         _four_record("Psi", 1, 2, real_peak=1.0),

@@ -16,7 +16,9 @@ from ashen.diagnostics.four_modes import (
     format_growth_rates,
     growth_rate_series,
     max_amplitude_series,
+    RADIAL_QUANTITIES,
     radial_amplitude_series,
+    radial_values,
     rational_surface_series,
 )
 from ashen.paths import RunPaths
@@ -448,3 +450,57 @@ def test_radial_and_max_series_agree_on_which_keys_a_filter_selects(paths):
     assert set(radial_amplitude_series(paths, [100], **kwargs)) == set(
         max_amplitude_series(paths, [100], **kwargs)
     )
+
+
+# --- radial_values: signed / phase profiles, phase-aligned to the peak -------
+
+
+def _complex_record(c) -> fc.FourRecord:
+    c = np.asarray(c, dtype=complex)
+    return fc.FourRecord(
+        variable="Psi", n=1, m=2, psi_n=np.linspace(0.0, 1.0, c.size),
+        real=c.real, imag=c.imag,
+    )
+
+
+def test_radial_values_abs_is_the_modulus():
+    record = _complex_record([3 + 4j, 1j])
+    np.testing.assert_allclose(radial_values(record, "abs"), [5.0, 1.0])
+
+
+def test_radial_values_real_is_positive_at_the_peak_whatever_the_raw_phase():
+    """A rigid rotation of the whole profile (the mode rotating between steps)
+    must not change the aligned real part."""
+    shape = np.array([0.2, 1.0, 0.3, -0.5])  # sign change: real structure
+    for offset in (0.0, 1.0, np.pi, -2.5):
+        record = _complex_record(shape * np.exp(1j * offset))
+        np.testing.assert_allclose(radial_values(record, "real"), shape, atol=1e-12)
+
+
+def test_radial_values_phase_is_relative_to_the_peak():
+    shape = np.array([0.2, 1.0, -0.5])
+    record = _complex_record(shape * np.exp(1j * 2.0))
+    np.testing.assert_allclose(
+        np.abs(radial_values(record, "phase")), [0.0, 0.0, np.pi], atol=1e-12
+    )
+
+
+def test_radial_values_rejects_an_unknown_quantity():
+    with pytest.raises(ValueError, match="unknown radial quantity"):
+        radial_values(_complex_record([1.0]), "imag")
+
+
+def test_radial_series_passes_quantity_through(paths):
+    record = fc.FourRecord(
+        variable="Psi", n=1, m=2, psi_n=np.linspace(0.0, 1.0, 3),
+        real=np.array([0.0, 0.0, 0.0]), imag=np.array([0.5, 2.0, -1.0]),
+    )
+    fc.write_cache(paths.four_cache(100), step=100, pad_width=6, records=[record])
+    _, values = radial_amplitude_series(paths, [100], quantity="real")[("Psi", 1, 2)][100]
+    np.testing.assert_allclose(values, [0.5, 2.0, -1.0], atol=1e-12)
+
+
+def test_radial_quantities_match_the_cases_whitelist():
+    from ashen.cases import FOUR_RADIAL_QUANTITIES
+
+    assert FOUR_RADIAL_QUANTITIES == RADIAL_QUANTITIES
