@@ -42,6 +42,7 @@ from ashen.diagnostics.four_modes import (
     delta_b_series,
     max_amplitude_series,
 )
+from ashen.diagnostics.connection_length import connection_lengths_for_step
 from ashen.diagnostics.poincare_cache import read_step
 from ashen.diagnostics.qprofile import read_qprofile
 from ashen.diagnostics.theta_histogram import (
@@ -562,6 +563,91 @@ def _mode_energy_fraction(ctx: QuantityContext, *, reduction: str) -> float | No
     return value
 
 
+def _lc_finite_psi_n(ctx: QuantityContext, *, reduction: str) -> float | None:
+    """The innermost traced surface whose connection length is finite --
+    how deep open (lost) field lines reach into the plasma.
+
+    Per step, this is the smallest user-facing psi_n_in whose LC/LCTT cell
+    is finite: computed with connection_lengths_for_step exactly as the
+    connection_length map computes its matrix (same R0 from the log, same
+    real_psi_edge handling -- including the second division
+    KNOWN_ISSUES.md #7 flags), so the number always matches what that map
+    shows. inf (every sample confined) and nan (surface never traced at that
+    step) both count as "not finite".
+
+    Scans every traced surface (case.psi_n_in), NOT case.lc_psi_n_in: the
+    latter is a display window for the LC map (commonly {min = 0.7}), and
+    using it would silently clamp the answer to the window's lower edge.
+
+    reduction is "min" (the deepest reach over the requested steps) or
+    "at_deconfinement" (at the case's own four_deconfinement_step, which
+    must be one of the connection_length steps -- no interpolation). A run
+    whose lines stay confined everywhere at every step has no such surface:
+    that is reported and the point dropped, never plotted as 1.0.
+    """
+    case, paths = ctx.case, ctx.paths
+    steps = ctx.steps
+    if not steps:
+        ctx.report(f"  {case.name}: lc_finite_psi_n needs a step list, none available")
+        return None
+    if not case.psi_n_in:
+        ctx.report(f"  {case.name}: no psi_n_in configured, nothing traced to scan")
+        return None
+
+    if reduction == "at_deconfinement":
+        if case.four_deconfinement_step is None:
+            ctx.report(f"  {case.name}: no four_deconfinement_step set, skipped")
+            return None
+        if case.four_deconfinement_step not in steps:
+            ctx.report(
+                f"  {case.name}: four_deconfinement_step {case.four_deconfinement_step} "
+                "is not one of this case's connection_length steps, skipped"
+            )
+            return None
+        steps = [case.four_deconfinement_step]
+
+    try:
+        real_psi_edge = read_float(paths.real_psi_edge)
+    except OSError as exc:
+        ctx.report(f"  {case.name}: no real_psi_edge.dat ({exc})")
+        return None
+    try:
+        r0 = r_axis(paths.log)
+    except LogfileError as exc:
+        ctx.report(f"  {case.name}: skipping ({exc})")
+        return None
+
+    psi_n_in = sorted(case.psi_n_in)
+    targets = [p * real_psi_edge for p in psi_n_in]
+    per_step: list[float] = []
+    any_cache = False
+    for step in steps:
+        records = read_step(paths, step)
+        if not records:
+            continue
+        any_cache = True
+        lengths = connection_lengths_for_step(
+            records, targets, real_psi_edge=real_psi_edge, R0=r0,
+        )
+        finite = [p for p, length in zip(psi_n_in, lengths) if np.isfinite(length)]
+        if finite:
+            per_step.append(min(finite))
+
+    if not any_cache:
+        ctx.report(
+            f"  {case.name}: no Poincare cache for any requested step, skipped "
+            "(run analyse --diag poincare)"
+        )
+        return None
+    if not per_step:
+        ctx.report(
+            f"  {case.name}: every traced surface is confined (no finite "
+            f"connection length, {reduction}), skipped"
+        )
+        return None
+    return float(min(per_step))
+
+
 # --- the registry --------------------------------------------------------
 
 QUANTITIES: dict[str, Quantity] = {}
@@ -649,6 +735,19 @@ _register(
         partial(_mode_energy_fraction, reduction="at_deconfinement"),
         log_scale=True, steps_diag="four",
         note="(delta_B_(3,2)/delta_B_(2,1))^2 at the case's own four_deconfinement_step",
+    ),
+    Quantity(
+        "lc_finite_psi_n_min", r"innermost $\psi_N$ with finite $L_c$",
+        partial(_lc_finite_psi_n, reduction="min"),
+        steps_diag="connection_length",
+        note="smallest traced psi_n with finite connection length, deepest over steps",
+    ),
+    Quantity(
+        "lc_finite_psi_n_at_deconfinement",
+        r"innermost $\psi_N$ with finite $L_c$ at deconfinement",
+        partial(_lc_finite_psi_n, reduction="at_deconfinement"),
+        steps_diag="connection_length",
+        note="smallest traced psi_n with finite connection length at four_deconfinement_step",
     ),
 )
 
