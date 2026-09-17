@@ -530,6 +530,16 @@ def test_four_quantities_settable_to_radial(tmp_path):
     assert load_cases(path)["a"].four_quantities == ["radial"]
 
 
+def test_four_radial_log_defaults_off(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n')
+    assert load_cases(path)["a"].four_radial_log is False
+
+
+def test_four_radial_log_can_be_turned_on(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\nfour_radial_log = true\n')
+    assert load_cases(path)["a"].four_radial_log is True
+
+
 def test_four_quantities_radial_combines_with_the_time_series_quantities(tmp_path):
     path = _write(
         tmp_path,

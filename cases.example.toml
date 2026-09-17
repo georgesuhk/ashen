@@ -140,6 +140,10 @@ n_points        = 100
 # if missing): shaded over how far it moved, with a line at the last step.
 # four_quantities = ["radial"]
 # four_quantities = ["max", "radial"]
+# The radial figures' y-axis is linear by default; four_radial_log = true puts
+# only them on a log axis (the time-series figures keep their own log
+# default). `plot --four-radial-log` does the same for one invocation.
+# four_radial_log = true
 # "delta_b_over_b" is a pseudo-variable for four_vars -- not a raw jorek2_four
 # output, it's derived from "Psi"'s amplitude using the tearing-mode shorthand
 # b_r^(m,n) ~ (m/R_axis^2)*|Psi_mn|, normalised by a reference field B_ref:

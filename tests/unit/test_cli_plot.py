@@ -802,6 +802,61 @@ def _radial_case(campaign, *, extra=""):
     )
 
 
+def _radial_log_kwargs(campaign, monkeypatch, *, extra="", argv=(), quantities='["radial"]'):
+    """Run `--diag four` on a one-mode cache and return (radial log, time-series
+    log) as each plotting function received them (None if it wasn't called)."""
+    radial = _spy_on_plot_mode_radial(monkeypatch)
+    amplitudes = _spy_on_plot_mode_amplitudes(monkeypatch)
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=1.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=1.5)])
+    _radial_case(campaign, extra=extra)
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        cases_toml.read_text(encoding="utf-8").replace('["radial"]', quantities),
+        encoding="utf-8",
+    )
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four", *argv]
+    ) == 0
+    radial_log = radial[0][1]["log"] if radial else None
+    series_log = amplitudes[0]["log"] if amplitudes else None
+    return radial_log, series_log
+
+
+def test_radial_y_axis_is_linear_by_default(campaign, monkeypatch):
+    radial_log, series_log = _radial_log_kwargs(
+        campaign, monkeypatch, quantities='["max", "radial"]',
+    )
+    assert radial_log is False
+    assert series_log is True  # time-series figures keep their log default
+
+
+def test_radial_y_axis_log_from_case_four_radial_log(campaign, monkeypatch):
+    radial_log, _ = _radial_log_kwargs(
+        campaign, monkeypatch, extra="four_radial_log = true\n",
+    )
+    assert radial_log is True
+
+
+def test_four_radial_log_flag_turns_radial_log_on(campaign, monkeypatch):
+    radial_log, series_log = _radial_log_kwargs(
+        campaign, monkeypatch, argv=["--four-radial-log"],
+        quantities='["max", "radial"]',
+    )
+    assert radial_log is True
+    assert series_log is True
+
+
+def test_four_linear_keeps_radial_linear_even_when_log_requested(campaign, monkeypatch):
+    radial_log, series_log = _radial_log_kwargs(
+        campaign, monkeypatch, extra="four_radial_log = true\n",
+        argv=["--four-linear", "--four-radial-log"],
+        quantities='["max", "radial"]',
+    )
+    assert radial_log is False
+    assert series_log is False
+
+
 def test_radial_writes_one_eigenfunction_file_per_variable(campaign):
     _write_four_cache(campaign, 100, records=[
         _four_record("Psi", 1, 2, real_peak=1.0),
