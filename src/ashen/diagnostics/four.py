@@ -26,6 +26,15 @@ poloidal mode m, ascending from 0), each a (psi_n, abs, real, imag, phase)
 table over nstpts radial points. Every block's own "# l: m=.., n=.." header
 (jorek2_four.f90:107) is cross-checked against block position and the
 filename's n -- a format change upstream raises, doesn't silently mislabel.
+
+Tracing failures: before writing anything, jorek2_four builds straight-
+field-line coordinates by following one field line per flux surface
+(mod_straight_field_line.f90:trace_fieldlines). If any line leaves the grid
+(find_RZ, ierr=100) or fails to close a poloidal turn in nmaxsteps
+(ierr=101), it prints "Aborting ...:trace_fieldlines" and calls a bare
+Fortran `stop` -- exit status 0, no output. After a crash has broken up the
+flux surfaces that is a property of the step, not a fault, so it surfaces as
+FieldLineTracingError and run_four_scan skips the step rather than the case.
 """
 
 from __future__ import annotations
@@ -41,10 +50,19 @@ from pathlib import Path
 import numpy as np
 
 from ashen.diagnostics import four_cache as fc
-from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_tool
+from ashen.jorek2 import (
+    Jorek2Error,
+    Jorek2NoOutputError,
+    Jorek2Run,
+    MissingRestartError,
+    run_tool,
+)
 from ashen.paths import RunPaths
 
-__all__ = ["FourStepReport", "four_params_nml", "run_four_step", "run_four_scan"]
+__all__ = [
+    "FieldLineTracingError", "FourStepReport", "four_params_nml",
+    "run_four_step", "run_four_scan",
+]
 
 #: The jorek2_four executable, resolved under a prepared run folder's ``exe/``
 #: symlink (to site.exe) rather than a per-tool top-level symlink. Module-level
@@ -57,6 +75,16 @@ _FILE_RE = re.compile(r"^(?P<var>.+)_modes_n(?P<n>\d{3})$")
 
 #: jorek2_four.f90:107 -- `write(42,'("# ",I3,":   m=",I3,", n=",I3)') l, i-1, ...`
 _HEADER_RE = re.compile(r"#\s*(-?\d+)\s*:\s*m\s*=\s*(-?\d+)\s*,\s*n\s*=\s*(-?\d+)")
+
+#: mod_straight_field_line.f90:519 -- trace_fieldlines' last words before `stop`.
+_TRACE_ABORT_RE = re.compile(r"Aborting\s+\S*trace_fieldlines", re.IGNORECASE)
+
+
+class FieldLineTracingError(Jorek2Error):
+    """jorek2_four could not build straight-field-line coordinates for one
+    step, because a field line left the grid or never closed a poloidal
+    turn. Expected once flux surfaces are destroyed; see the module docstring.
+    """
 
 
 @dataclass(frozen=True)
@@ -173,22 +201,39 @@ def run_four_step(
         )
 
     scratch = paths.four_dir / f"_scratch_s{paths.step_str(step)}"
-    result = run_tool(
-        run,
-        FOUR_TOOL,
-        step=step,
-        dest_dir=scratch,
-        output_glob="*_modes_n[0-9][0-9][0-9]",
-        stdin_is_namelist=True,
-        extra_files={
-            "four_params.nml": four_params_nml(
-                nstpts=nstpts, ntht=ntht, nmaxsteps=nmaxsteps,
-                deltaphi=deltaphi, nsmallsteps=nsmallsteps, rad_range=rad_range,
-            )
-        },
-        env={"OMP_NUM_THREADS": str(max(int(omp_threads), 1))},
-        exe_subdir="exe",
-    )
+    try:
+        result = run_tool(
+            run,
+            FOUR_TOOL,
+            step=step,
+            dest_dir=scratch,
+            output_glob="*_modes_n[0-9][0-9][0-9]",
+            stdin_is_namelist=True,
+            extra_files={
+                "four_params.nml": four_params_nml(
+                    nstpts=nstpts, ntht=ntht, nmaxsteps=nmaxsteps,
+                    deltaphi=deltaphi, nsmallsteps=nsmallsteps, rad_range=rad_range,
+                )
+            },
+            env={"OMP_NUM_THREADS": str(max(int(omp_threads), 1))},
+            exe_subdir="exe",
+            # Captured (teed, if echoing) so a tracing abort can be told
+            # apart from any other silent failure.
+            capture_stdout=True,
+        )
+    except Jorek2NoOutputError as exc:
+        if not _TRACE_ABORT_RE.search(exc.log):
+            raise
+        if scratch.is_dir() and not any(scratch.iterdir()):
+            scratch.rmdir()
+        raise FieldLineTracingError(
+            f"{exc}\n"
+            f"field-line tracing failed, so no straight-field-line coordinates "
+            f"exist for step {step} at rad_range={tuple(rad_range)}. If a line "
+            f"left the grid (find_RZ), lower rad_range's upper end; if "
+            f"'nmaxsteps too small', raise nmaxsteps. Steps already cached "
+            f"keep their old settings unless rerun with force."
+        ) from exc
 
     records: list[fc.FourRecord] = []
     for name, out_path in result.outputs.items():
@@ -238,6 +283,10 @@ def run_four_scan(
     on_progress(done, total, report), if given, fires in process-pool
     completion order (not necessarily `steps`' order). The returned list
     is always in `steps` order.
+
+    A step with no restart file, or whose field-line tracing fails
+    (FieldLineTracingError), is warned about and left out; any other
+    failure aborts the scan.
     """
     steps = list(steps)
     total = len(steps)
@@ -254,7 +303,7 @@ def run_four_scan(
         for i, step in enumerate(steps, start=1):
             try:
                 report = one(step)
-            except MissingRestartError as exc:
+            except (MissingRestartError, FieldLineTracingError) as exc:
                 warnings.warn(f"skipping four step {step}: {exc}", stacklevel=2)
                 continue
             reports.append(report)
@@ -271,7 +320,7 @@ def run_four_scan(
             step = steps[idx]
             try:
                 reports[idx] = future.result()
-            except MissingRestartError as exc:
+            except (MissingRestartError, FieldLineTracingError) as exc:
                 warnings.warn(f"skipping four step {step}: {exc}", stacklevel=2)
                 done += 1
                 continue

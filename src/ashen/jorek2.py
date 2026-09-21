@@ -18,6 +18,7 @@ raises Jorek2Error naming the tool, step, and run directory.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,7 +31,7 @@ from typing import Mapping, Sequence
 from ashen.paths import RunPaths, step_name_variants
 
 __all__ = [
-    "Jorek2Error", "MissingRestartError", "Jorek2Run", "ToolResult", "run_tool", "run_zero_d",
+    "Jorek2Error", "Jorek2NoOutputError", "MissingRestartError", "Jorek2Run", "ToolResult", "run_tool", "run_zero_d",
     "TOOL_OUTPUT_ENV", "enable_tool_output", "tool_output_enabled",
 ]
 
@@ -109,8 +110,11 @@ def _launch(
 ) -> _Completed:
     """Run one tool, in whichever of three stream modes applies.
 
-    - not echoing: stdout to a pipe only if the caller wants it, else
-      discarded; stderr piped so a non-zero exit can quote it.
+    - not echoing: both streams piped -- stderr so a non-zero exit can
+      quote it, stdout so a tool that exits 0 without writing its output
+      can be explained from its own log (Fortran `stop` exits 0, so a
+      clean exit is no evidence of success). Handed back to the caller
+      only if it asked (run_tool's capture_stdout).
     - echoing, output not wanted back: inherit this process's streams. The
       cheapest live passthrough there is -- no decoding, no threads, and the
       tool's own buffering is all that stands between it and the terminal.
@@ -142,8 +146,7 @@ def _launch(
 
     result = subprocess.run(
         argv, stdin=stdin_file, cwd=cwd, env=env,
-        stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     return _Completed(
         result.returncode,
@@ -154,6 +157,42 @@ def _launch(
 
 class Jorek2Error(RuntimeError):
     """A jorek2_* tool exited non-zero, or an expected output was missing."""
+
+
+class Jorek2NoOutputError(Jorek2Error):
+    """A jorek2_* tool exited 0 but wrote none of its expected output.
+
+    Usually the tool gave up: JOREK's diagnostics abort with a bare Fortran
+    `stop`, which exits 0. `log` is whatever of the tool's output was
+    captured (empty when it was echoed live instead), kept so a caller can
+    recognise a specific, expected abort -- diagnostics.four does, for
+    field-line tracing failures.
+    """
+
+    def __init__(self, message: str, log: str = "") -> None:
+        super().__init__(message)
+        self.log = log
+
+    # Exceptions pickle as cls(*args); without this, crossing a process
+    # pool would drop `log`.
+    def __reduce__(self):
+        return (type(self), (self.args[0], self.log))
+
+
+#: A Fortran diagnostic line worth quoting when a tool fails quietly --
+#: JOREK writes `ERROR in <routine>: ...` and `Aborting <routine> ...`
+#: through list-directed write(*,*), hence the leading blank.
+_ABORT_LINE_RE = re.compile(r"^\s*(error|abort)", re.IGNORECASE)
+
+
+def _no_output_detail(log: str, *, echoed: bool) -> str:
+    """The tool's own error lines, for a missing-output message."""
+    if not log.strip():
+        return " (see its output above)" if echoed else " (it printed nothing)"
+    lines = [line.strip() for line in log.splitlines() if _ABORT_LINE_RE.match(line)]
+    if not lines:
+        return ""
+    return "; the tool reported:\n  " + "\n  ".join(lines[-10:])
 
 
 class MissingRestartError(FileNotFoundError):
@@ -276,9 +315,10 @@ def run_tool(
     filenames depend on the model (which variables it carries) and the
     run's namelist (toroidal harmonic count), so they can't be listed in
     `outputs` ahead of time. Collected files are keyed by name in the same
-    ToolResult.outputs mapping. Raises Jorek2Error if nothing matches -- a
-    tool that "succeeded" but produced none of its expected output is
-    exactly the silent failure this function exists to prevent.
+    ToolResult.outputs mapping. Raises Jorek2NoOutputError (a Jorek2Error)
+    if nothing matches -- a tool that "succeeded" but produced none of its
+    expected output is exactly the silent failure this function exists to
+    prevent. The error quotes any ERROR/Aborting lines from the tool's log.
 
     env is merged over the parent environment for the child only -- how
     OMP_NUM_THREADS gets set per invocation instead of inherited from
@@ -367,6 +407,7 @@ def run_tool(
                 f"{run.run_dir}: {detail}"
             )
 
+        log = result.stdout + ("\n" if result.stdout and result.stderr else "") + result.stderr
         collected: dict[str, Path] = {}
         for output in outputs:
             src = workdir / output
@@ -376,10 +417,12 @@ def run_tool(
                 # postproc binary, not of the run (paths.JOREK_PAD_WIDTHS).
                 src = _first_existing_variant(workdir, output, step)
             if src is None:
-                raise Jorek2Error(
+                raise Jorek2NoOutputError(
                     f"{tool} did not produce expected output {output!r} for "
                     f"step {step} in {run.run_dir} (nor under any other step "
                     f"padding: {', '.join(step_name_variants(Path(output).name, step))})"
+                    + _no_output_detail(log, echoed=echo),
+                    log,
                 )
             # Named by what was *asked for*, not by what the tool wrote, so
             # everything downstream of here sees one spelling.
@@ -390,9 +433,10 @@ def run_tool(
         if output_glob is not None:
             matches = sorted(p for p in workdir.glob(output_glob) if p.is_file())
             if not matches:
-                raise Jorek2Error(
+                raise Jorek2NoOutputError(
                     f"{tool} produced no output matching {output_glob!r} for "
-                    f"step {step} in {run.run_dir}"
+                    f"step {step} in {run.run_dir}" + _no_output_detail(log, echoed=echo),
+                    log,
                 )
             for src in matches:
                 dst = dest_dir / src.name
