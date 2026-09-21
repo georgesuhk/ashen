@@ -21,7 +21,7 @@ import pytest
 
 from ashen.diagnostics import four
 from ashen.diagnostics import four_cache as fc
-from ashen.jorek2 import Jorek2Error, Jorek2Run
+from ashen.jorek2 import Jorek2Error, Jorek2NoOutputError, Jorek2Run
 from ashen.paths import RunPaths
 
 pytest.importorskip("h5py")
@@ -32,6 +32,18 @@ _FOUR = """
 import re, sys
 
 sys.stdin.read()
+
+# A restart whose content is b"abort" stands in for a step whose flux
+# surfaces are gone: mimic mod_straight_field_line.f90:508-520 -- the error
+# line, then a bare `stop`, i.e. exit 0 with no output. b"silent" exits 0
+# with neither output nor explanation.
+restart = open("jorek_restart.h5", "rb").read()
+if restart == b"abort":
+    print(" ERROR in mod_straight_field_line:trace_fieldlines: nmaxsteps too small, incomplete poloidal turn.")
+    print(" Aborting mod_straight_field_line:trace_fieldlines after an error occurred.")
+    sys.exit(0)
+if restart == b"silent":
+    sys.exit(0)
 
 nstpts, ntht = 30, 32
 try:
@@ -214,3 +226,46 @@ def test_scan_progress_callback_fires_once_per_step(run, paths):
         on_progress=lambda done, total, report: seen.append((done, total, report.step)),
     )
     assert seen == [(1, 2, 100), (2, 2, 200)]
+
+
+# --- tools that exit 0 without output ---------------------------------------------------
+
+
+def test_tracing_abort_raises_field_line_tracing_error(run, paths):
+    (run.run_dir / "jorek000300.h5").write_bytes(b"abort")
+    with pytest.raises(four.FieldLineTracingError, match="nmaxsteps too small"):
+        four.run_four_step(run, paths, 300, nstpts=5, ntht=4)
+    assert not paths.four_cache(300).is_file()
+    assert not list(paths.four_dir.glob("_scratch*"))
+
+
+def test_silent_no_output_is_not_mistaken_for_a_tracing_abort(run, paths):
+    (run.run_dir / "jorek000300.h5").write_bytes(b"silent")
+    with pytest.raises(Jorek2NoOutputError, match="printed nothing") as info:
+        four.run_four_step(run, paths, 300, nstpts=5, ntht=4)
+    assert not isinstance(info.value, four.FieldLineTracingError)
+
+
+# Serial only, like the other scan tests: a spawned pool worker re-imports
+# `four` and loses the FOUR_TOOL monkeypatch that points at the .cmd stub.
+def test_scan_skips_a_step_whose_tracing_aborts(run, paths):
+    (run.run_dir / "jorek000200.h5").write_bytes(b"abort")
+    (run.run_dir / "jorek000300.h5").write_bytes(b"fake")
+    with pytest.warns(UserWarning, match="skipping four step 200"):
+        reports = four.run_four_scan(
+            run, paths, [100, 200, 300], nstpts=5, ntht=4, n_workers=1,
+        )
+    assert [r.step for r in reports] == [100, 300]
+
+
+def test_scan_still_fails_on_an_unexplained_missing_output(run, paths):
+    (run.run_dir / "jorek000200.h5").write_bytes(b"silent")
+    with pytest.raises(Jorek2NoOutputError):
+        four.run_four_scan(run, paths, [100, 200], nstpts=5, ntht=4, n_workers=1)
+
+
+def test_no_output_error_survives_pickling():
+    import pickle
+
+    exc = pickle.loads(pickle.dumps(Jorek2NoOutputError("msg", "the log")))
+    assert (str(exc), exc.log) == ("msg", "the log")
