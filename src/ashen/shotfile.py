@@ -96,6 +96,11 @@ class ShotParams:
     #: See boundary.py / profiles.py.
     castor_suffix: str = "DIIID"
 
+    #: Filename under the run's exe/ that `analyse --diag four` runs in place
+    #: of the default jorek2_four -- e.g. one built against a different
+    #: model. Read only by analyse; prepare_run ignores it. None = default.
+    four_exe: str | None = None
+
     # --- required only for certain methods ---------------------------------
     rho_const: float | None = None
     bnd_file: str | None = None

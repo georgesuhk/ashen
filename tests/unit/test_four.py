@@ -106,6 +106,43 @@ def paths(run):
     return RunPaths(run.run_dir, pad_width=6)
 
 
+# --- tool override (shotfile four_exe) -----------------------------------------------------
+
+
+def test_run_four_step_uses_named_tool(run, paths):
+    """tool= runs that exe/ entry instead of FOUR_TOOL -- the default stub
+    is removed so a fallback to it would fail, not pass silently."""
+    exe_dir = run.run_dir / "exe"
+    _install(exe_dir, "jorek2_four_alt", _FOUR)
+    (exe_dir / f"jorek2_four{_EXT}").unlink()
+
+    report = four.run_four_step(run, paths, 100, tool=f"jorek2_four_alt{_EXT}")
+    assert not report.cached and report.n_records > 0
+
+
+def test_analyse_four_tool_rejects_missing_exe(tmp_path):
+    from ashen.cli.analyse import _four_tool
+
+    run_dir = tmp_path / "run"
+    (run_dir / "exe").mkdir(parents=True)
+    (run_dir / "exe" / "jorek2_four_RE").write_text("", encoding="utf-8")
+    (run_dir / "shotfile.py").write_text(
+        "qa = 2.1\ng = 2.3\neta = 1e-3\ntstep_n = [1]\nnstep_n = [1]\nnout = 1\n"
+        "exe = 'jorek_model600'\njobscript = 'j'\nffprime_method = 'file'\n"
+        "T_method = 'file'\nrho_method = 'file'\nbnd_method = 'file'\n"
+        "bnd_file = 'b'\nfour_exe = 'jorek2_four_typo'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(FileNotFoundError, match="jorek2_four_RE"):
+        _four_tool(run_dir)
+
+
+def test_analyse_four_tool_defaults_without_shotfile(tmp_path):
+    from ashen.cli.analyse import _four_tool
+
+    assert _four_tool(tmp_path) is None
+
+
 # --- four_params_nml ---------------------------------------------------------------------
 
 

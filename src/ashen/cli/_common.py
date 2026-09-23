@@ -34,6 +34,7 @@ from ashen.diagnostics.poincare_cache import PoincareCacheError
 from ashen.jorek2 import Jorek2Error
 from ashen.logfile import LogfileError
 from ashen.paths import PaddingError
+from ashen.shotfile import ShotfileError
 
 __all__ = [
     "CASE_ERRORS",
@@ -64,6 +65,7 @@ CASE_ERRORS = (
     LogfileError,
     PoincareCacheError,
     FourCacheError,
+    ShotfileError,
 )
 
 
