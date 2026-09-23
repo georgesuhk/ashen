@@ -187,12 +187,17 @@ def run_four_step(
     rad_range: tuple[float, float] = (0.001, 0.999),
     omp_threads: int = 1,
     force: bool = False,
+    tool: str | None = None,
 ) -> FourStepReport:
     """One restart step's Fourier decomposition.
 
     Cached whole: unlike Poincare tracing, not incremental -- a step with
     an existing cache does nothing unless force=True.
+
+    tool names the executable under exe/; None means FOUR_TOOL, looked up
+    at call time so a test's monkeypatch of it still applies.
     """
+    tool = tool or FOUR_TOOL
     cache_path = paths.four_cache(step)
     if not force and cache_path.is_file():
         return FourStepReport(
@@ -204,7 +209,7 @@ def run_four_step(
     try:
         result = run_tool(
             run,
-            FOUR_TOOL,
+            tool,
             step=step,
             dest_dir=scratch,
             output_glob="*_modes_n[0-9][0-9][0-9]",
@@ -239,7 +244,7 @@ def run_four_step(
     for name, out_path in result.outputs.items():
         match = _FILE_RE.match(name)
         if not match:
-            raise Jorek2Error(f"{FOUR_TOOL}: unexpected output {name!r} for step {step}")
+            raise Jorek2Error(f"{tool}: unexpected output {name!r} for step {step}")
         variable = match["var"]
         n = int(match["n"])
         for m, data in _parse_four_file(out_path, expected_n=n):
@@ -275,6 +280,7 @@ def run_four_scan(
     n_workers: int = 1,
     omp_threads: int = 1,
     force: bool = False,
+    tool: str | None = None,
     on_progress: Callable[[int, int, FourStepReport], None] | None = None,
 ) -> list[FourStepReport]:
     """Every step in a case, traced concurrently -- one process per step,
@@ -296,7 +302,7 @@ def run_four_scan(
         paths,
         nstpts=nstpts, ntht=ntht, nmaxsteps=nmaxsteps, deltaphi=deltaphi,
         nsmallsteps=nsmallsteps, rad_range=rad_range,
-        omp_threads=omp_threads, force=force,
+        omp_threads=omp_threads, force=force, tool=tool,
     )
     if n_workers <= 1 or len(steps) <= 1:
         reports = []

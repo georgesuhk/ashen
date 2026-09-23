@@ -41,6 +41,7 @@ from ashen.diagnostics import qprofile as qprofile_diag
 from ashen.jorek2 import Jorek2Run, enable_tool_output, run_zero_d
 from ashen.paths import RunPaths, read_float
 from ashen.postproc import zero_d_is_usable
+from ashen.shotfile import load_shotfile
 
 DIAG_CHOICES = ("zerod", "poincare", "profiles", "four")
 
@@ -162,6 +163,28 @@ def _gather_qprofile(
     )
 
 
+def _four_tool(run_dir: Path) -> str | None:
+    """The run's shotfile ``four_exe``, checked to exist under exe/ before
+    any step is traced -- otherwise a typo only surfaces as a bare
+    FileNotFoundError from inside the first worker. None (no shotfile, or
+    four_exe unset) means four_diag's default.
+    """
+    shotfile = run_dir / "shotfile.py"
+    if not shotfile.is_file():
+        return None
+    four_exe = load_shotfile(shotfile).four_exe
+    if four_exe is None:
+        return None
+    exe_dir = run_dir / "exe"
+    if not (exe_dir / four_exe).is_file():
+        available = sorted(p.name for p in exe_dir.glob("jorek2_four*")) if exe_dir.is_dir() else []
+        raise FileNotFoundError(
+            f"shotfile four_exe={four_exe!r} not found in {exe_dir}; "
+            f"jorek2_four* there: {available or 'none'}"
+        )
+    return four_exe
+
+
 def _run_case(
     case: Case,
     *,
@@ -260,6 +283,9 @@ def _run_case(
 
     if "four" in diags:
         four_steps = case.steps_for("four")
+        four_tool = _four_tool(run_dir)
+        if four_tool is not None:
+            print(f"  four: using exe/{four_tool} (shotfile four_exe)")
 
         # q-profile locates each mode's q=m/n rational surface for plot's
         # rational_surface_series (diagnostics.four_modes) -- gathered
@@ -276,7 +302,7 @@ def _run_case(
             deltaphi=case.deltaphi, nsmallsteps=case.nsmallsteps,
             rad_range=tuple(case.rad_range),
             n_workers=n_workers, omp_threads=omp_threads, force=force,
-            on_progress=_four_progress,
+            tool=four_tool, on_progress=_four_progress,
         )
 
 
