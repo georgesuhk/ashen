@@ -28,7 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from ashen.paths import RunPaths, step_name_variants
+from ashen.padding import find_step_file, resolve_step_file, restart_name, step_name_variants
+from ashen.paths import RunPaths
 
 __all__ = [
     "Jorek2Error", "Jorek2NoOutputError", "MissingRestartError", "Jorek2Run", "ToolResult", "run_tool", "run_zero_d",
@@ -256,22 +257,15 @@ class Jorek2Run:
     profiles: tuple[str, ...] = ("T_prof.dat", "rho_prof.dat", "ffprime_prof.dat")
 
     def restart_path(self, step: int) -> Path:
-        return self.run_dir / f"jorek{step:0{self.pad_width}d}.h5"
+        """This step's restart, under whichever width it was written with.
 
-
-
-def _first_existing_variant(workdir: Path, output: str, step: int) -> Path | None:
-    """The step-padding variant of ``output`` that the tool actually wrote.
-
-    ``output`` is a path relative to the scratch dir; only its filename is
-    re-padded, never its directory.
-    """
-    rel = Path(output)
-    for name in step_name_variants(rel.name, step):
-        candidate = workdir / rel.with_name(name)
-        if candidate.is_file():
-            return candidate
-    return None
+        Same resolution as RunPaths.restart: a folder continued under a
+        build with the other rst_file_ind_fmt ordering holds both spellings,
+        and every step in it must stay reachable.
+        """
+        return resolve_step_file(
+            self.run_dir / restart_name(step, self.pad_width), step
+        )
 
 
 def run_tool(
@@ -410,12 +404,10 @@ def run_tool(
         log = result.stdout + ("\n" if result.stdout and result.stderr else "") + result.stderr
         collected: dict[str, Path] = {}
         for output in outputs:
-            src = workdir / output
-            if not src.is_file():
-                # The tool may have padded the step to a different width than
-                # this run's restarts use -- that is a property of the
-                # postproc binary, not of the run (paths.JOREK_PAD_WIDTHS).
-                src = _first_existing_variant(workdir, output, step)
+            # The tool may have padded the step to a different width than
+            # this run's restarts use -- that is a property of the binary,
+            # not of the run (padding.JOREK_PAD_WIDTHS).
+            src = find_step_file(workdir / output, step)
             if src is None:
                 raise Jorek2NoOutputError(
                     f"{tool} did not produce expected output {output!r} for "

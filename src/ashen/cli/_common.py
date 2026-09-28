@@ -33,7 +33,7 @@ from ashen.diagnostics.four_cache import FourCacheError
 from ashen.diagnostics.poincare_cache import PoincareCacheError
 from ashen.jorek2 import Jorek2Error
 from ashen.logfile import LogfileError
-from ashen.paths import PaddingError
+from ashen.padding import PaddingError
 from ashen.shotfile import ShotfileError
 
 __all__ = [

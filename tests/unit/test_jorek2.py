@@ -565,6 +565,21 @@ def test_output_collected_under_the_other_step_padding(stub_run, tmp_path, monke
     assert dst.name == "zeroD_quantities_s000100.dat"
 
 
+def test_restart_at_the_other_width_is_staged(stub_run, tmp_path):
+    """A run continued under a build with the other rst_file_ind_fmt
+    ordering holds both spellings. stub_run's width is 6; step 200 here is
+    5-wide and must still be found, not reported as a missing restart."""
+    (stub_run.run_dir / "jorek00200.h5").write_bytes(b"five-wide")
+    assert stub_run.restart_path(200).name == "jorek00200.h5"
+    collected = run_tool(
+        stub_run, TOOL_NAME, step=200, dest_dir=tmp_path / "dest",
+        outputs=["cwd_listing.txt"], stdin_text="x",
+    )
+    assert "jorek_restart.h5" in collected["cwd_listing.txt"].read_text(
+        encoding="utf-8"
+    ).splitlines()
+
+
 def test_missing_output_names_the_paddings_tried(stub_run, tmp_path):
     with pytest.raises(Jorek2Error, match="nor under any other step padding"):
         run_tool(

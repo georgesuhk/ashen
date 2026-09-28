@@ -20,7 +20,8 @@ from ashen.jorek2 import (
     MissingRestartError,
     enable_tool_output,
 )
-from ashen.paths import PaddingError, RunPaths
+from ashen.padding import PaddingError
+from ashen.paths import RunPaths
 
 __all__ = ["build_parser", "main"]
 
