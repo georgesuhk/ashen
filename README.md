@@ -254,6 +254,20 @@ exists.
 Nothing is renamed on disk: JOREK's output keeps the name JOREK gave it, so
 legacy tooling reading the same run folder is unaffected.
 
+All of this is decided in one module, `ashen.padding`; nothing else formats
+a step width. It also covers a third case: a JOREK binary that looks a file
+up by a name *it* builds, trying only its own width (the particle tracer's
+field reader does this). Staging for such a binary uses the width that
+build writes, read from `communication/mod_import_restart.f90` in the
+checkout it was compiled from. `--show-config` prints it for both `jorek`
+and `jorek_re`, e.g.:
+
+```
+[restart step width]
+  jorek    = 6 digits
+  jorek_re = 6 digits
+```
+
 ### Seeing what the jorek2_* tools are doing
 
 By default a tool's stdout is discarded and its stderr kept back to be quoted

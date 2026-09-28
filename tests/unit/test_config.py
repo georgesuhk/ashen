@@ -328,6 +328,25 @@ def test_describe_mentions_source_and_flags_missing(tmp_path):
     assert "(missing)" in text
 
 
+def test_describe_reports_each_jorek_tree_s_step_width(tmp_path):
+    """Read from each checkout's mod_import_restart.f90 (ashen.padding);
+    a tree without one is reported, not fatal."""
+    campaign = build_campaign(tmp_path)
+    source = tmp_path / "jorek_RE" / "communication" / "mod_import_restart.f90"
+    source.parent.mkdir()
+    source.write_text(
+        "character(len=20), parameter :: rst_file_ind_fmt(2) = (/'(a,i6.6)', '(a,i5.5)'/)\n",
+        encoding="utf-8",
+    )
+    text = load_site(campaign / "site.toml").describe()
+
+    section = text.split("[restart step width]")[1].split("[launch]")[0]
+    lines = {line.split("=")[0].strip(): line.split("=")[1].strip()
+             for line in section.strip().splitlines()}
+    assert lines["jorek_re"] == "6 digits"
+    assert lines["jorek"].startswith("unknown")
+
+
 # --- [diagnostics] -----------------------------------------------------------
 
 

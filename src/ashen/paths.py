@@ -1,4 +1,4 @@
-"""Run-folder conventions: restart-step padding and derived filenames.
+"""Run-folder conventions: derived filenames, with the step padding fixed once.
 
 Ports basics.py:120-163 (get_jorek_padding_length, restart_filename, pad_t_step).
 
@@ -9,15 +9,27 @@ surfaces with jorek_pad_width at :100/:157/:186 but wrote .npz with the
 default at :211; analysis.py used sniffed at :122, default at :155), so a
 non-6-padded run silently produced caches whose names didn't match what
 the reader looked for. Here the width is resolved once per run into
-RunPaths, and every filename comes from that object.
+RunPaths, and every filename comes from that object. How wide a step is,
+and when more than one width is acceptable, is decided in ashen.padding.
 """
 
 from __future__ import annotations
 
-import re
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+
+# Step padding lives in ashen.padding; re-exported here because RunPaths is
+# where most callers meet it, and existing imports from ashen.paths keep working.
+from ashen.padding import (
+    DEFAULT_PAD_WIDTH,
+    JOREK_PAD_WIDTHS,
+    PaddingError,
+    detect_pad_width,
+    resolve_step_file,
+    restart_name,
+    step_name_variants,
+    step_str,
+)
 
 __all__ = [
     "DEFAULT_PAD_WIDTH",
@@ -31,67 +43,6 @@ __all__ = [
     "step_str",
 ]
 
-#: Only a fallback for synthetic cases. Real runs must sniff the width.
-DEFAULT_PAD_WIDTH = 6
-
-#: Step-index widths a JOREK build may use in a filename, preferred first.
-#: Mirrors ``rst_file_ind_fmt = (/'(a,i6.6)', '(a,i5.5)'/)``
-#: (``communication/mod_import_restart.f90:5``).
-#:
-#: The two halves of JOREK are not symmetric about this, which is what makes
-#: a mismatch so quiet. *Importing* a restart loops over both entries
-#: (``mod_import_restart.f90:2686``), so ``jorek08002.h5`` and
-#: ``jorek008002.h5`` are equally readable. *Naming an output* takes
-#: ``rst_file_ind_fmt(1)`` alone (``step_range_string``,
-#: ``exec_commands.f90:1068``) -- one fixed width, whatever the restarts
-#: happen to use. So a build reads your run happily and then writes
-#: ``..._s008002.dat`` next to ``jorek08002.h5``, and a reader that derived
-#: its width from the restart filenames looks for a file that is right there
-#: under a name one character longer.
-#:
-#: Different postproc builds differ in which entry is first, so this is a
-#: property of the binary in use, not of the run.
-JOREK_PAD_WIDTHS = (6, 5)
-
-_STEP_DIGITS_RE = re.compile(r"\d+")
-
-
-def step_name_variants(
-    name: str, step: int | float, widths: tuple[int, ...] = JOREK_PAD_WIDTHS
-) -> list[str]:
-    """``name`` with the step index re-padded to each width in ``widths``.
-
-    Only digit runs that *are* the step are touched, so
-    ``fluxsurface_at_psi_0.200_s08002.dat`` re-pads the ``08002`` and leaves
-    the ``0`` and ``200`` of the psi value alone. A psi value that happened
-    to read as the step number would be rewritten too; with psi formatted to
-    three decimals and steps in the thousands that cannot arise.
-
-    The original spelling is never included -- these are the *alternatives*
-    to whatever the caller already tried.
-    """
-    target = int(step)
-    variants: list[str] = []
-    for width in widths:
-        padded = step_str(target, width)
-        variant = _STEP_DIGITS_RE.sub(
-            lambda m: padded if int(m.group()) == target else m.group(), name
-        )
-        if variant != name and variant not in variants:
-            variants.append(variant)
-    return variants
-
-_RESTART_RE = re.compile(r"^jorek.*?(\d+)\.h5$")
-
-
-class PaddingError(RuntimeError):
-    """Raised when the restart padding width cannot be determined."""
-
-
-def step_str(step: int | float, width: int = DEFAULT_PAD_WIDTH) -> str:
-    """Zero-pad a step index. Prefer :meth:`RunPaths.step_str`."""
-    return f"{int(step):0{width}d}"
-
 
 def write_float(path: Path | str, value: float) -> None:
     """Write a single float, full double precision. Ports ``basics.py:17``."""
@@ -101,25 +52,6 @@ def write_float(path: Path | str, value: float) -> None:
 def read_float(path: Path | str) -> float:
     """Read a single float written by :func:`write_float`. Ports ``basics.py:21``."""
     return float(Path(path).read_text(encoding="utf-8").strip())
-
-
-def detect_pad_width(directory: Path | str = ".") -> int:
-    """Infer the zero-pad width from ``jorek*.h5`` files in ``directory``.
-
-    Takes the majority width, so a stray differently-named file does not
-    change the answer.
-    """
-    widths = [
-        len(match.group(1))
-        for path in Path(directory).glob("jorek*.h5")
-        if (match := _RESTART_RE.match(path.name))
-    ]
-    if not widths:
-        raise PaddingError(
-            f"{directory}: no JOREK restart files (jorek*.h5) to infer the "
-            "step padding width from."
-        )
-    return Counter(widths).most_common(1)[0][0]
 
 
 @dataclass(frozen=True)
@@ -143,29 +75,15 @@ class RunPaths:
         return step_str(step, self.pad_width)
 
     def _resolve(self, step: int | float, build) -> Path:
-        """The existing file among this step's padding variants, else the
-        canonical one.
+        """This step's file at the run's own width, or whichever other width
+        JOREK actually wrote it under (:func:`ashen.padding.resolve_step_file`).
 
-        Used only for paths **JOREK writes**, whose width comes from the
-        postproc binary rather than from this run (see JOREK_PAD_WIDTHS).
+        Used only for paths **JOREK writes** -- rule 1 of ashen.padding.
         Paths *ashen* writes -- the Poincare, profile and jorek2_four caches
         -- keep one spelling at ``self.pad_width`` and must not go through
-        here: they are only ever written and read by this package, so a
-        second accepted spelling would be a way to end up with two caches
-        for one step rather than a way to find the one that exists.
-
-        Falling back to the canonical name rather than raising keeps this
-        usable as a write target and keeps "expected <path>" messages
-        predictable when nothing exists yet.
+        here (rule 2).
         """
-        canonical = build(self.step_str(step))
-        if canonical.exists():
-            return canonical
-        for name in step_name_variants(canonical.name, step):
-            alt = canonical.with_name(name)
-            if alt.exists():
-                return alt
-        return canonical
+        return resolve_step_file(build(self.step_str(step)), step)
 
     # --- JOREK outputs ---
 
@@ -178,8 +96,8 @@ class RunPaths:
         build) would otherwise have half its steps unreachable, and JOREK's
         own importer accepts either.
         """
-        return self._resolve(
-            step, lambda s: self.run_dir / f"{prefix}{s}{ext}"
+        return resolve_step_file(
+            self.run_dir / restart_name(step, self.pad_width, prefix, ext), step
         )
 
     @property

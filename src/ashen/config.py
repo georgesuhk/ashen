@@ -19,6 +19,8 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
+from ashen.padding import PaddingError, source_pad_width
+
 SITE_FILENAME = "site.toml"
 ENV_VAR = "ASHEN_SITE"
 
@@ -172,6 +174,16 @@ class Site:
             target = self.paths[key]
             mark = "  " if target.exists() else "  (missing)"
             lines.append(f"  {key:<{width}} = {target}{mark}")
+        # The width each checkout's binaries name restarts and outputs with
+        # (ashen.padding, rule 3) -- read from source, so a mismatch between
+        # the two trees shows up here rather than as a missing file later.
+        lines += ["", "[restart step width]"]
+        for key in ("jorek", "jorek_re"):
+            try:
+                step_width = f"{source_pad_width(self.paths[key])} digits"
+            except PaddingError:
+                step_width = "unknown (no mod_import_restart.f90 here)"
+            lines.append(f"  {key:<{width}} = {step_width}")
         lines += [
             "",
             "[launch]",

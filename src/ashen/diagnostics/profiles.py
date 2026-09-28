@@ -20,7 +20,8 @@ from pathlib import Path
 import numpy as np
 
 from ashen.jorek2 import Jorek2Error, Jorek2Run, MissingRestartError, run_tool
-from ashen.paths import RunPaths, step_str
+from ashen.padding import step_str
+from ashen.paths import RunPaths
 from ashen.postproc import profile_script, read_postproc_profile
 
 __all__ = [
