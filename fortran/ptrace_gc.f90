@@ -74,7 +74,6 @@ use mod_particle_diagnostics, only: write_particle_diagnostics
 use mod_fields_linear,        only: read_jorek_fields_interp_linear
 use mod_gc_relativistic,      only: runge_kutta_fixed_dt_gc_push_jorek, &
                                     relativistic_gc_momenta_from_E_cospitch
-use mod_import_restart,       only: rst_file_ind_fmt
 use phys_module,              only: central_mass, central_density
 use constants,                only: ATOMIC_MASS_UNIT, EL_CHG, SPEED_OF_LIGHT, MU_ZERO
 use mpi
@@ -322,8 +321,10 @@ subroutine write_snapshot()
 end subroutine write_snapshot
 
 !> The JOREK step and time of every restart this run reads: the linked
-!> sequence jorek<i>.h5 from first_index (at rst_file_ind_fmt(1)'s width,
-!> as the field reader names them), or jorek_restart.h5 alone when static.
+!> sequence jorek<i>.h5 from first_index, or jorek_restart.h5 alone when
+!> static. Looked for at 6 digits, then 5: ashen links both, and JOREK
+!> versions differ in which one the field reader opens (newer ones name it
+!> in mod_import_restart's rst_file_ind_fmt, which older ones lack).
 subroutine read_restart_table(static, first_index, n, steps, times)
   logical, intent(in)                :: static
   integer, intent(in)                :: first_index
@@ -333,7 +334,7 @@ subroutine read_restart_table(static, first_index, n, steps, times)
   integer, parameter :: MAX_RESTARTS = 100000
   integer, allocatable :: all_steps(:)
   real*8,  allocatable :: all_times(:)
-  character(len=80) :: stem
+  character(len=80) :: fname
   logical :: exists
   integer :: i
   real*8  :: t_norm
@@ -347,11 +348,15 @@ subroutine read_restart_table(static, first_index, n, steps, times)
     call read_restart_stamp('jorek_restart.h5', t_norm, all_steps(1), all_times(1))
   else
     do i = first_index, first_index + MAX_RESTARTS - 1
-      write(stem, rst_file_ind_fmt(1)) 'jorek', i
-      inquire(file=trim(stem)//'.h5', exist=exists)
+      write(fname, '(A,I6.6,A)') 'jorek', i, '.h5'
+      inquire(file=trim(fname), exist=exists)
+      if (.not. exists) then
+        write(fname, '(A,I5.5,A)') 'jorek', i, '.h5'
+        inquire(file=trim(fname), exist=exists)
+      end if
       if (.not. exists) exit
       n = n + 1
-      call read_restart_stamp(trim(stem)//'.h5', t_norm, all_steps(n), all_times(n))
+      call read_restart_stamp(trim(fname), t_norm, all_steps(n), all_times(n))
     end do
   end if
   allocate(steps(n), times(n))
