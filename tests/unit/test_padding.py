@@ -14,6 +14,7 @@ from ashen.padding import (
     find_step_file,
     resolve_step_file,
     restart_name,
+    restart_steps,
     source_pad_width,
 )
 
@@ -82,6 +83,20 @@ def test_find_ignores_a_directory_with_the_file_s_name(tmp_path):
 def test_resolve_falls_back_to_canonical(tmp_path):
     canonical = tmp_path / "jorek08002.h5"
     assert resolve_step_file(canonical, 8002) == canonical
+
+
+# --- restart_steps ----------------------------------------------------------------
+
+
+def test_restart_steps_sorted_and_deduplicated_across_widths(tmp_path):
+    for name in ("jorek03200.h5", "jorek003000.h5", "jorek03000.h5", "jorek_restart.h5",
+                 "jorek00100.h5.tmp", "notes.txt"):
+        (tmp_path / name).write_bytes(b"")
+    assert restart_steps(tmp_path) == [3000, 3200]
+
+
+def test_restart_steps_empty_folder(tmp_path):
+    assert restart_steps(tmp_path) == []
 
 
 # --- source_pad_width ------------------------------------------------------------

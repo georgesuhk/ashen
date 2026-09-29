@@ -1138,6 +1138,71 @@ Connection lengths use `R0` extracted from the run's log
 (`ashen.logfile.r_axis`) rather than the legacy hardcoded `R0 = 1.36` -- see
 `KNOWN_ISSUES.md` #6 and #7 for what changed and what's still an open question.
 
+## Tracing particles
+
+`bin/trace` runs JOREK's own particle programs from `particles/examples`,
+unmodified, against the restarts of a run that already exists. ashen wraps
+them; it does not change what they compute. A case traces when it sets
+`trace_program` and `trace_start_step`, alongside its other keys in
+`cases.toml` (and `[defaults]` can seed any `trace_*` key, like the rest):
+
+```toml
+[cases."qa2.1_g2.3/eta1e-3_RE"]
+steps            = { start = 200, stop = 5800, step = 200 }
+trace_program    = "re_gc_current_density_initialisation"
+trace_start_step = 3000
+```
+
+```bash
+python ~/ashen/bin/trace --list                                      # tracing cases, and the programs
+python ~/ashen/bin/trace --case "qa2.1_g2.3/eta1e-3_RE" --dry-run    # what it would link and run
+python ~/ashen/bin/trace --case "qa2.1_g2.3/eta1e-3_RE"
+python ~/ashen/bin/trace                                             # every case that sets trace_program
+```
+
+| `trace_program` | what it traces (all fixed in its source) | writes |
+|---|---|---|
+| `re_gc_current_density_initialisation` | 32 relativistic guiding-centre electrons **per MPI rank**, sampled from the current density (20 MeV, pitch near pi), 1e-5 s from `trace_start_step`'s own time -- or the particles in `trace_particles`, if given | `part_diag.h5`, `part_restart.h5` |
+| `ex6_jorek` | one relativistic full-orbit electron, **starting at t = 2.5 ms**, for 1e-5 s | `diag.h5`, `part_restart.h5` |
+| `ex7_jorek` | one relativistic guiding-centre electron, **starting at t = 2.5 ms**, for 1e-6 s; stops at the first lost particle | `diag.h5`, `part_restart.h5` |
+
+Anything else -- particle positions, energies, time step, duration -- means
+editing the program in JOREK and rebuilding it; ashen only chooses which
+restarts it sees and how it is launched. Keys: `trace_start_step`
+(required with `trace_program`), `trace_end_step` (last restart it sees;
+default all), `trace_particles` (re_gc only: a JOREK particle file to start
+from, relative to `cases.toml`, *copied* in as `part_restart.h5` because the
+program overwrites that file at the end), `trace_n_mpi`,
+`trace_omp_threads` (default: `site.toml`'s `[diagnostics]`), `trace_exe`
+(default: the program's name).
+
+Each trace runs in `<run>/trace/<program>/`, with the program's output in
+`trace.log`. A completed trace is `[cached]` until its settings, restarts,
+particle file or executable change; `--force` reruns it. `--tool-output`
+echoes the program live. ex7 stopping at a lost particle is reported as
+such, not as a failure.
+
+**ex6/ex7 start at a hard-coded 2.5 ms**, whatever `trace_start_step` is: they
+pick the last linked restart before that time. `trace` warns when the
+linked restarts don't span it, judged from the zeroD cache
+(`analyse --diag zerod` fills it) -- otherwise the particle starts in
+fields from the wrong time, and the program only prints a warning.
+
+**How the restarts reach the program.** JOREK's particle field reader looks
+at most 20 file numbers ahead for the next restart, opens each at one
+width only (`rst_file_ind_fmt(1)`), and -- for ex6/ex7 -- chooses its first
+file with `last_file_before_time`, which only understands 5-digit names. So
+the trace folder links the chosen restarts in as a consecutive sequence
+under **both** widths (`jorek00001.h5` and `jorek000001.h5 -> ../../jorek03200.h5`,
+...). Each file carries its own time, so nothing is lost by the
+renumbering. Between restarts the fields are interpolated linearly in time,
+so the restarts traced through must share one grid.
+
+**Building.** In the JOREK checkout the run was built from, `make <program>`
+with the **same `MODEL`** as the run (variable indices differ between
+models), and copy the binary into the run's `exe/` under the program's name
+(or set `trace_exe`). A missing executable is reported with the exact command.
+
 ## Simulation time at a restart step
 
 `bin/timestep` is a one-off lookup, not a `cases.toml`-driven gather: run it
@@ -1169,7 +1234,8 @@ bin/            entry-point shims; the only place sys.path is touched
 src/ashen/
   config.py     site.toml discovery and path resolution
   namelist.py   Fortran namelist reading and editing
-  paths.py      run-folder conventions, restart-step padding
+  paths.py      run-folder conventions (derived filenames)
+  padding.py    restart-step padding: every 5- vs 6-digit decision
   physics.py    constants used on the JOREK path
   castor_io.py  shared CASTOR3D two-column file parser
   boundary.py   plasma boundary geometry, psi-grid extension
@@ -1183,7 +1249,9 @@ src/ashen/
                 connection_length.py, timestep.py -- pure math, no matplotlib
   logfile.py    scalar extraction from a JOREK log (R_axis, etc.)
   plotting/     poincare.py, connection_length.py, colors.py, style
-  cases.py      cases.toml loader for bin/analyse and bin/plot
+  cases.py      cases.toml loader for bin/analyse, bin/plot and bin/trace
+  particle_programs.py  the JOREK particle programs bin/trace wraps
+  tracing.py    stage and run a case's trace
   cli/          argument handling, importable for testing
 tests/
   unit/         run anywhere, no JOREK needed

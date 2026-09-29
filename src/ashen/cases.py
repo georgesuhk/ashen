@@ -40,6 +40,8 @@ _CASE_KEYS = (
     "poincare_highlight", "poincare_point_size", "mark_rational",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
     "theta_wetted_threshold",
+    "trace_program", "trace_start_step", "trace_end_step", "trace_particles",
+    "trace_n_mpi", "trace_omp_threads", "trace_exe",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -212,6 +214,25 @@ class Case:
     #: scale as theta_hist's per-bin fraction output). None -> 1/theta_bins
     #: at plot time. `--theta_wetted_threshold` CLI flag outranks this.
     theta_wetted_threshold: float | None = None
+    #: `bin/trace`: which JOREK particle program to run against this run's
+    #: restarts (a key of ashen.particle_programs.PROGRAMS). None = the case
+    #: has no trace. The program runs unmodified -- see that module.
+    trace_program: str | None = None
+    #: `bin/trace`: first restart step the program sees. Required with
+    #: trace_program. re_gc starts at this step's own time; ex6/ex7 always
+    #: start at 2.5 ms and pick from the restarts from here on.
+    trace_start_step: int | None = None
+    #: `bin/trace`: last restart step the program sees. None = every later one.
+    trace_end_step: int | None = None
+    #: `bin/trace`, re_gc only: a JOREK particle file to start from instead
+    #: of sampling the current density. Resolved against cases.toml's folder.
+    trace_particles: Path | None = None
+    #: `bin/trace`: MPI ranks. re_gc samples its particle count per rank.
+    trace_n_mpi: int = 1
+    #: `bin/trace`: OpenMP threads per rank; 0 = site.toml's [diagnostics].
+    trace_omp_threads: int = 0
+    #: `bin/trace`: executable under the run's exe/. None = the program's name.
+    trace_exe: str | None = None
 
     def steps_for(self, diag: str) -> list[int]:
         """`steps` unless `diag` overrides it in `diag_steps` (case+diag tier)."""
@@ -330,6 +351,55 @@ def _ylim_table_from_spec(
             )
         ylim[var] = [lo, hi]
     return ylim
+
+
+def _check_trace_fields(merged: dict, *, case_name: str, source: Path) -> None:
+    """Validate and normalise a case's trace_* fields in place."""
+    from ashen.particle_programs import PROGRAMS
+
+    where = f"{source}: case {case_name!r}"
+    program = merged.get("trace_program")
+    if program is None:
+        others = sorted(k for k in merged if k.startswith("trace_"))
+        if others:
+            raise CasesError(f"{where} sets {others} but no trace_program")
+        return
+    if program not in PROGRAMS:
+        raise CasesError(
+            f"{where}: trace_program must be one of {sorted(PROGRAMS)}, got {program!r}"
+        )
+    if "trace_start_step" not in merged:
+        raise CasesError(f"{where} sets trace_program but no trace_start_step")
+
+    start = int(merged["trace_start_step"])
+    if start < 0:
+        raise CasesError(f"{where}: trace_start_step must be >= 0, got {start}")
+    merged["trace_start_step"] = start
+    if merged.get("trace_end_step") is not None:
+        end = int(merged["trace_end_step"])
+        if end < start:
+            raise CasesError(
+                f"{where}: trace_end_step ({end}) is before trace_start_step ({start})"
+            )
+        merged["trace_end_step"] = end
+
+    if merged.get("trace_particles") is not None:
+        if not PROGRAMS[program].reads_particles:
+            raise CasesError(
+                f"{where}: {program} always makes its own particles; "
+                "trace_particles only applies to a program that reads part_restart.h5"
+            )
+        particles = Path(merged["trace_particles"])
+        merged["trace_particles"] = particles if particles.is_absolute() else source.parent / particles
+
+    n_mpi = int(merged.get("trace_n_mpi", 1))
+    omp_threads = int(merged.get("trace_omp_threads", 0))
+    if n_mpi < 1 or omp_threads < 0:
+        raise CasesError(f"{where}: trace_n_mpi must be >= 1 and trace_omp_threads >= 0")
+    if "trace_n_mpi" in merged:
+        merged["trace_n_mpi"] = n_mpi
+    if "trace_omp_threads" in merged:
+        merged["trace_omp_threads"] = omp_threads
 
 
 def load_cases(path: Path | str) -> dict[str, Case]:
@@ -553,6 +623,8 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                     f"must not be greater than end ({end})"
                 )
             merged["four_growth_steps"] = [start, end]
+
+        _check_trace_fields(merged, case_name=name, source=path)
 
         unknown = sorted(set(merged) - set(_CASE_KEYS))
         if unknown:
