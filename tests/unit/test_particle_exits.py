@@ -231,8 +231,17 @@ def test_particles_plot_takes_boundary_exits_from_the_diag_file(campaign, capsys
     np.testing.assert_allclose(seen["exits"].R[0], 2.0)
 
 
-def test_not_traced_yet_and_unknown_programs(campaign, capsys):
+def test_not_traced_yet(campaign, capsys):
     assert plot_cli.main(["--case", "run", "--diag", "particle_exits"]) == 0
-    assert "run bin/ptrace first" in capsys.readouterr().out
-    assert plot_cli.main(["--case", "other", "--diag", "particle_exits"]) == 0
-    assert "doesn't know which diagnostics file my_tracer writes" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "no particle diagnostics file (part_diag.h5, diag.h5, ptrace_diag.h5)" in out
+    assert "run bin/ptrace first" in out
+
+
+def test_any_executable_name_is_plotted_from_the_file_in_its_folder(campaign, capsys):
+    """What's plotted is found in the ptrace folder, not from the exe's
+    name: a ptrace_gc built as my_tracer is plotted all the same."""
+    write_diag(campaign / "other" / "ptrace" / "my_tracer" / "ptrace_diag.h5",
+               t=T, psi_n=PSI, R=R, Z=Z, phi=PHI, lost=LOST, theta=THETA)
+    assert plot_cli.main(["--case", "other", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    assert "2 of 3 particles exit past psi_n = 1" in capsys.readouterr().out

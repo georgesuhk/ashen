@@ -1350,8 +1350,11 @@ python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits --e
 - **Theta.** A rebuilt `ptrace_gc` writes theta about the moving magnetic
   axis. Older `ptrace_diag.h5` files have no theta, so it is computed from R
   and Z about the axis the run's log gives first.
-- **Programs.** `re_gc_current_density_initialisation` (`part_diag.h5`) and
-  ex6/ex7 (`diag.h5`) are read too, if they wrote psi_n, R, Z, phi and lost.
+- **Which file.** Whichever particle diagnostics file is in the ptrace folder
+  -- `ptrace_diag.h5`, `part_diag.h5` (re_gc) or `diag.h5` (ex6/ex7) -- is
+  read, whatever `ptrace_exe` is called, so a `ptrace_gc` built as
+  `ptrace_gc_refluid_fixed_T_rho` plots the same. It must hold psi_n, R, Z,
+  phi and lost.
 
 ## Simulation time at a restart step
 
