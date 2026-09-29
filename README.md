@@ -313,7 +313,7 @@ Both echoed streams go to **stderr**, whichever they came from, so `analyse`'s
 own progress on stdout stays separable:
 
 ```bash
-python ~/ashen/bin/analyse --case NAME --diag poincare --tool-output 2> trace.log
+python ~/ashen/bin/analyse --case NAME --diag poincare --tool-output 2> ptrace.log
 ```
 
 `ASHEN_TOOL_OUTPUT=1` does the same thing without a flag -- for a jobscript,
@@ -1140,63 +1140,63 @@ Connection lengths use `R0` extracted from the run's log
 
 ## Tracing particles
 
-`bin/trace` runs a particle-tracing executable -- normally one of JOREK's
+`bin/ptrace` runs a particle-tracing executable -- normally one of JOREK's
 own `particles/examples` programs -- unmodified, against the restarts of a
 run that already exists. ashen wraps it; it does not change what it
-computes. A case traces when it sets `trace_exe` and `trace_start_step`,
+computes. A case traces when it sets `ptrace_exe` and `ptrace_start_step`,
 alongside its other keys in `cases.toml` (and `[defaults]` can seed any
-`trace_*` key, like the rest). `trace_exe` is a path **relative to the run
+`ptrace_*` key, like the rest). `ptrace_exe` is a path **relative to the run
 folder**, so a binary in the run's `exe/` is `./exe/<name>`:
 
 ```toml
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 steps            = { start = 200, stop = 5800, step = 200 }
-trace_exe        = "./exe/re_gc_current_density_initialisation"
-trace_start_step = 3000
+ptrace_exe        = "./exe/re_gc_current_density_initialisation"
+ptrace_start_step = 3000
 ```
 
 ```bash
-python ~/ashen/bin/trace --list                                      # tracing cases, and the programs
-python ~/ashen/bin/trace --case "qa2.1_g2.3/eta1e-3_RE" --dry-run    # what it would link and run
-python ~/ashen/bin/trace --case "qa2.1_g2.3/eta1e-3_RE"
-python ~/ashen/bin/trace                                             # every case that sets trace_exe
+python ~/ashen/bin/ptrace --list                                      # tracing cases, and the programs
+python ~/ashen/bin/ptrace --case "qa2.1_g2.3/eta1e-3_RE" --dry-run    # what it would link and run
+python ~/ashen/bin/ptrace --case "qa2.1_g2.3/eta1e-3_RE"
+python ~/ashen/bin/ptrace                                             # every case that sets ptrace_exe
 ```
 
-**Programs ashen recognises.** When `trace_exe`'s *filename* is one of
+**Programs ashen recognises.** When `ptrace_exe`'s *filename* is one of
 these, ashen also applies what it knows about that program: the outputs it
-must write, whether it takes `trace_particles`, the 2.5 ms start check,
+must write, whether it takes `ptrace_particles`, the 2.5 ms start check,
 the two-restart minimum, and ex7's lost-particle stop. Any other filename
 -- including one of these renamed -- runs as-is: a zero exit is success,
 and `--list`/each run says which applies.
 
 | filename | what it traces (all fixed in its source) | writes |
 |---|---|---|
-| `re_gc_current_density_initialisation` | 32 relativistic guiding-centre electrons **per MPI rank**, sampled from the current density (20 MeV, pitch near pi), 1e-5 s from `trace_start_step`'s own time -- or the particles in `trace_particles`, if given | `part_diag.h5`, `part_restart.h5` |
+| `re_gc_current_density_initialisation` | 32 relativistic guiding-centre electrons **per MPI rank**, sampled from the current density (20 MeV, pitch near pi), 1e-5 s from `ptrace_start_step`'s own time -- or the particles in `ptrace_particles`, if given | `part_diag.h5`, `part_restart.h5` |
 | `ex6_jorek` | one relativistic full-orbit electron, **starting at t = 2.5 ms**, for 1e-5 s | `diag.h5`, `part_restart.h5` |
 | `ex7_jorek` | one relativistic guiding-centre electron, **starting at t = 2.5 ms**, for 1e-6 s; stops at the first lost particle | `diag.h5`, `part_restart.h5` |
 
 Anything else -- particle positions, energies, time step, duration -- means
 editing the program in JOREK and rebuilding it; ashen only chooses which
-restarts it sees and how it is launched. Keys: `trace_start_step`
-(required with `trace_exe`), `trace_end_step` (last restart it sees;
-default all), `trace_particles` (a JOREK particle file to start from,
+restarts it sees and how it is launched. Keys: `ptrace_start_step`
+(required with `ptrace_exe`), `ptrace_end_step` (last restart it sees;
+default all), `ptrace_particles` (a JOREK particle file to start from,
 *copied* in as `part_restart.h5` because the program overwrites that file
-at the end; refused for ex6/ex7, which ignore it), `trace_inputs` (files
-copied into the trace folder under their own names before the run -- e.g.
-`trace_gc`'s `trace_params.nml`), `trace_n_mpi`, `trace_omp_threads`
-(default: `site.toml`'s `[diagnostics]`). Like `trace_exe`, the paths in
-`trace_particles` and `trace_inputs` are **relative to the run folder**, so
-a bare `"trace_params.nml"` is the file in the run folder -- and
-`[defaults] trace_inputs = ["trace_params.nml"]` gives every case its own.
+at the end; refused for ex6/ex7, which ignore it), `ptrace_inputs` (files
+copied into the ptrace folder under their own names before the run -- e.g.
+`ptrace_gc`'s `ptrace_params.nml`), `ptrace_n_mpi`, `ptrace_omp_threads`
+(default: `site.toml`'s `[diagnostics]`). Like `ptrace_exe`, the paths in
+`ptrace_particles` and `ptrace_inputs` are **relative to the run folder**, so
+a bare `"ptrace_params.nml"` is the file in the run folder -- and
+`[defaults] ptrace_inputs = ["ptrace_params.nml"]` gives every case its own.
 
-Each trace runs in `<run>/trace/<executable filename>/`, with its output in
-`trace.log`. A completed trace is `[cached]` until its settings, restarts,
+Each trace runs in `<run>/ptrace/<executable filename>/`, with its output in
+`ptrace.log`. A completed trace is `[cached]` until its settings, restarts,
 particle file or executable change; `--force` reruns it. `--tool-output`
 echoes the program live. ex7 stopping at a lost particle is reported as
 such, not as a failure.
 
-**ex6/ex7 start at a hard-coded 2.5 ms**, whatever `trace_start_step` is: they
-pick the last linked restart before that time. `trace` warns when the
+**ex6/ex7 start at a hard-coded 2.5 ms**, whatever `ptrace_start_step` is: they
+pick the last linked restart before that time. `ptrace` warns when the
 linked restarts don't span it, judged from the zeroD cache
 (`analyse --diag zerod` fills it) -- otherwise the particle starts in
 fields from the wrong time, and the program only prints a warning.
@@ -1205,51 +1205,59 @@ fields from the wrong time, and the program only prints a warning.
 at most 20 file numbers ahead for the next restart, opens each at one
 width only (`rst_file_ind_fmt(1)`), and -- for ex6/ex7 -- chooses its first
 file with `last_file_before_time`, which only understands 5-digit names. So
-the trace folder links the chosen restarts in as a consecutive sequence
+the ptrace folder links the chosen restarts in as a consecutive sequence
 under **both** widths (`jorek00001.h5` and `jorek000001.h5 -> ../../jorek03200.h5`,
 ...). Each file carries its own time, so nothing is lost by the
 renumbering. Between restarts the fields are interpolated linearly in time,
-so the restarts traced through must share one grid.
+so the restarts traced through must share one grid. The restart links are
+removed again once the program exits, so the folder holds only what the
+run produced (`--dry-run` marks them).
 
 **Building.** In the JOREK checkout the run was built from, `make <program>`
 with the **same `MODEL`** as the run (variable indices differ between
 models); the binary lands in the checkout's top folder. Copy it where
-`trace_exe` points -- e.g. the campaign's shared `exe/`, which a prepared
+`ptrace_exe` points -- e.g. the campaign's shared `exe/`, which a prepared
 run folder links as `./exe`. Keep its name to keep ashen's checks for it.
 
-### ashen's own tracer: `trace_gc`
+### ashen's own tracer: `ptrace_gc`
 
 JOREK's programs hard-code their particles (and re_gc's current-density
-sampling can hang on some equilibria). `fortran/trace_gc.f90` is a
+sampling can hang on some equilibria). `fortran/ptrace_gc.f90` is a
 configurable ex7: guiding-centre electrons started at the (R, Z, phi),
 energy and pitch you list, pushed with RK4 through static or evolving
 fields, with nothing hard-coded. Everything is read from a
-`trace_params.nml` -- start from `fortran/trace_params.example.nml`:
+`ptrace_params.nml` -- start from `fortran/ptrace_params.example.nml`:
 
 ```toml
 [cases."qa2.1_g2.3/eta1e-3_RE"]
-trace_exe        = "./exe/trace_gc"
-trace_start_step = 3000
-trace_inputs     = ["trace_params.nml"]    # in the run folder
+ptrace_exe        = "./exe/ptrace_gc"
+ptrace_start_step = 3000
+ptrace_inputs     = ["ptrace_params.nml"]    # in the run folder
 ```
 
-It writes `trace_diag.h5` (energy, mu, psi_N, p_phi, lost, R, Z, phi every
-`diag_step`), `part_restart<time>.h5` every `snapshot_step` and
+It writes `ptrace_diag.h5` (energy, mu, psi_N, p_phi, lost, R, Z, phi every
+`diag_step`), `part_restart_s<step>_t<time>.h5` every `snapshot_step` (the
+JOREK step of the closest restart, and the time in seconds, e.g.
+`part_restart_s003200_t2.500000E-03.h5`) and
 `part_restart.h5` at the end -- so `plot --diag particles` shows the
 distribution evolve. A marker that leaves the grid is flagged lost and the
-rest carry on. Keep `restart_index = 0`: ashen links the restarts from
+rest carry on. With `hold_last_field = .false.`, a `t_span` that runs past
+the last restart it sees (`ptrace_end_step`) stops at that restart's time
+with every output written -- JOREK's reader on its own would abort with
+nothing written -- and `bin/ptrace` prints a `note:` saying how much of
+`t_span` was traced. Keep `restart_index = 0`: ashen links the restarts from
 index 0, and `jorek_restart.h5` to the start restart for
 `field_mode = 'static'`.
 
 **It has never been compiled** -- this repository is developed without a
 Fortran compiler -- so expect the first build to need small fixes. Build it
-like the others: copy `fortran/trace_gc.f90` into a JOREK checkout's
-`particles/examples/`, `make trace_gc` with the run's `MODEL`, and copy the
-binary to where `trace_exe` points. JOREK itself is never modified by ashen.
+like the others: copy `fortran/ptrace_gc.f90` into a JOREK checkout's
+`particles/examples/`, `make ptrace_gc` with the run's `MODEL`, and copy the
+binary to where `ptrace_exe` points. JOREK itself is never modified by ashen.
 
 ### Plotting particle positions
 
-`plot --diag particles` draws every particle file in a case's trace folder
+`plot --diag particles` draws every particle file in a case's ptrace folder
 (`part_restart*.h5`, sorted by the time stored in each) on the R-Z plane,
 one panel per snapshot, all on the same R and Z limits:
 
@@ -1263,7 +1271,7 @@ snapshot's in light grey, so drift away from the start reads in any single
 panel; lost particles (grid element <= 0) are red crosses where they left
 the grid, counted in the panel title. Particles at every toroidal angle are
 projected onto the one R-Z plane. `--n-cols` sets the grid width. Figures
-are written into the trace folder, next to the files they draw.
+are written into the ptrace folder, next to the files they draw.
 
 **How many panels you get is up to the program.**
 `re_gc_current_density_initialisation` writes `part_restart<time>.h5`
@@ -1271,8 +1279,70 @@ every `write_step` (1e-4 s) and `part_restart.h5` at the end -- but its
 run is only 1e-5 s, so out of the box that is two snapshots, start and
 end. More needs a smaller `write_step` in the program itself.
 
-A case without `trace_exe` is skipped silently in a default (no `--diag`)
+**Poincare overlay.** With `ptrace_poincare = true`, each panel also shows
+the Poincare punctures `analyse --diag poincare` cached, drawn a little
+faint underneath the particles, from the traced restart closest in time to
+the snapshot -- the step in a `ptrace_gc` snapshot's name when that step has
+a cache, otherwise the nearest cached step by zeroD time. The step is in
+each panel's title. So for evolving fields, gather Poincare at the steps you
+traced through: put them in the case's `steps` (or a `[cases.NAME.poincare]`
+`steps`) and run `analyse --case X --diag poincare`.
+Two keys choose what to draw, and either turns the overlay on by itself:
+
+```toml
+ptrace_poincare_psi_n   = [0.5, 0.9]   # these lines only (psi_n_in units, list or {start, stop, n})
+ptrace_poincare_n_turns = 200          # at most 200 punctures per line
+```
+
+The lines have to be in the cache already: a `ptrace_poincare_psi_n` value
+that isn't is reported with the ones that are. `--point-size` (or
+`poincare_point_size`) sets the puncture size. The punctures are one
+toroidal plane (the case's `phi_start`); the particles are every phi.
+
+**Original boundary.** For a run prepared with `extend_bnd`,
+`ptrace_original_boundary = true` draws the plasma boundary from before the
+extension (`original_bnd.dat`) as a magenta dashed line, and particles
+outside it -- still on the grid, so not lost -- as magenta crosses, counted
+in the panel title as "outside".
+
+A case without `ptrace_exe` is skipped silently in a default (no `--diag`)
 run, and with a note under an explicit `--diag particles`.
+
+### Where particles leave the plasma
+
+`plot --diag particle_exits` is the particle counterpart of `theta_hist`:
+histograms of the poloidal angle theta and the toroidal angle phi at which
+each traced particle first goes past a chosen psi_n, side by side, as a
+fraction of the particles that exit. Read from the program's diagnostics
+file (`ptrace_diag.h5` for `ptrace_gc`), written to `particle_exits.png` in
+the ptrace folder:
+
+```toml
+ptrace_exit_psi_n = 1.0    # the psi_n that counts as leaving (default 1)
+ptrace_exit_bins  = 72     # bins over each of theta and phi
+```
+
+```bash
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits --exit-psi-n 0.95
+```
+
+- **Units.** The threshold is psi_n as JOREK's particle diagnostics compute it,
+  `(psi - psi_axis)/(psi_limit - psi_axis)`, where `psi_limit` is the X-point's
+  psi. It is **not** rescaled by `real_psi_edge` the way `theta_target_psi` is.
+  With no X-point, `psi_limit` is 0 and JOREK logs a warning in `ptrace.log`.
+- **Leaving the grid first.** A particle that leaves the grid before any
+  diagnostics time shows it past the threshold still counts as an exit. Its
+  angles are taken from its last position on the grid, and the caption says
+  how many exits did this.
+- **Resolution.** Exits are only as fine as `diag_step`.
+- **Excluded particles.** A particle that is off the grid from the start is
+  not counted.
+- **Theta.** A rebuilt `ptrace_gc` writes theta about the moving magnetic
+  axis. Older `ptrace_diag.h5` files have no theta, so it is computed from R
+  and Z about the axis the run's log gives first.
+- **Programs.** `re_gc_current_density_initialisation` (`part_diag.h5`) and
+  ex6/ex7 (`diag.h5`) are read too, if they wrote psi_n, R, Z, phi and lost.
 
 ## Simulation time at a restart step
 
@@ -1320,9 +1390,9 @@ src/ashen/
                 connection_length.py, timestep.py -- pure math, no matplotlib
   logfile.py    scalar extraction from a JOREK log (R_axis, etc.)
   plotting/     poincare.py, connection_length.py, colors.py, style
-  cases.py      cases.toml loader for bin/analyse, bin/plot and bin/trace
-  particle_programs.py  the JOREK particle programs bin/trace wraps
-  tracing.py    stage and run a case's trace
+  cases.py      cases.toml loader for bin/analyse, bin/plot and bin/ptrace
+  particle_programs.py  the JOREK particle programs bin/ptrace wraps
+  tracing.py    stage and run a case's ptrace
   cli/          argument handling, importable for testing
 tests/
   unit/         run anywhere, no JOREK needed

@@ -40,8 +40,10 @@ _CASE_KEYS = (
     "poincare_highlight", "poincare_point_size", "mark_rational",
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
     "theta_wetted_threshold",
-    "trace_exe", "trace_start_step", "trace_end_step", "trace_particles",
-    "trace_inputs", "trace_n_mpi", "trace_omp_threads",
+    "ptrace_exe", "ptrace_start_step", "ptrace_end_step", "ptrace_particles",
+    "ptrace_inputs", "ptrace_n_mpi", "ptrace_omp_threads",
+    "ptrace_poincare", "ptrace_poincare_psi_n", "ptrace_poincare_n_turns",
+    "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -214,31 +216,51 @@ class Case:
     #: scale as theta_hist's per-bin fraction output). None -> 1/theta_bins
     #: at plot time. `--theta_wetted_threshold` CLI flag outranks this.
     theta_wetted_threshold: float | None = None
-    #: `bin/trace`: the executable to run against this run's restarts,
+    #: `bin/ptrace`: the executable to run against this run's restarts,
     #: relative to the run folder (e.g. "./exe/ex7_jorek"). None = the case
-    #: has no trace. Run unmodified; a filename that is one of JOREK's own
+    #: has no ptrace. Run unmodified; a filename that is one of JOREK's own
     #: particle programs also gets what ashen knows about it
     #: (ashen.particle_programs).
-    trace_exe: str | None = None
-    #: `bin/trace`: first restart step the program sees. Required with
-    #: trace_exe. re_gc starts at this step's own time; ex6/ex7 always
+    ptrace_exe: str | None = None
+    #: `bin/ptrace`: first restart step the program sees. Required with
+    #: ptrace_exe. re_gc starts at this step's own time; ex6/ex7 always
     #: start at 2.5 ms and pick from the restarts from here on.
-    trace_start_step: int | None = None
-    #: `bin/trace`: last restart step the program sees. None = every later one.
-    trace_end_step: int | None = None
-    #: `bin/trace`: a JOREK particle file to start from, copied in as
+    ptrace_start_step: int | None = None
+    #: `bin/ptrace`: last restart step the program sees. None = every later one.
+    ptrace_end_step: int | None = None
+    #: `bin/ptrace`: a JOREK particle file to start from, copied in as
     #: part_restart.h5 (re_gc reads it instead of sampling the current
     #: density; ex6/ex7 would ignore it, so they refuse it). Relative to the
-    #: run folder, like trace_exe.
-    trace_particles: str | None = None
-    #: `bin/trace`: files copied into the trace folder under their own names
-    #: before the program runs -- e.g. trace_gc's trace_params.nml. Relative
-    #: to the run folder, like trace_exe.
-    trace_inputs: list[str] = field(default_factory=list)
-    #: `bin/trace`: MPI ranks. re_gc samples its particle count per rank.
-    trace_n_mpi: int = 1
-    #: `bin/trace`: OpenMP threads per rank; 0 = site.toml's [diagnostics].
-    trace_omp_threads: int = 0
+    #: run folder, like ptrace_exe.
+    ptrace_particles: str | None = None
+    #: `bin/ptrace`: files copied into the trace folder under their own names
+    #: before the program runs -- e.g. ptrace_gc's ptrace_params.nml. Relative
+    #: to the run folder, like ptrace_exe.
+    ptrace_inputs: list[str] = field(default_factory=list)
+    #: `bin/ptrace`: MPI ranks. re_gc samples its particle count per rank.
+    ptrace_n_mpi: int = 1
+    #: `bin/ptrace`: OpenMP threads per rank; 0 = site.toml's [diagnostics].
+    ptrace_omp_threads: int = 0
+    #: `plot --diag particles`: draw the Poincare punctures `analyse --diag
+    #: poincare` cached, under each snapshot, from the traced restart nearest
+    #: it in time. Implied by either key below.
+    ptrace_poincare: bool = False
+    #: Which of the cached field lines to draw, as psi_n_in values (same
+    #: units and list/table spec as psi_n_in). None = every cached line.
+    ptrace_poincare_psi_n: list[float] | None = None
+    #: Draw at most this many punctures (turns) per line. None = all cached.
+    ptrace_poincare_n_turns: int | None = None
+    #: `plot --diag particles`, for a run prepared with extend_bnd: draw the
+    #: plasma boundary before extension (original_bnd.dat) and mark particles
+    #: outside it as crosses, though they are still on the grid.
+    ptrace_original_boundary: bool = False
+    #: `plot --diag particle_exits`: the psi_n a particle has left the
+    #: plasma past -- psi_n as the program's diagnostics file has it (JOREK's
+    #: (psi - psi_axis)/(psi_limit - psi_axis)), not scaled by real_psi_edge.
+    #: `--exit-psi-n` overrides it.
+    ptrace_exit_psi_n: float = 1.0
+    #: `plot --diag particle_exits`: bins over each of theta and phi.
+    ptrace_exit_bins: int = 72
 
     def steps_for(self, diag: str) -> list[int]:
         """`steps` unless `diag` overrides it in `diag_steps` (case+diag tier)."""
@@ -359,73 +381,100 @@ def _ylim_table_from_spec(
     return ylim
 
 
-def _check_trace_fields(merged: dict, *, case_name: str, source: Path) -> None:
-    """Validate and normalise a case's trace_* fields in place."""
+def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
+    """Validate and normalise a case's ptrace_* fields in place."""
     from ashen.particle_programs import program_for
 
     where = f"{source}: case {case_name!r}"
-    exe = merged.get("trace_exe")
+    exe = merged.get("ptrace_exe")
     if exe is None:
-        others = sorted(k for k in merged if k.startswith("trace_"))
+        others = sorted(k for k in merged if k.startswith("ptrace_"))
         if others:
-            raise CasesError(f"{where} sets {others} but no trace_exe")
+            raise CasesError(f"{where} sets {others} but no ptrace_exe")
         return
     if not isinstance(exe, str) or not exe.strip():
-        raise CasesError(f"{where}: trace_exe must be a path, got {exe!r}")
+        raise CasesError(f"{where}: ptrace_exe must be a path, got {exe!r}")
     program = program_for(exe)
-    if "trace_start_step" not in merged:
-        raise CasesError(f"{where} sets trace_exe but no trace_start_step")
+    if "ptrace_start_step" not in merged:
+        raise CasesError(f"{where} sets ptrace_exe but no ptrace_start_step")
 
-    start = int(merged["trace_start_step"])
+    start = int(merged["ptrace_start_step"])
     if start < 0:
-        raise CasesError(f"{where}: trace_start_step must be >= 0, got {start}")
-    merged["trace_start_step"] = start
-    if merged.get("trace_end_step") is not None:
-        end = int(merged["trace_end_step"])
+        raise CasesError(f"{where}: ptrace_start_step must be >= 0, got {start}")
+    merged["ptrace_start_step"] = start
+    if merged.get("ptrace_end_step") is not None:
+        end = int(merged["ptrace_end_step"])
         if end < start:
             raise CasesError(
-                f"{where}: trace_end_step ({end}) is before trace_start_step ({start})"
+                f"{where}: ptrace_end_step ({end}) is before ptrace_start_step ({start})"
             )
-        merged["trace_end_step"] = end
+        merged["ptrace_end_step"] = end
 
-    if merged.get("trace_particles") is not None:
+    if merged.get("ptrace_particles") is not None:
         if not program.reads_particles:
             raise CasesError(
                 f"{where}: {program.name} always makes its own particles; "
-                "trace_particles only applies to a program that reads part_restart.h5"
+                "ptrace_particles only applies to a program that reads part_restart.h5"
             )
-        particles = merged["trace_particles"]
+        particles = merged["ptrace_particles"]
         if not isinstance(particles, str) or not particles.strip():
-            raise CasesError(f"{where}: trace_particles must be a path, got {particles!r}")
+            raise CasesError(f"{where}: ptrace_particles must be a path, got {particles!r}")
 
-    if "trace_inputs" in merged:
-        spec = merged["trace_inputs"]
+    if "ptrace_inputs" in merged:
+        spec = merged["ptrace_inputs"]
         if isinstance(spec, str):
             spec = [spec]
         if not (isinstance(spec, list) and all(isinstance(x, str) and x.strip() for x in spec)):
-            raise CasesError(f"{where}: trace_inputs must be a list of paths, got {spec!r}")
+            raise CasesError(f"{where}: ptrace_inputs must be a list of paths, got {spec!r}")
         names = [Path(x).name for x in spec]
         clashes = sorted({n for n in names if names.count(n) > 1})
         if clashes:
             raise CasesError(
-                f"{where}: trace_inputs are copied in under their own names, but "
+                f"{where}: ptrace_inputs are copied in under their own names, but "
                 f"{clashes} appear more than once"
             )
         if "part_restart.h5" in names:
             raise CasesError(
-                f"{where}: part_restart.h5 in trace_inputs -- starting particles "
-                "go in trace_particles"
+                f"{where}: part_restart.h5 in ptrace_inputs -- starting particles "
+                "go in ptrace_particles"
             )
-        merged["trace_inputs"] = list(spec)
+        merged["ptrace_inputs"] = list(spec)
 
-    n_mpi = int(merged.get("trace_n_mpi", 1))
-    omp_threads = int(merged.get("trace_omp_threads", 0))
+    n_mpi = int(merged.get("ptrace_n_mpi", 1))
+    omp_threads = int(merged.get("ptrace_omp_threads", 0))
     if n_mpi < 1 or omp_threads < 0:
-        raise CasesError(f"{where}: trace_n_mpi must be >= 1 and trace_omp_threads >= 0")
-    if "trace_n_mpi" in merged:
-        merged["trace_n_mpi"] = n_mpi
-    if "trace_omp_threads" in merged:
-        merged["trace_omp_threads"] = omp_threads
+        raise CasesError(f"{where}: ptrace_n_mpi must be >= 1 and ptrace_omp_threads >= 0")
+    if "ptrace_n_mpi" in merged:
+        merged["ptrace_n_mpi"] = n_mpi
+    if "ptrace_omp_threads" in merged:
+        merged["ptrace_omp_threads"] = omp_threads
+
+    if "ptrace_exit_psi_n" in merged:
+        value = merged["ptrace_exit_psi_n"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise CasesError(f"{where}: ptrace_exit_psi_n must be a number > 0, got {value!r}")
+        merged["ptrace_exit_psi_n"] = float(value)
+    if "ptrace_exit_bins" in merged:
+        value = merged["ptrace_exit_bins"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise CasesError(f"{where}: ptrace_exit_bins must be a whole number >= 1, got {value!r}")
+
+    for key in ("ptrace_poincare", "ptrace_original_boundary"):
+        if key in merged and not isinstance(merged[key], bool):
+            raise CasesError(f"{where}: {key} must be true or false, got {merged[key]!r}")
+    if merged.get("ptrace_poincare_psi_n") is not None:
+        merged["ptrace_poincare_psi_n"] = _psi_from_spec(
+            merged["ptrace_poincare_psi_n"], case_name=case_name, source=source,
+            field_name="ptrace_poincare_psi_n",
+        )
+        merged["ptrace_poincare"] = True
+    if merged.get("ptrace_poincare_n_turns") is not None:
+        n_turns = merged["ptrace_poincare_n_turns"]
+        if isinstance(n_turns, bool) or not isinstance(n_turns, int) or n_turns < 1:
+            raise CasesError(
+                f"{where}: ptrace_poincare_n_turns must be a whole number >= 1, got {n_turns!r}"
+            )
+        merged["ptrace_poincare"] = True
 
 
 def load_cases(path: Path | str) -> dict[str, Case]:
@@ -650,7 +699,7 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                 )
             merged["four_growth_steps"] = [start, end]
 
-        _check_trace_fields(merged, case_name=name, source=path)
+        _check_ptrace_fields(merged, case_name=name, source=path)
 
         unknown = sorted(set(merged) - set(_CASE_KEYS))
         if unknown:

@@ -1,7 +1,7 @@
-"""What ashen knows about JOREK's particle programs, for `bin/trace`.
+"""What ashen knows about JOREK's particle programs, for `bin/ptrace`.
 
-`bin/trace` runs whatever executable a case's trace_exe names, unmodified,
-against its restarts (ashen.tracing). When that executable's filename is one
+`bin/ptrace` runs whatever executable a case's ptrace_exe names, unmodified,
+against its restarts (ashen.ptracing). When that executable's filename is one
 of JOREK's own ``particles/examples`` programs listed here, ashen also
 applies what it knows about it: which files it writes, whether it reads a
 particle file, its hard-coded start time, how it reports a lost particle.
@@ -41,8 +41,15 @@ class Program:
     #: aborting when it finds no next restart (stop_at_end=.true.).
     holds_last_field: bool = False
     #: Files it reads from its working folder that the case must supply
-    #: through trace_inputs.
+    #: through ptrace_inputs.
     required_inputs: tuple[str, ...] = ()
+    #: Its write_particle_diagnostics file (psi_n, R, Z, phi, ... over time),
+    #: which `plot --diag particle_exits` reads. None = none known.
+    diag_file: str | None = None
+    #: Log lines containing this are things the user should see even when
+    #: the run succeeds (e.g. it stopped before its time span was done);
+    #: bin/ptrace repeats them after the run.
+    note_marker: str | None = None
     #: One of PROGRAMS, as opposed to an executable ashen knows nothing about.
     known: bool = True
 
@@ -56,6 +63,7 @@ PROGRAMS = {
             # part_diag.h5 (diag_filename), part_restart.h5 at the end;
             # part_restart*.h5 snapshots every write_step on the way.
             outputs=("part_diag.h5", "part_restart.h5"),
+            diag_file="part_diag.h5",
             reads_particles=True,  # `inquire(file=part_restart.h5)`, line 110
             holds_last_field=True,  # abort_at_last_mhd_restart = .false.
         ),
@@ -63,26 +71,31 @@ PROGRAMS = {
             name="ex6_jorek",
             summary="one relativistic full-orbit electron (volume-preserving pusher)",
             outputs=("diag.h5", "part_restart.h5"),
+            diag_file="diag.h5",
             fixed_start_time=2.5e-3,  # `sim%time = 2.5d-3`, restart = .false.
         ),
         Program(
             name="ex7_jorek",
             summary="one relativistic guiding-centre electron (fixed-step RK4)",
             outputs=("diag.h5", "part_restart.h5"),
+            diag_file="diag.h5",
             fixed_start_time=2.5e-3,  # `sim%time = 2.5d-3`, restart = .false.
             stops_on_loss="PARTICLE IS LOST, STOPPING",
         ),
         Program(
-            name="trace_gc",
-            summary="ashen's configurable guiding-centre tracer (fortran/trace_gc.f90): "
-            "markers, energies, time span and snapshots from trace_params.nml",
-            # trace_diag.h5 every diag_step; part_restart<time>.h5 every
+            name="ptrace_gc",
+            summary="ashen's configurable guiding-centre tracer (fortran/ptrace_gc.f90): "
+            "markers, energies, time span and snapshots from ptrace_params.nml",
+            # ptrace_diag.h5 every diag_step; part_restart_s<step>_t<time>.h5 every
             # snapshot_step (if > 0) and part_restart.h5 at the end.
-            outputs=("trace_diag.h5", "part_restart.h5"),
-            # static mode, or hold_last_field = .true., need only one restart;
-            # otherwise the reader aborts at the last one, which trace.log shows.
+            outputs=("ptrace_diag.h5", "part_restart.h5"),
+            diag_file="ptrace_diag.h5",
+            # Runs on one restart; without hold_last_field it stops at the last
+            # restart's time -- outputs written, a NOTE logged -- if t_span
+            # reaches past it.
             holds_last_field=True,
-            required_inputs=("trace_params.nml",),
+            required_inputs=("ptrace_params.nml",),
+            note_marker="ptrace_gc: NOTE:",
         ),
     )
 }

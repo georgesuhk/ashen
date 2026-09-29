@@ -364,28 +364,42 @@ note  = "internal kink investigation"
 # color         = "tab:red"
 # dataset_label = "$\\rho^* = 19$"
 
-# --- particle traces (bin/trace) ---------------------------------------------
-# A case traces when it sets trace_exe and trace_start_step -- keys like any
-# other, so [defaults] can seed them. bin/trace runs trace_exe, a path
+# --- particle traces (bin/ptrace) ---------------------------------------------
+# A case traces when it sets ptrace_exe and ptrace_start_step -- keys like any
+# other, so [defaults] can seed them. bin/ptrace runs ptrace_exe, a path
 # relative to the run folder, unmodified against the case's restarts. When
 # its filename is one of JOREK's particle programs (re_gc_current_density_
 # initialisation, ex6_jorek, ex7_jorek), ashen applies what it knows about
 # it; anything else runs as-is. See README "Tracing particles". The program
-# sees trace_start_step and every later restart (up to trace_end_step).
-# ex6_jorek/ex7_jorek always start at t = 2.5 ms, whatever trace_start_step
-# is. trace_particles starts re_gc from a JOREK particle file instead of
-# sampling the current density. trace_particles and trace_inputs are paths
-# relative to the run folder too, like trace_exe.
+# sees ptrace_start_step and every later restart (up to ptrace_end_step).
+# ex6_jorek/ex7_jorek always start at t = 2.5 ms, whatever ptrace_start_step
+# is. ptrace_particles starts re_gc from a JOREK particle file instead of
+# sampling the current density. ptrace_particles and ptrace_inputs are paths
+# relative to the run folder too, like ptrace_exe.
 # [cases."qa2.1_g2.3/eta1e-3_RE"]
 # ...
-# trace_exe        = "./exe/re_gc_current_density_initialisation"
-# trace_start_step = 3000
-# trace_end_step   = 5000
-# trace_n_mpi      = 4          # re_gc samples 32 particles per rank
-# trace_particles  = "seeds/part_restart.h5"
+# ptrace_exe        = "./exe/re_gc_current_density_initialisation"
+# ptrace_start_step = 3000
+# ptrace_end_step   = 5000
+# ptrace_n_mpi      = 4          # re_gc samples 32 particles per rank
+# ptrace_particles  = "seeds/part_restart.h5"
 #
-# ashen's own tracer, fortran/trace_gc.f90 (see README): markers, energies,
-# time span and snapshots all come from a trace_params.nml listed in
-# trace_inputs (start from fortran/trace_params.example.nml).
-# trace_exe        = "./exe/trace_gc"
-# trace_inputs     = ["trace_params.nml"]   # the file in the run folder
+# ashen's own tracer, fortran/ptrace_gc.f90 (see README): markers, energies,
+# time span and snapshots all come from a ptrace_params.nml listed in
+# ptrace_inputs (start from fortran/ptrace_params.example.nml).
+# ptrace_exe        = "./exe/ptrace_gc"
+# ptrace_inputs     = ["ptrace_params.nml"]   # the file in the run folder
+#
+# plot --diag particles: draw the Poincare punctures `analyse --diag poincare`
+# cached under each snapshot (from the traced restart closest in time), and/or
+# the plasma boundary before extend_bnd with particles outside it marked.
+# ptrace_poincare          = true          # every cached line, every turn
+# ptrace_poincare_psi_n    = [0.5, 0.9]    # just these psi_n_in lines (implies true)
+# ptrace_poincare_n_turns  = 200           # at most this many turns per line (implies true)
+# ptrace_original_boundary = true
+#
+# plot --diag particle_exits: theta and phi histograms of where particles
+# first go past ptrace_exit_psi_n (psi_n as the tracer's diagnostics file has
+# it), or leave the grid. --exit-psi-n overrides it for one plot.
+# ptrace_exit_psi_n = 1.0
+# ptrace_exit_bins  = 72

@@ -32,7 +32,7 @@ rho**2` derived on read (legacy cache discarded the raw value).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
@@ -52,6 +52,7 @@ __all__ = [
     "read_line_tail",
     "read_legacy_cache",
     "read_step",
+    "select_lines",
     "open_cache",
     "append_line",
     "extend_line",
@@ -312,6 +313,33 @@ def read_step(paths, step: int | float) -> dict[LineKey, LineRecord]:
     if records:
         return records
     return read_legacy_cache(paths.poinc_dir, paths.step_str(step))
+
+
+def select_lines(
+    records: Mapping[LineKey, LineRecord],
+    psi_n: Iterable[float] | None = None,
+    n_turns: int | None = None,
+    *,
+    atol: float = 1e-6,
+) -> tuple[dict[LineKey, LineRecord], list[float]]:
+    """The lines of records started at any of psi_n (JOREK-grid psi_n, as
+    LineKey.psi_n; None = all), each cut to its first n_turns punctures
+    (None = all). Also returns the psi_n values no line matched.
+    """
+    wanted = None if psi_n is None else list(psi_n)
+    chosen: dict[LineKey, LineRecord] = {}
+    for key, record in records.items():
+        if wanted is not None and not any(abs(key.psi_n - p) <= atol for p in wanted):
+            continue
+        if n_turns is not None and record.n_points > n_turns:
+            record = replace(
+                record, **{name: getattr(record, name)[:n_turns] for name in _ARRAYS}
+            )
+        chosen[key] = record
+    missing = [] if wanted is None else [
+        p for p in wanted if not any(abs(key.psi_n - p) <= atol for key in records)
+    ]
+    return chosen, missing
 
 
 def read_legacy_cache(poinc_dir: Path | str, step_str: str) -> dict[LineKey, LineRecord]:

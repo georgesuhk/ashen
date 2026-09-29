@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
@@ -40,6 +41,7 @@ from ashen.cli._common import (
     run_steps,
     show_config,
 )
+from ashen.castor_io import load_two_col_data
 from ashen.comparisons import Comparison, Dataset, load_comparisons
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
@@ -55,8 +57,9 @@ from ashen.diagnostics.four_modes import (
     radial_amplitude_series,
     rational_surface_series,
 )
-from ashen.diagnostics.particles import find_snapshots
-from ashen.diagnostics.poincare_cache import read_step
+from ashen.diagnostics.particle_exits import exit_angles, read_particle_diag
+from ashen.diagnostics.particles import find_snapshots, named_step
+from ashen.diagnostics.poincare_cache import read_step, select_lines
 from ashen.diagnostics.profiles import (
     ensure_edge_toroidal_field,
     expand_compound_vars,
@@ -75,12 +78,14 @@ from ashen.diagnostics.theta_histogram import (
     wetted_fraction,
 )
 from ashen.jorek2 import Jorek2Error, Jorek2Run, enable_tool_output, run_zero_d
-from ashen.logfile import LogfileError, r_axis
+from ashen.logfile import LogfileError, extract_from_file, r_axis
 from ashen.paths import RunPaths, read_float
 from ashen.plotting.colors import DISCRETE_PALETTE
 from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes, plot_mode_radial
+from ashen.plotting.particle_exits import exit_caption, plot_exit_histograms
 from ashen.plotting.particles import (
+    PoincareOverlay,
     animate_rz_panels,
     particle_caption,
     particle_panels,
@@ -105,11 +110,12 @@ from ashen.quantities import (
     is_known_quantity,
     quantity,
 )
-from ashen.tracing import trace_dir
+from ashen.particle_programs import program_for
+from ashen.ptracing import ptrace_dir
 
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
-    "scan_map", "particles",
+    "scan_map", "particles", "particle_exits",
 )
 
 #: Diags with a registered --compare renderer -- asking for one without (e.g.
@@ -236,6 +242,11 @@ def build_parser() -> argparse.ArgumentParser:
         "real (signed, phase-aligned to the |amp| peak per step) or phase "
         "(radians, relative to the peak); overrides each case's "
         "four_radial_quantity (default abs). real and phase are always linear",
+    )
+    parser.add_argument(
+        "--exit-psi-n", type=float, default=None,
+        help="particle_exits: the psi_n past which a particle has left the "
+        "plasma (overrides each case's ptrace_exit_psi_n, default 1)",
     )
     parser.add_argument(
         "--theta_target_psi", type=float, default=None,
@@ -2165,6 +2176,7 @@ def _run_case(
     profile_cmap: str | None = None,
     animate: bool = False,
     explicit_diags: bool = False,
+    exit_psi_n: float | None = None,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -2219,7 +2231,11 @@ def _run_case(
         # and [cases.NAME.particles] steps don't apply.
         _plot_particles(
             case, paths, dpi=dpi, n_cols=n_cols, animate=animate or case.animate,
-            explicit=explicit_diags,
+            explicit=explicit_diags, point_size=point_size, n_workers=n_workers,
+        )
+    if "particle_exits" in diags:
+        _plot_particle_exits(
+            case, paths, dpi=dpi, psi_n=exit_psi_n, explicit=explicit_diags,
         )
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
     if comparison_only and explicit_diags:
@@ -2230,34 +2246,117 @@ def _run_case(
         print(f"  diag(s) {comparison_only} are comparison-only (use --compare), skipped")
 
 
+def _original_boundary(case: Case, paths: RunPaths):
+    """The plasma boundary before extend_bnd (original_bnd.dat, written by
+    run_jorek), or None -- with a note -- when there isn't one."""
+    path = paths.run_dir / "original_bnd.dat"
+    if not path.is_file():
+        print(f"  particles: no {path.name} (the run was not prepared with "
+              "extend_bnd), original boundary not drawn")
+        return None
+    return load_two_col_data(path)
+
+
+def _poincare_overlays(
+    case: Case, paths: RunPaths, snapshots, *, point_size: float | None, n_workers: int,
+) -> list[PoincareOverlay | None] | None:
+    """The Poincare punctures to draw under each snapshot: those cached
+    (`analyse --diag poincare`) at the traced restart closest to it in time
+    -- the step in a ptrace_gc snapshot's name when that step is cached,
+    else the nearest cached step by the zeroD time. Lines are picked by
+    case.ptrace_poincare_psi_n and cut to ptrace_poincare_n_turns. None, with
+    a note, when no traced step has a cache."""
+    start, end = case.ptrace_start_step, case.ptrace_end_step
+    cached = sorted(
+        step for step in (
+            int(match.group(1)) for match in (
+                re.match(r"poinc_s(\d+)\.h5$", f.name)
+                for f in paths.poinc_dir.glob("poinc_s*.h5")
+            ) if match
+        )
+        if step >= start and (end is None or step <= end)
+    ) if paths.poinc_dir.is_dir() else []
+    if not cached:
+        span = f"{start}..{end}" if end is not None else f"{start} on"
+        print(f"  particles: no Poincare cache for the traced steps ({span}); put "
+              f"step {start} in the case's poincare steps and run `analyse --case "
+              f"{case.name} --diag poincare` first. Drawing particles only")
+        return None
+
+    def step_for(snapshot) -> int | None:
+        named = named_step(snapshot.path)
+        return named if named in cached else None
+
+    chosen = [step_for(snap) for snap in snapshots]
+    if any(step is None for step in chosen):
+        times = _read_true_times(case, paths, cached, n_workers=n_workers)
+        if times is None:
+            print(f"  particles: no zeroD times for the cached Poincare steps; "
+                  f"drawing step {cached[0]}'s under every snapshot without one in its name")
+            chosen = [step if step is not None else cached[0] for step in chosen]
+        else:
+            chosen = [
+                step if step is not None
+                else cached[int(np.argmin([abs(t - snap.time) for t in times]))]
+                for step, snap in zip(chosen, snapshots)
+            ]
+
+    real_psi_edge = read_float(paths.real_psi_edge) if paths.real_psi_edge.is_file() else 1.0
+    targets = (
+        None if case.ptrace_poincare_psi_n is None
+        else [p * real_psi_edge for p in case.ptrace_poincare_psi_n]
+    )
+    s = case.poincare_point_size if point_size is None else point_size
+    by_step: dict[int, PoincareOverlay] = {}
+    for step in sorted(set(chosen)):
+        records, missing = select_lines(
+            read_step(paths, step), targets, case.ptrace_poincare_n_turns,
+        )
+        if missing:
+            have = sorted({round(key.psi_n / real_psi_edge, 6) for key in read_step(paths, step)})
+            print(f"  particles: step {step}'s Poincare cache has no line at psi_n "
+                  f"{[round(p / real_psi_edge, 6) for p in missing]} (it has {have})")
+        by_step[step] = PoincareOverlay(step=step, records=records, s=s)
+    return [by_step[step] for step in chosen]
+
+
 def _plot_particles(
     case: Case, paths: RunPaths, *, dpi: int | None, n_cols: int | None,
-    animate: bool, explicit: bool,
+    animate: bool, explicit: bool, point_size: float | None = None, n_workers: int = 1,
 ) -> None:
     """Particle positions on R-Z, one panel per particle file in the case's
-    trace folder (bin/trace), each over the first in grey. Written next to
-    the data, as particles.png (and particles.gif under --animate)."""
-    if case.trace_exe is None:
+    ptrace folder (bin/ptrace), each over the first in grey -- over the
+    Poincare punctures under ptrace_poincare, and with the pre-extension
+    boundary under ptrace_original_boundary. Written next to the data, as
+    particles.png (and particles.gif under --animate)."""
+    if case.ptrace_exe is None:
         # A default (no --diag) run asks every case for every diag; one
         # that doesn't trace has nothing to say here.
         if explicit:
-            print("  particles: case sets no trace_exe, skipped")
+            print("  particles: case sets no ptrace_exe, skipped")
         return
-    folder = trace_dir(case, paths.run_dir)
+    folder = ptrace_dir(case, paths.run_dir)
     snapshots = find_snapshots(folder) if folder.is_dir() else []
     if not snapshots:
-        print(f"  particles: no part_restart*.h5 in {folder} (run bin/trace first), skipped")
+        print(f"  particles: no part_restart*.h5 in {folder} (run bin/ptrace first), skipped")
         return
 
-    panels = particle_panels(snapshots)
+    boundary = _original_boundary(case, paths) if case.ptrace_original_boundary else None
+    poincare = (
+        _poincare_overlays(case, paths, snapshots, point_size=point_size, n_workers=n_workers)
+        if case.ptrace_poincare else None
+    )
+    panels = particle_panels(snapshots, boundary=boundary, poincare=poincare)
     kwargs = _dpi_kwargs(dpi)
-    kwargs["caption"] = particle_caption(snapshots)
+    kwargs["caption"] = particle_caption(
+        snapshots, boundary=boundary is not None, poincare=poincare is not None,
+    )
     out = plot_rz_panels(panels, folder / "particles.png", n_cols=n_cols or 4, **kwargs)
     print(f"  particles: {len(snapshots)} snapshot(s) -> {out}")
     if len(snapshots) == 1:
         print(
-            "  particles: only one snapshot -- the program writes part_restart<time>.h5 "
-            "every write_step, which may be longer than its run"
+            "  particles: only one snapshot -- the program writes one every "
+            "write_step (re_gc) or snapshot_step (ptrace_gc), which may be longer than its run"
         )
     if animate:
         gif = animate_rz_panels(panels, folder / "particles.gif", **kwargs)
@@ -2265,6 +2364,57 @@ def _plot_particles(
             print("  particles: fewer than two snapshots, no animation written")
         else:
             print(f"  particles: {gif}")
+
+
+def _log_axis(paths: RunPaths) -> tuple[float, float] | None:
+    """The magnetic axis (R, Z) the run's log gives first, or None."""
+    try:
+        return (
+            extract_from_file(paths.log, "R_axis", occurrence=1),
+            extract_from_file(paths.log, "Z_axis", occurrence=1),
+        )
+    except LogfileError:
+        return None
+
+
+def _plot_particle_exits(
+    case: Case, paths: RunPaths, *, dpi: int | None, psi_n: float | None, explicit: bool,
+) -> None:
+    """Histograms of the poloidal and toroidal angle where each traced
+    particle first goes past psi_n (or leaves the grid), from the program's
+    diagnostics file. Written into the ptrace folder as particle_exits.png."""
+    if case.ptrace_exe is None:
+        if explicit:
+            print("  particle_exits: case sets no ptrace_exe, skipped")
+        return
+    program = program_for(case.ptrace_exe)
+    if program.diag_file is None:
+        print(f"  particle_exits: ashen doesn't know which diagnostics file "
+              f"{Path(case.ptrace_exe).name} writes, skipped")
+        return
+    folder = ptrace_dir(case, paths.run_dir)
+    diag = folder / program.diag_file
+    if not diag.is_file():
+        print(f"  particle_exits: no {diag} (run bin/ptrace first), skipped")
+        return
+
+    threshold = case.ptrace_exit_psi_n if psi_n is None else psi_n
+    history = read_particle_diag(diag)
+    axis = None
+    if history.theta is None:
+        axis = _log_axis(paths)
+        if axis is None:
+            print(f"  particle_exits: {diag.name} has no theta and {paths.log} gives no "
+                  "R_axis/Z_axis to compute it from, skipped (a rebuilt ptrace_gc writes theta)")
+            return
+        print(f"  particle_exits: {diag.name} has no theta; computing it about the "
+              f"logged axis (R, Z) = ({axis[0]:.4g}, {axis[1]:.4g}) m")
+    result = exit_angles(history, psi_n=threshold, axis=axis)
+    out = plot_exit_histograms(
+        result, folder / "particle_exits.png", bins=case.ptrace_exit_bins,
+        caption=exit_caption(result, psi_n=threshold), **_dpi_kwargs(dpi),
+    )
+    print(f"  particle_exits: {exit_caption(result, psi_n=threshold)} -> {out}")
 
 
 def _run_comparisons(
@@ -2490,6 +2640,7 @@ def main(argv: list[str] | None = None) -> int:
                 profile_cmap=args.profile_cmap,
                 animate=args.animate,
                 explicit_diags=explicit_diags,
+                exit_psi_n=args.exit_psi_n,
             )
         except CASE_ERRORS as exc:
             error(f"{name}: {exc}")

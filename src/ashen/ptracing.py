@@ -1,11 +1,12 @@
-"""Staging and running a trace: the executable a case's trace_exe names,
-unmodified, against that case's restarts, as its trace_* fields configure
+"""Staging and running a ptrace: the executable a case's ptrace_exe names,
+unmodified, against that case's restarts, as its ptrace_* fields configure
 it (ashen.cases). When the executable is one of JOREK's own particle
 programs, what ashen knows about it applies too (ashen.particle_programs).
 
-Each trace runs in its own folder, ``<run>/trace/<executable name>/``. Restarts, the
-namelist and profile files are symlinked in, relative to the folder, so
-the run can still be moved or renamed. A particle file for a program that
+Each ptrace runs in its own folder, ``<run>/ptrace/<executable name>/``.
+Restarts, the namelist and profile files are symlinked in, relative to the
+folder, so the run can still be moved or renamed; the restart links are
+removed again once the program exits, leaving only what it produced. A particle file for a program that
 reads one is *copied*: the program overwrites part_restart.h5 with its
 final state, and through a symlink that would clobber the original.
 
@@ -29,7 +30,7 @@ confuse ``last_file_before_time``: a 6-digit ``jorek0000NM.h5`` greps to
 bisects over stay in ascending order. The start restart is also linked as
 ``jorek_restart.h5``, the name the reader uses for a frozen field (``i=-1``).
 
-A case's trace_inputs (e.g. trace_gc's trace_params.nml) are copied in
+A case's ptrace_inputs (e.g. ptrace_gc's ptrace_params.nml) are copied in
 under their own names, like a particle file.
 
 A trace is cached like the other gathers: it reruns only if its settings,
@@ -61,27 +62,27 @@ __all__ = [
     "LOG_FILE",
     "META_FILE",
     "PARTICLES_FILE",
-    "TraceError",
-    "TracePlan",
-    "TraceResult",
+    "PtraceError",
+    "PtracePlan",
+    "PtraceResult",
     "is_current",
     "run_path",
-    "trace_dir",
-    "trace_exe_path",
-    "plan_trace",
-    "run_trace",
+    "ptrace_dir",
+    "ptrace_exe_path",
+    "plan_ptrace",
+    "run_ptrace",
     "stage",
 ]
 
 #: Folder, under the run folder, that holds one subfolder per trace.
-TRACE_DIR = "trace"
+TRACE_DIR = "ptrace"
 
 #: The particle file the programs read at the start and write at the end.
 PARTICLES_FILE = "part_restart.h5"
 
-#: Files ashen itself writes into the trace folder.
-META_FILE = "trace_meta.json"
-LOG_FILE = "trace.log"
+#: Files ashen itself writes into the ptrace folder.
+META_FILE = "ptrace_meta.json"
+LOG_FILE = "ptrace.log"
 
 #: The start restart, under the name the field reader uses for a frozen field.
 STATIC_RESTART = "jorek_restart.h5"
@@ -90,12 +91,12 @@ STATIC_RESTART = "jorek_restart.h5"
 _FILENUMS_GLOB = ".jorek_filenums.*"
 
 
-class TraceError(RuntimeError):
+class PtraceError(RuntimeError):
     """A trace that cannot be staged, or whose program failed."""
 
 
 @dataclass(frozen=True)
-class TracePlan:
+class PtracePlan:
     """Everything a trace will do, decided before anything is written."""
 
     case: Case
@@ -119,10 +120,20 @@ class TracePlan:
     #: Things worth knowing before running that don't stop it.
     warnings: list[str] = dataclasses.field(default_factory=list)
 
+    @property
+    def restart_links(self) -> list[str]:
+        """The links to JOREK restarts -- only needed while the program
+        runs, so removed again afterwards (see run_ptrace)."""
+        return [name for name, _ in self.links if name.startswith("jorek")]
+
     def describe(self) -> list[str]:
         """Human-readable plan, for --dry-run."""
         lines = [f"folder   {self.work_dir}", f"exe      {self.exe}"]
-        lines += [f"link     {name} -> {target}" for name, target in self.links]
+        restarts = set(self.restart_links)
+        lines += [
+            f"link     {name} -> {target}" + ("  (removed after the run)" if name in restarts else "")
+            for name, target in self.links
+        ]
         lines += [f"copy     {name} <- {source}" for name, source in self.copies]
         lines += ["run:"]
         lines += [f"           {line}" for line in self.command.splitlines()]
@@ -130,26 +141,29 @@ class TracePlan:
 
 
 @dataclass(frozen=True)
-class TraceResult:
-    """What run_trace did."""
+class PtraceResult:
+    """What run_ptrace did."""
 
     #: False when the trace was already current and nothing ran.
     ran: bool
     #: The program stopped at a lost particle (Program.stops_on_loss).
     lost: bool = False
+    #: Log lines the program marks as worth seeing (Program.note_marker),
+    #: e.g. ptrace_gc stopping at the last restart before t_span was done.
+    notes: tuple[str, ...] = ()
 
 
 def _select_steps(case: Case, program: Program, available: list[int]) -> list[int]:
-    start, end = case.trace_start_step, case.trace_end_step
+    start, end = case.ptrace_start_step, case.ptrace_end_step
     if start not in available:
         nearby = [s for s in available if abs(s - start) <= 1000][:10]
-        raise TraceError(
-            f"case {case.name!r}: no restart for trace_start_step {start}"
+        raise PtraceError(
+            f"case {case.name!r}: no restart for ptrace_start_step {start}"
             + (f"; nearby: {nearby}" if nearby else "")
         )
     steps = [s for s in available if s >= start and (end is None or s <= end)]
     if len(steps) < 2 and not program.holds_last_field:
-        raise TraceError(
+        raise PtraceError(
             f"case {case.name!r}: {program.name} aborts when it finds no next "
             f"restart, so it needs at least two from step {start}; found {steps}"
         )
@@ -187,11 +201,11 @@ def _file_stamp(path: Path | None) -> list[int] | None:
 
 
 #: Case fields that decide a trace's result -- the fingerprint's input.
-#: trace_omp_threads is left out: it changes how the work is spread, not the
-#: answer. trace_n_mpi stays in: re_gc samples its particle count per rank.
+#: ptrace_omp_threads is left out: it changes how the work is spread, not the
+#: answer. ptrace_n_mpi stays in: re_gc samples its particle count per rank.
 _RESULT_FIELDS = (
-    "trace_exe", "trace_start_step", "trace_end_step", "trace_particles",
-    "trace_inputs", "trace_n_mpi", "namelist",
+    "ptrace_exe", "ptrace_start_step", "ptrace_end_step", "ptrace_particles",
+    "ptrace_inputs", "ptrace_n_mpi", "namelist",
 )
 
 #: Every known program's outputs: cleared on restaging whichever executable
@@ -201,34 +215,34 @@ _KNOWN_OUTPUTS = frozenset(name for p in PROGRAMS.values() for name in p.outputs
 
 
 def run_path(run_dir: Path, path: str | Path) -> Path:
-    """A trace_* path: relative to the run folder unless absolute,
-    normalised so "../" works. Every trace_* path resolves this one way."""
+    """A ptrace_* path: relative to the run folder unless absolute,
+    normalised so "../" works. Every ptrace_* path resolves this one way."""
     path = Path(path)
     if not path.is_absolute():
         path = Path(os.path.normpath(Path(run_dir) / path))
     return path
 
 
-def trace_exe_path(case: Case, run_dir: Path) -> Path:
-    """The executable case.trace_exe names (see run_path)."""
-    if case.trace_exe is None:
-        raise TraceError(f"case {case.name!r} has no trace_exe")
-    return run_path(run_dir, case.trace_exe)
+def ptrace_exe_path(case: Case, run_dir: Path) -> Path:
+    """The executable case.ptrace_exe names (see run_path)."""
+    if case.ptrace_exe is None:
+        raise PtraceError(f"case {case.name!r} has no ptrace_exe")
+    return run_path(run_dir, case.ptrace_exe)
 
 
-def trace_dir(case: Case, run_dir: Path) -> Path:
-    """The folder a case's trace runs in, and where its outputs land:
-    ``<run>/trace/<executable filename>/``."""
-    return Path(run_dir) / TRACE_DIR / trace_exe_path(case, run_dir).name
+def ptrace_dir(case: Case, run_dir: Path) -> Path:
+    """The folder a case's ptrace runs in, and where its outputs land:
+    ``<run>/ptrace/<executable filename>/``."""
+    return Path(run_dir) / TRACE_DIR / ptrace_exe_path(case, run_dir).name
 
 
-def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> TracePlan:
-    """Decide everything about a case's trace without touching disk.
+def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> PtracePlan:
+    """Decide everything about a case's ptrace without touching disk.
 
-    omp_threads is the fallback for a case that leaves trace_omp_threads at 0.
+    omp_threads is the fallback for a case that leaves ptrace_omp_threads at 0.
     """
     run_dir = Path(run_dir)
-    exe = trace_exe_path(case, run_dir)
+    exe = ptrace_exe_path(case, run_dir)
     program = program_for(exe)
     paths = RunPaths.detect(run_dir)
 
@@ -242,7 +256,7 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
 
     namelist = run_dir / case.namelist
     if not namelist.is_file():
-        raise TraceError(f"case {case.name!r}: namelist {namelist} not found")
+        raise PtraceError(f"case {case.name!r}: namelist {namelist} not found")
     links.append((namelist.name, namelist))
     links += [
         (name, run_dir / name)
@@ -252,31 +266,31 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
 
     copies = []
     particles = None
-    if case.trace_particles is not None:
-        particles = run_path(run_dir, case.trace_particles)
+    if case.ptrace_particles is not None:
+        particles = run_path(run_dir, case.ptrace_particles)
         if not particles.is_file():
-            raise TraceError(
-                f"case {case.name!r}: trace_particles {case.trace_particles!r} not found "
-                f"(looked for {particles}; trace_* paths are relative to the run folder)"
+            raise PtraceError(
+                f"case {case.name!r}: ptrace_particles {case.ptrace_particles!r} not found "
+                f"(looked for {particles}; ptrace_* paths are relative to the run folder)"
             )
         copies.append((PARTICLES_FILE, particles))
-    for entry in case.trace_inputs:
+    for entry in case.ptrace_inputs:
         source = run_path(run_dir, entry)
         if not source.is_file():
-            raise TraceError(
-                f"case {case.name!r}: trace_inputs file {entry!r} not found "
-                f"(looked for {source}; trace_* paths are relative to the run folder)"
+            raise PtraceError(
+                f"case {case.name!r}: ptrace_inputs file {entry!r} not found "
+                f"(looked for {source}; ptrace_* paths are relative to the run folder)"
             )
         copies.append((source.name, source))
     missing = [name for name in program.required_inputs if name not in dict(copies)]
     if missing:
-        raise TraceError(
+        raise PtraceError(
             f"case {case.name!r}: {program.name} reads {missing} from its folder; "
-            "list the file(s) in trace_inputs"
+            "list the file(s) in ptrace_inputs"
         )
 
-    threads = case.trace_omp_threads or omp_threads
-    mpirun = site.launch.mpirun_cmd(case.trace_n_mpi)
+    threads = case.ptrace_omp_threads or omp_threads
+    mpirun = site.launch.mpirun_cmd(case.ptrace_n_mpi)
     command = "\n".join(
         line for line in (
             site.launch.interactive_prelude,
@@ -287,8 +301,8 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
     )
 
     settings = {key: getattr(case, key) for key in _RESULT_FIELDS}
-    settings["trace_particles"] = str(particles) if particles else None
-    settings["trace_inputs"] = [str(source) for name, source in copies if name != PARTICLES_FILE]
+    settings["ptrace_particles"] = str(particles) if particles else None
+    settings["ptrace_inputs"] = [str(source) for name, source in copies if name != PARTICLES_FILE]
     fingerprint = hashlib.sha256(json.dumps(
         {"settings": settings, "steps": steps, "exe": exe.name,
          "exe_stamp": _file_stamp(exe),
@@ -296,9 +310,9 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
         sort_keys=True,
     ).encode()).hexdigest()
 
-    return TracePlan(
+    return PtracePlan(
         case=case, program=program, run_dir=run_dir,
-        work_dir=trace_dir(case, run_dir),
+        work_dir=ptrace_dir(case, run_dir),
         exe=exe, steps=steps, links=links, copies=copies, namelist=namelist.name,
         command=command, omp_threads=threads, fingerprint=fingerprint,
         warnings=_start_time_warnings(program, paths, steps),
@@ -312,11 +326,14 @@ def _read_meta(work_dir: Path) -> dict:
         return {}
 
 
-def _write_meta(plan: TracePlan, *, complete: bool, lost: bool = False) -> None:
+def _write_meta(
+    plan: PtracePlan, *, complete: bool, lost: bool = False, notes: tuple[str, ...] = ()
+) -> None:
     meta = {
         "fingerprint": plan.fingerprint,
         "complete": complete,
         "lost": lost,
+        "notes": list(notes),
         "case": plan.case.name,
         "program": plan.program.name,
         "steps": plan.steps,
@@ -328,14 +345,14 @@ def _write_meta(plan: TracePlan, *, complete: bool, lost: bool = False) -> None:
     )
 
 
-def is_current(plan: TracePlan) -> bool:
+def is_current(plan: PtracePlan) -> bool:
     """Whether this exact trace already ran to completion."""
     meta = _read_meta(plan.work_dir)
     return meta.get("fingerprint") == plan.fingerprint and meta.get("complete") is True
 
 
-def _is_managed(entry: Path, plan: TracePlan, previously_copied: list[str]) -> bool:
-    """Whether ashen or the program put `entry` in the trace folder. Only
+def _is_managed(entry: Path, plan: PtracePlan, previously_copied: list[str]) -> bool:
+    """Whether ashen or the program put `entry` in the ptrace folder. Only
     these are cleared on restaging; anything else is left alone."""
     return (
         entry.is_symlink()
@@ -347,8 +364,8 @@ def _is_managed(entry: Path, plan: TracePlan, previously_copied: list[str]) -> b
     )
 
 
-def stage(plan: TracePlan) -> None:
-    """Populate the trace folder, clearing only what a trace put there before.
+def stage(plan: PtracePlan) -> None:
+    """Populate the ptrace folder, clearing only what a trace put there before.
 
     A leftover part_restart.h5 in particular must go: a program that reads
     one would otherwise continue the last trace instead of starting fresh.
@@ -374,8 +391,8 @@ def _log_tail(log: Path, n: int = 15) -> str:
     return "\n  ".join(lines[-n:])
 
 
-def _launch(plan: TracePlan) -> int:
-    """Run the plan's command in its folder, writing everything to trace.log
+def _launch(plan: PtracePlan) -> int:
+    """Run the plan's command in its folder, writing everything to ptrace.log
     (and echoing it live under --tool-output). Returns the exit status."""
     echo = tool_output_enabled()
     with open(plan.work_dir / LOG_FILE, "w", encoding="utf-8") as log:
@@ -393,16 +410,19 @@ def _launch(plan: TracePlan) -> int:
         return proc.wait()
 
 
-def run_trace(plan: TracePlan, *, force: bool = False) -> TraceResult:
+def run_ptrace(plan: PtracePlan, *, force: bool = False) -> PtraceResult:
     """Stage and run one trace, unless it is already current.
 
-    Raises TraceError if the executable is missing, the program exits
+    Raises PtraceError if the executable is missing, the program exits
     non-zero, or it exits without writing its outputs -- except that a
     program which stops at its first lost particle (ex7_jorek) has done
     what it does, and is reported as lost rather than failed.
     """
     if not force and is_current(plan):
-        return TraceResult(ran=False, lost=_read_meta(plan.work_dir).get("lost", False))
+        meta = _read_meta(plan.work_dir)
+        return PtraceResult(
+            ran=False, lost=meta.get("lost", False), notes=tuple(meta.get("notes", ())),
+        )
     spec = plan.program
     if not plan.exe.is_file():
         build = (
@@ -410,15 +430,21 @@ def run_trace(plan: TracePlan, *, force: bool = False) -> TraceResult:
             f"same MODEL as this run, and copy the binary there."
             if spec.known else ""
         )
-        raise TraceError(
-            f"case {plan.case.name!r}: trace_exe {plan.case.trace_exe!r} not found "
-            f"(looked for {plan.exe}; trace_exe is relative to the run folder).{build}"
+        raise PtraceError(
+            f"case {plan.case.name!r}: ptrace_exe {plan.case.ptrace_exe!r} not found "
+            f"(looked for {plan.exe}; ptrace_exe is relative to the run folder).{build}"
         )
     stage(plan)
-    status = _launch(plan)
+    try:
+        status = _launch(plan)
+    finally:
+        # The restart links are the program's input, not a result: leave
+        # the folder holding only what the run produced.
+        for name in plan.restart_links:
+            (plan.work_dir / name).unlink(missing_ok=True)
     log = plan.work_dir / LOG_FILE
     if status != 0:
-        raise TraceError(
+        raise PtraceError(
             f"case {plan.case.name!r}: {plan.exe.name} exited {status}; "
             f"last lines of {log}:\n  {_log_tail(log)}"
         )
@@ -427,9 +453,20 @@ def run_trace(plan: TracePlan, *, force: bool = False) -> TraceResult:
     if not lost:
         missing = [name for name in spec.outputs if not (plan.work_dir / name).is_file()]
         if missing:
-            raise TraceError(
+            raise PtraceError(
                 f"case {plan.case.name!r}: {plan.exe.name} exited 0 but did not "
                 f"write {missing}; last lines of {log}:\n  {_log_tail(log)}"
             )
-    _write_meta(plan, complete=True, lost=lost)
-    return TraceResult(ran=True, lost=lost)
+    notes = _notes(text, spec.note_marker)
+    _write_meta(plan, complete=True, lost=lost, notes=notes)
+    return PtraceResult(ran=True, lost=lost, notes=notes)
+
+
+def _notes(log_text: str, marker: str | None) -> tuple[str, ...]:
+    """The log lines carrying marker, marker and surrounding space removed."""
+    if marker is None:
+        return ()
+    return tuple(
+        line.split(marker, 1)[1].strip()
+        for line in log_text.splitlines() if marker in line
+    )
