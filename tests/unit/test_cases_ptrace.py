@@ -188,3 +188,15 @@ def test_exit_keys(tmp_path):
 def test_invalid_exit_keys(tmp_path, extra, message):
     with pytest.raises(CasesError, match=message):
         _load(tmp_path, _TRACED + extra + "\n")
+
+
+def test_particle_color(tmp_path):
+    assert _load(tmp_path, _TRACED)["a"].ptrace_particle_color == "red"
+    case = _load(tmp_path, _TRACED + 'ptrace_particle_color = "#ff8800"\n')["a"]
+    assert case.ptrace_particle_color == "#ff8800"
+
+
+@pytest.mark.parametrize("value", ['"notacolour"', "3"])
+def test_invalid_particle_color(tmp_path, value):
+    with pytest.raises(CasesError, match="ptrace_particle_color must be a matplotlib colour"):
+        _load(tmp_path, _TRACED + f"ptrace_particle_color = {value}\n")

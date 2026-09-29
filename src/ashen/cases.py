@@ -44,6 +44,7 @@ _CASE_KEYS = (
     "ptrace_inputs", "ptrace_n_mpi", "ptrace_omp_threads",
     "ptrace_poincare", "ptrace_poincare_psi_n", "ptrace_poincare_n_turns",
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
+    "ptrace_particle_color",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -261,6 +262,10 @@ class Case:
     ptrace_exit_psi_n: float = 1.0
     #: `plot --diag particle_exits`: bins over each of theta and phi.
     ptrace_exit_bins: int = 72
+    #: `plot --diag particles`: the colour of the particles, any matplotlib
+    #: colour ("red", "#ff8800", "tab:orange"). Red stands out against the
+    #: Poincare plot's viridis.
+    ptrace_particle_color: str = "red"
 
     def steps_for(self, diag: str) -> list[int]:
         """`steps` unless `diag` overrides it in `diag_steps` (case+diag tier)."""
@@ -458,6 +463,16 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
         value = merged["ptrace_exit_bins"]
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise CasesError(f"{where}: ptrace_exit_bins must be a whole number >= 1, got {value!r}")
+
+    if "ptrace_particle_color" in merged:
+        from matplotlib.colors import is_color_like
+
+        value = merged["ptrace_particle_color"]
+        if not (isinstance(value, str) and is_color_like(value)):
+            raise CasesError(
+                f"{where}: ptrace_particle_color must be a matplotlib colour "
+                f'name or "#rrggbb", got {value!r}'
+            )
 
     for key in ("ptrace_poincare", "ptrace_original_boundary"):
         if key in merged and not isinstance(merged[key], bool):

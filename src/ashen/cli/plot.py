@@ -2375,10 +2375,14 @@ def _plot_particles(
         _poincare_overlays(case, paths, snapshots, point_size=point_size, n_workers=n_workers)
         if case.ptrace_poincare else None
     )
-    panels = particle_panels(snapshots, boundary=boundary, exits=exits, poincare=poincare)
+    panels = particle_panels(
+        snapshots, boundary=boundary, exits=exits, poincare=poincare,
+        color=case.ptrace_particle_color,
+    )
     kwargs = _dpi_kwargs(dpi)
     kwargs["caption"] = particle_caption(
         snapshots, boundary=boundary is not None, poincare=poincare is not None,
+        color=case.ptrace_particle_color,
     )
     out = plot_rz_panels(panels, folder / "particles.png", n_cols=n_cols or 4, **kwargs)
     print(f"  particles: {len(snapshots)} snapshot(s) -> {out}")
