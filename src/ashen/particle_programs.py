@@ -1,18 +1,22 @@
-"""The JOREK particle programs `bin/trace` can run.
+"""What ashen knows about JOREK's particle programs, for `bin/trace`.
 
-Each is one of JOREK's own ``particles/examples`` programs, run unmodified
-against a case's restarts (ashen.tracing; configured by a case's trace_*
-fields, ashen.cases). ashen does not change what a program computes -- its
-particles, energies, time step and duration are fixed in its source. What
-ashen chooses is which restarts it sees, how it is launched, and (for a
-program that starts from a particle file) which particles it starts from.
+`bin/trace` runs whatever executable a case's trace_exe names, unmodified,
+against its restarts (ashen.tracing). When that executable's filename is one
+of JOREK's own ``particles/examples`` programs listed here, ashen also
+applies what it knows about it: which files it writes, whether it reads a
+particle file, its hard-coded start time, how it reports a lost particle.
+Any other executable is run as-is (:func:`program_for`).
+
+ashen does not change what a program computes -- its particles, energies,
+time step and duration are fixed in its source.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
-__all__ = ["PROGRAMS", "Program"]
+__all__ = ["PROGRAMS", "Program", "program_for"]
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,8 @@ class Program:
     #: With a single restart, keeps that field frozen (True) rather than
     #: aborting when it finds no next restart (stop_at_end=.true.).
     holds_last_field: bool = False
+    #: One of PROGRAMS, as opposed to an executable ashen knows nothing about.
+    known: bool = True
 
 
 PROGRAMS = {
@@ -65,3 +71,25 @@ PROGRAMS = {
         ),
     )
 }
+
+
+def program_for(exe: Path | str) -> Program:
+    """What ashen knows about the program at `exe`, recognised by filename.
+
+    An unrecognised executable gets no program-specific handling: no
+    expected outputs (a zero exit is success), no start-time check, a
+    single restart allowed, and a particle file passed through if given.
+    """
+    name = Path(exe).name
+    known = PROGRAMS.get(name)
+    if known is not None:
+        return known
+    return Program(
+        name=name,
+        summary="not a program ashen knows; run as-is",
+        outputs=(),
+        reads_particles=True,
+        holds_last_field=True,
+        known=False,
+    )
+

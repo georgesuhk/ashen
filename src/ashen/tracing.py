@@ -1,8 +1,9 @@
-"""Staging and running a trace: one of JOREK's particle programs
-(ashen.particle_programs.PROGRAMS), unmodified, against one case's restarts,
-as that case's trace_* fields configure it (ashen.cases).
+"""Staging and running a trace: the executable a case's trace_exe names,
+unmodified, against that case's restarts, as its trace_* fields configure
+it (ashen.cases). When the executable is one of JOREK's own particle
+programs, what ashen knows about it applies too (ashen.particle_programs).
 
-Each trace runs in its own folder, ``<run>/trace/<program>/``. Restarts, the
+Each trace runs in its own folder, ``<run>/trace/<executable name>/``. Restarts, the
 namelist and profile files are symlinked in, relative to the folder, so
 the run can still be moved or renamed. A particle file for a program that
 reads one is *copied*: the program overwrites part_restart.h5 with its
@@ -50,7 +51,7 @@ from ashen.jorek2 import tool_output_enabled
 from ashen.padding import JOREK_PAD_WIDTHS, restart_name, restart_steps
 from ashen.paths import RunPaths
 from ashen.postproc import read_zeroD, zero_d_is_usable
-from ashen.particle_programs import PROGRAMS, Program
+from ashen.particle_programs import PROGRAMS, Program, program_for
 
 __all__ = [
     "LOG_FILE",
@@ -179,9 +180,14 @@ def _file_stamp(path: Path | None) -> list[int] | None:
 #: trace_omp_threads is left out: it changes how the work is spread, not the
 #: answer. trace_n_mpi stays in: re_gc samples its particle count per rank.
 _RESULT_FIELDS = (
-    "trace_program", "trace_start_step", "trace_end_step", "trace_particles",
-    "trace_n_mpi", "trace_exe", "namelist",
+    "trace_exe", "trace_start_step", "trace_end_step", "trace_particles",
+    "trace_n_mpi", "namelist",
 )
+
+#: Every known program's outputs: cleared on restaging whichever executable
+#: runs, so a stale diag file is never mistaken for, or appended to by, a
+#: new trace.
+_KNOWN_OUTPUTS = frozenset(name for p in PROGRAMS.values() for name in p.outputs)
 
 
 def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> TracePlan:
@@ -189,10 +195,13 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
 
     omp_threads is the fallback for a case that leaves trace_omp_threads at 0.
     """
-    if case.trace_program is None:
-        raise TraceError(f"case {case.name!r} has no trace_program")
-    program = PROGRAMS[case.trace_program]
+    if case.trace_exe is None:
+        raise TraceError(f"case {case.name!r} has no trace_exe")
     run_dir = Path(run_dir)
+    exe = Path(case.trace_exe)
+    if not exe.is_absolute():
+        exe = Path(os.path.normpath(run_dir / exe))
+    program = program_for(exe)
     paths = RunPaths.detect(run_dir)
 
     steps = _select_steps(case, program, restart_steps(run_dir))
@@ -219,7 +228,6 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
             raise TraceError(f"case {case.name!r}: trace_particles {particles} not found")
         copies.append((PARTICLES_FILE, particles))
 
-    exe = run_dir / "exe" / (case.trace_exe or program.name)
     threads = case.trace_omp_threads or omp_threads
     mpirun = site.launch.mpirun_cmd(case.trace_n_mpi)
     command = "\n".join(
@@ -241,7 +249,7 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
 
     return TracePlan(
         case=case, program=program, run_dir=run_dir,
-        work_dir=run_dir / TRACE_DIR / program.name,
+        work_dir=run_dir / TRACE_DIR / exe.name,
         exe=exe, steps=steps, links=links, copies=copies, namelist=namelist.name,
         command=command, omp_threads=threads, fingerprint=fingerprint,
         warnings=_start_time_warnings(program, paths, steps),
@@ -281,7 +289,7 @@ def _is_managed(entry: Path, plan: TracePlan) -> bool:
     these are cleared on restaging; anything else is left alone."""
     return (
         entry.is_symlink()
-        or entry.name in (META_FILE, LOG_FILE, *plan.program.outputs)
+        or entry.name in (META_FILE, LOG_FILE, *_KNOWN_OUTPUTS, *plan.program.outputs)
         or entry.match("part_restart*.h5")
         or entry.match(_FILENUMS_GLOB)
     )
@@ -344,10 +352,14 @@ def run_trace(plan: TracePlan, *, force: bool = False) -> TraceResult:
         return TraceResult(ran=False, lost=_read_meta(plan.work_dir).get("lost", False))
     spec = plan.program
     if not plan.exe.is_file():
+        build = (
+            f" Build it with `make {spec.name}` in the JOREK checkout, with the "
+            f"same MODEL as this run, and copy the binary there."
+            if spec.known else ""
+        )
         raise TraceError(
-            f"case {plan.case.name!r}: {plan.exe} not found. Build it with "
-            f"`make {spec.name}` in the JOREK checkout, with the same MODEL as "
-            f"this run, and copy the binary to {plan.exe}"
+            f"case {plan.case.name!r}: trace_exe {plan.case.trace_exe!r} not found "
+            f"(looked for {plan.exe}; trace_exe is relative to the run folder).{build}"
         )
     stage(plan)
     status = _launch(plan)

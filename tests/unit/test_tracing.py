@@ -84,9 +84,12 @@ def run_dir(tmp_path):
 
 
 def _case(**overrides) -> Case:
-    """A case named "run" that traces with RE_GC from step 3000; overrides
-    are trace_* fields without their prefix, e.g. program=, start_step=."""
-    settings = dict(name="run", steps=[3000], trace_program=RE_GC, trace_start_step=3000)
+    """A case named "run" that traces ./exe/RE_GC from step 3000. Overrides
+    are trace_* fields without their prefix (start_step=, exe=, ...), plus
+    program=NAME as shorthand for exe="./exe/NAME"."""
+    settings = dict(name="run", steps=[3000], trace_exe=f"./exe/{RE_GC}", trace_start_step=3000)
+    if "program" in overrides:
+        overrides["exe"] = f"./exe/{overrides.pop('program')}"
     for key, value in overrides.items():
         settings[key if key == "note" else f"trace_{key}"] = value
     return Case(**settings)
@@ -133,8 +136,8 @@ def test_last_file_before_time_sees_ascending_step_numbers(tmp_path, site):
     assert set(seen) == set(range(len(plan.steps)))
 
 
-def test_a_case_without_trace_program_cannot_be_planned(run_dir, site):
-    with pytest.raises(TraceError, match="has no trace_program"):
+def test_a_case_without_trace_exe_cannot_be_planned(run_dir, site):
+    with pytest.raises(TraceError, match="has no trace_exe"):
         plan_trace(Case(name="run", steps=[3000]), run_dir, site, omp_threads=1)
 
 
@@ -168,12 +171,30 @@ def test_namelist_and_present_profiles_are_linked(run_dir, site):
 # --- executable and command ---------------------------------------------------
 
 
-def test_exe_defaults_to_the_program_name(run_dir, site):
-    assert _plan(run_dir, site).exe == run_dir / "exe" / RE_GC
+def test_exe_is_relative_to_the_run_folder(run_dir, site):
+    plan = _plan(run_dir, site)
+    assert plan.exe == run_dir / "exe" / RE_GC
+    assert plan.program.known and plan.program.name == RE_GC
+    assert plan.work_dir == run_dir / "trace" / RE_GC
 
 
-def test_explicit_exe_wins(run_dir, site):
-    assert _plan(run_dir, site, exe="re_gc_model600").exe.name == "re_gc_model600"
+def test_exe_outside_exe_folder(run_dir, site):
+    """Any path, not only under exe/ -- normalised, so ../ works too."""
+    plan = _plan(run_dir, site, exe="../tools/re_gc_current_density_initialisation")
+    assert plan.exe == run_dir.parent / "tools" / RE_GC
+    assert plan.program.known
+
+
+def test_absolute_exe(run_dir, site, tmp_path):
+    exe = tmp_path / "bin" / "ex7_jorek"
+    assert _plan(run_dir, site, exe=str(exe)).exe == exe
+
+
+def test_renamed_known_program_is_not_recognised(run_dir, site):
+    """Recognition is by filename; a renamed binary runs as-is."""
+    plan = _plan(run_dir, site, exe="./exe/re_gc_model600")
+    assert not plan.program.known
+    assert plan.work_dir == run_dir / "trace" / "re_gc_model600"
 
 
 def test_omp_threads_are_exported_after_the_prelude(run_dir, site):
@@ -329,5 +350,46 @@ def test_program_without_outputs_is_an_error(run_dir, site, monkeypatch):
 
 def test_missing_program_says_how_to_build_it(run_dir, site):
     (run_dir / "exe" / RE_GC).unlink()
-    with pytest.raises(TraceError, match=f"make {RE_GC}"):
+    with pytest.raises(TraceError) as info:
         run_trace(_plan(run_dir, site))
+    message = str(info.value)
+    assert f"trace_exe './exe/{RE_GC}' not found" in message
+    assert "relative to the run folder" in message
+    assert f"make {RE_GC}" in message
+
+
+def test_missing_unrecognised_exe_has_no_build_hint(run_dir, site):
+    with pytest.raises(TraceError) as info:
+        run_trace(_plan(run_dir, site, exe="./exe/my_tracer"))
+    assert "not found" in str(info.value)
+    assert "make" not in str(info.value)
+
+
+# --- an executable ashen does not recognise ------------------------------------
+
+
+def test_unrecognised_exe_runs_as_is(run_dir, site, monkeypatch):
+    """No expected outputs: a zero exit is success, even writing nothing."""
+    install_program(run_dir, "my_tracer")
+    monkeypatch.setenv("STUB_NO_OUTPUT", "1")
+    plan = _plan(run_dir, site, exe="./exe/my_tracer")
+    assert run_trace(plan).ran
+    assert is_current(plan)
+
+
+def test_unrecognised_exe_gets_no_start_time_check_and_one_restart_is_enough(run_dir, site):
+    plan = _plan(run_dir, site, exe="./exe/my_tracer", start_step=3400)
+    assert plan.steps == [3400]
+    assert plan.warnings == []
+
+
+def test_stale_known_outputs_are_cleared_for_any_exe(run_dir, site, monkeypatch):
+    """A diag file left by an earlier trace in the same folder must not be
+    mistaken for this one's."""
+    install_program(run_dir, "my_tracer")
+    monkeypatch.setenv("STUB_NO_OUTPUT", "1")
+    plan = _plan(run_dir, site, exe="./exe/my_tracer")
+    plan.work_dir.mkdir(parents=True)
+    (plan.work_dir / "diag.h5").write_bytes(b"stale")
+    run_trace(plan)
+    assert not (plan.work_dir / "diag.h5").exists()

@@ -17,13 +17,13 @@ CASES = """
 [cases.run]
 steps            = [3000]
 note             = "runaways from the current profile"
-trace_program    = "re_gc_current_density_initialisation"
+trace_exe        = "./exe/re_gc_current_density_initialisation"
 trace_start_step = 3000
 trace_n_mpi      = 2
 
 [cases.other]
 steps            = [3200]
-trace_program    = "ex7_jorek"
+trace_exe        = "./exe/ex7_jorek"
 trace_start_step = 3200
 
 [cases.untraced]
@@ -60,9 +60,10 @@ def campaign(tmp_path, monkeypatch):
 def test_list_shows_tracing_cases_and_programs(campaign, capsys):
     assert trace_cli.main(["--list"]) == 0
     out = capsys.readouterr().out
-    assert ("run: re_gc_current_density_initialisation from step 3000 "
+    assert ("run: ./exe/re_gc_current_density_initialisation from step 3000 "
+            "[recognised as re_gc_current_density_initialisation] "
             "-- runaways from the current profile") in out
-    assert "other: ex7_jorek from step 3200" in out
+    assert "other: ./exe/ex7_jorek from step 3200 [recognised as ex7_jorek]" in out
     assert "untraced" not in out
     assert "  ex6_jorek: one relativistic full-orbit electron" in out
 
@@ -79,8 +80,10 @@ def test_dry_run_writes_nothing(campaign, capsys):
 def test_runs_every_tracing_case_then_reports_them_cached(campaign, capsys):
     assert trace_cli.main([]) == 0
     out = capsys.readouterr().out
-    assert "==== run (re_gc_current_density_initialisation) ====\n  steps 3000..3400 (3 restart(s))" in out
-    assert "==== other (ex7_jorek) ====" in out
+    assert ("==== run (./exe/re_gc_current_density_initialisation) ====\n"
+            "  recognised as re_gc_current_density_initialisation\n"
+            "  steps 3000..3400 (3 restart(s))") in out
+    assert "==== other (./exe/ex7_jorek) ====" in out
     assert "untraced" not in out
     # ex7's fixed 2.5 ms start can't be checked without zeroD here
     assert "warning: ex7_jorek always starts at t = 0.0025 s" in out
@@ -104,7 +107,7 @@ def test_unknown_case(campaign, capsys):
 
 def test_selecting_a_case_that_does_not_trace(campaign, capsys):
     assert trace_cli.main(["--case", "untraced"]) == 1
-    assert "case(s) ['untraced'] set no trace_program" in capsys.readouterr().err
+    assert "case(s) ['untraced'] set no trace_exe" in capsys.readouterr().err
 
 
 def test_one_failing_trace_does_not_stop_the_others(campaign, capsys):
@@ -120,7 +123,16 @@ def test_one_failing_trace_does_not_stop_the_others(campaign, capsys):
 
 def test_invalid_trace_settings_are_reported(campaign, capsys):
     (campaign / "cases.toml").write_text(
-        CASES.replace('"ex7_jorek"', '"ex9_jorek"'), encoding="utf-8"
+        CASES.replace("trace_start_step = 3200", "trace_start_step = -1"), encoding="utf-8"
     )
     assert trace_cli.main(["--list"]) == 1
-    assert "trace_program must be one of" in capsys.readouterr().err
+    assert "trace_start_step must be >= 0" in capsys.readouterr().err
+
+
+def test_unrecognised_exe_is_labelled(campaign, capsys):
+    (campaign / "cases.toml").write_text(
+        CASES.replace('"./exe/ex7_jorek"', '"./exe/my_tracer"'), encoding="utf-8"
+    )
+    assert trace_cli.main(["--list"]) == 0
+    assert ("other: ./exe/my_tracer from step 3200 "
+            "[not a program ashen knows: run as-is, success = exit code 0]") in capsys.readouterr().out
