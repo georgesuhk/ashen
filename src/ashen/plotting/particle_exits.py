@@ -23,11 +23,17 @@ _PHI_TICKS = ([0, np.pi / 2, np.pi, 3 * np.pi / 2, 2 * np.pi],
               ["0", r"$\pi/2$", r"$\pi$", r"$3\pi/2$", r"$2\pi$"])
 
 
-def exit_caption(result: ExitResult, *, psi_n: float) -> str:
-    """How many particles the histograms stand for."""
-    text = (
-        f"{result.n_exited} of {result.n_considered} particles exit past psi_n = {psi_n:g}"
-    )
+def exit_caption(result: ExitResult, *, psi_n: float, boundary: bool = False) -> str:
+    """How many particles the histograms stand for, and how each exited."""
+    where = f"psi_n = {psi_n:g}"
+    if boundary:
+        where += " or the plasma boundary before extension"
+    text = f"{result.n_exited} of {result.n_considered} particles exit past {where}"
+    if boundary:
+        text += (
+            f" ({result.n_outside_boundary} at the boundary, "
+            f"{result.n_crossed} at psi_n)"
+        )
     if result.n_left_grid:
         text += (
             f" ({result.n_left_grid} left the grid first -- "

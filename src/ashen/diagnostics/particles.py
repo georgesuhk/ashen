@@ -21,8 +21,9 @@ Pure data: no matplotlib here (see ashen.plotting.particles).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Sequence
 
 import re
 
@@ -31,10 +32,13 @@ import numpy as np
 from ashen.diagnostics.hdf5 import require_h5py
 
 __all__ = [
+    "BoundaryExits",
     "PARTICLE_FILE_GLOB",
     "ParticleFileError",
     "ParticleSnapshot",
+    "exits_from_snapshots",
     "find_snapshots",
+    "freeze_exited",
     "inside_polygon",
     "named_step",
     "read_snapshot",
@@ -173,3 +177,75 @@ def inside_polygon(R: np.ndarray, Z: np.ndarray, polygon: np.ndarray) -> np.ndar
             r_cross = a_r + (Z - a_z) * (b_r - a_r) / (b_z - a_z)
         inside ^= crosses & (R < r_cross)
     return inside
+
+
+#: Relative tolerance on "exited by this snapshot's time": diagnostics
+#: times are stored as 4-byte reals, snapshot times as 8-byte.
+_TIME_RTOL = 1e-6
+
+
+@dataclass(frozen=True)
+class BoundaryExits:
+    """When and where each particle first left a boundary while still on
+    the grid. inf time (and nan position) for one that never did."""
+
+    time: np.ndarray
+    R: np.ndarray
+    Z: np.ndarray
+    #: What the times were read from, for messages: e.g. "ptrace_diag.h5
+    #: (every diag_step)" or "the snapshots".
+    source: str = ""
+
+    @property
+    def n(self) -> int:
+        return int(self.time.size)
+
+    def exited_by(self, time: float) -> np.ndarray:
+        """Which particles had left the boundary at `time`."""
+        return self.time <= time + abs(time) * _TIME_RTOL
+
+
+def exits_from_snapshots(
+    snapshots: Sequence[ParticleSnapshot], boundary: np.ndarray,
+) -> BoundaryExits:
+    """Each particle's first snapshot outside boundary while on the grid --
+    only as fine as the snapshots; exits_from_history (ashen.diagnostics.
+    particle_exits) is finer where the program writes a diagnostics file.
+    Every snapshot must hold the same particles, in the same order."""
+    n = snapshots[0].n
+    time = np.full(n, np.inf)
+    R = np.full(n, np.nan)
+    Z = np.full(n, np.nan)
+    for snapshot in snapshots:
+        if snapshot.n != n:
+            raise ParticleFileError(
+                f"{snapshot.path}: {snapshot.n} particles, but {snapshots[0].path} has {n}"
+            )
+        out = (~snapshot.lost & ~inside_polygon(snapshot.R, snapshot.Z, boundary)
+               & np.isinf(time))
+        time[out] = snapshot.time
+        R[out] = snapshot.R[out]
+        Z[out] = snapshot.Z[out]
+    return BoundaryExits(time=time, R=R, Z=Z, source="the snapshots")
+
+
+def freeze_exited(
+    snapshot: ParticleSnapshot, exits: BoundaryExits,
+) -> tuple[ParticleSnapshot, np.ndarray]:
+    """The snapshot with every particle that had left the boundary by its
+    time put back where it first left -- no longer tracked from there on --
+    and not counted as lost, whatever happened to it later. Returns that
+    snapshot and the mask of exited particles."""
+    if exits.n != snapshot.n:
+        raise ParticleFileError(
+            f"{snapshot.path}: {snapshot.n} particles, but the boundary exits are for {exits.n}"
+        )
+    exited = exits.exited_by(snapshot.time)
+    if not exited.any():
+        return snapshot, exited
+    return replace(
+        snapshot,
+        R=np.where(exited, exits.R, snapshot.R),
+        Z=np.where(exited, exits.Z, snapshot.Z),
+        lost=snapshot.lost & ~exited,
+    ), exited

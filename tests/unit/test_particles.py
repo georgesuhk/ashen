@@ -17,8 +17,11 @@ from ashen.cli import plot as plot_cli
 from ashen.paths import RunPaths
 from ashen.diagnostics import poincare_cache as pc
 from ashen.diagnostics.particles import (
+    BoundaryExits,
     ParticleFileError,
+    exits_from_snapshots,
     find_snapshots,
+    freeze_exited,
     inside_polygon,
     named_step,
     read_snapshot,
@@ -28,7 +31,6 @@ from ashen.plotting.particles import (
     RZPanel,
     animate_rz_panels,
     draw_particles,
-    outside_boundary,
     particle_caption,
     particle_panels,
     plot_rz_panels,
@@ -337,10 +339,54 @@ def test_inside_polygon():
     assert inside.tolist() == [True, False, False, True]
 
 
-def test_outside_boundary_leaves_lost_particles_to_their_own_marker(snapshots):
-    _, later = snapshots  # R 3.65, 3.75 on the grid; 4.5 lost
-    shrunk = SQUARE - [[0, 0], [0.3, 0], [0.3, 0], [0, 0]]  # R 3.5..3.7
-    assert outside_boundary(later, shrunk).tolist() == [False, True, False]
+#: The square, shrunk to R 3.5..3.72.
+SHRUNK = SQUARE - [[0, 0], [0.28, 0], [0.28, 0], [0, 0]]
+
+
+def test_exits_from_snapshots_first_time_outside_on_the_grid(snapshots):
+    first, later = snapshots  # first: R 3.6, 3.7, 3.8; later: 3.65, 3.75, 4.5 (lost)
+    exits = exits_from_snapshots([first, later], SHRUNK)
+    # Particle 1 leaves at the later snapshot, particle 2 at the first (3.8);
+    # being lost later doesn't move its exit.
+    np.testing.assert_allclose(exits.time, [np.inf, 2e-3, 1e-3])
+    np.testing.assert_allclose(exits.R[1:], [3.75, 3.8])
+
+
+def test_freeze_exited_stops_tracking_at_the_exit(snapshots):
+    _, later = snapshots
+    exits = BoundaryExits(
+        time=np.array([np.inf, 1.5e-3, 1e-3]), R=np.array([np.nan, 3.71, 3.8]),
+        Z=np.array([np.nan, 0.1, 0.0]),
+    )
+    frozen, exited = freeze_exited(later, exits)
+    assert exited.tolist() == [False, True, True]
+    np.testing.assert_allclose(frozen.R, [3.65, 3.71, 3.8])
+    np.testing.assert_allclose(frozen.Z, [0.0, 0.1, 0.0])
+    # Particle 2 left the boundary before it was lost: an exit, not a loss.
+    assert frozen.n_lost == 0
+    untouched, exited = freeze_exited(later, BoundaryExits(
+        time=np.full(3, 2.5e-3), R=np.zeros(3), Z=np.zeros(3)))
+    assert untouched is later and not exited.any()
+
+
+def test_freeze_exited_needs_the_same_particles(snapshots):
+    _, later = snapshots
+    with pytest.raises(ParticleFileError, match="exits are for 2"):
+        freeze_exited(later, BoundaryExits(time=np.zeros(2), R=np.zeros(2), Z=np.zeros(2)))
+
+
+def test_panels_freeze_particles_that_left_the_boundary(snapshots):
+    first, later = snapshots
+    panels = particle_panels([first, later], boundary=SHRUNK)
+    assert panels[0].title == "t = 1 ms, 1 left boundary"
+    assert panels[1].title == "t = 2 ms (+1 ms), 2 left boundary"
+    fig, ax = plt.subplots()
+    for layer in panels[1].layers:
+        layer(ax)
+    _, tracked, left = ax.collections  # grey start, black, magenta crosses
+    np.testing.assert_allclose(tracked.get_offsets(), [[3.65, 0.0]])
+    np.testing.assert_allclose(left.get_offsets(), [[3.75, 0.0], [3.8, 0.0]])
+    plt.close(fig)
 
 
 def test_outside_particles_are_magenta_crosses(snapshots):
@@ -357,7 +403,7 @@ def test_outside_particles_are_magenta_crosses(snapshots):
 
 def test_label_counts_particles_outside(snapshots):
     _, later = snapshots
-    assert snapshot_label(later, n_outside=1) == "t = 2 ms, 1/3 lost, 1 outside"
+    assert snapshot_label(later, n_outside=1) == "t = 2 ms, 1/3 lost, 1 left boundary"
 
 
 def _record(psi_n, n):
