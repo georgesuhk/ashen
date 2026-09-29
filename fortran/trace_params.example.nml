@@ -1,0 +1,25 @@
+! Settings for fortran/trace_gc.f90. Copy into the run folder, edit, and list
+! it in the case's trace_inputs (relative to the run folder, like trace_exe);
+! ashen copies it into the trace folder.
+!
+! A simple R-Z test: five 10 MeV electrons along the outboard midplane,
+! co-passing (cos_pitch = 0.9), one snapshot every microsecond for 10 us.
+! Set R0/Z0 to points inside your plasma -- a marker outside the grid is
+! reported lost from the start.
+&trace
+  field_mode      = 'evolving'   ! or 'static': trace_start_step's field, frozen
+  restart_index   = 0            ! keep 0 under ashen (restarts are linked from index 0)
+  hold_last_field = .false.      ! evolving: .true. keeps the last restart's field past its time
+  t_span          = 1.d-5        ! [s] traced, from trace_start_step's own time
+  dt              = 1.d-10       ! [s] RK4 step
+  diag_step       = 1.d-8        ! [s] trace_diag.h5 writes
+  snapshot_step   = 1.d-6        ! [s] part_restart<time>.h5 files, for plot --diag particles
+  mass            = 5.48579909065d-4  ! [amu], electron
+  n_markers       = 5
+  R0        = 1.4,  1.5,  1.6,  1.7,  1.8   ! [m]
+  Z0        = 0.0,  0.0,  0.0,  0.0,  0.0    ! [m]
+  phi0      = 0.0,  0.0,  0.0,  0.0,  0.0    ! [rad]
+  E_kin_eV  = 1.d7, 1.d7, 1.d7, 1.d7, 1.d7   ! kinetic energy [eV]
+  cos_pitch = 0.9,  0.9,  0.9,  0.9,  0.9    ! v_par/v
+  charge    = -1,   -1,   -1,   -1,   -1     ! [e]
+/

@@ -1180,12 +1180,14 @@ editing the program in JOREK and rebuilding it; ashen only chooses which
 restarts it sees and how it is launched. Keys: `trace_start_step`
 (required with `trace_exe`), `trace_end_step` (last restart it sees;
 default all), `trace_particles` (a JOREK particle file to start from,
-relative to `cases.toml`, *copied* in as `part_restart.h5` because the
-program overwrites that file at the end; refused for ex6/ex7, which ignore
-it), `trace_inputs` (files copied into the trace folder under their own
-names before the run, relative to `cases.toml` -- e.g. `trace_gc`'s
-`trace_params.nml`), `trace_n_mpi`, `trace_omp_threads` (default:
-`site.toml`'s `[diagnostics]`).
+*copied* in as `part_restart.h5` because the program overwrites that file
+at the end; refused for ex6/ex7, which ignore it), `trace_inputs` (files
+copied into the trace folder under their own names before the run -- e.g.
+`trace_gc`'s `trace_params.nml`), `trace_n_mpi`, `trace_omp_threads`
+(default: `site.toml`'s `[diagnostics]`). Like `trace_exe`, the paths in
+`trace_particles` and `trace_inputs` are **relative to the run folder**, so
+a bare `"trace_params.nml"` is the file in the run folder -- and
+`[defaults] trace_inputs = ["trace_params.nml"]` gives every case its own.
 
 Each trace runs in `<run>/trace/<executable filename>/`, with its output in
 `trace.log`. A completed trace is `[cached]` until its settings, restarts,
@@ -1228,7 +1230,7 @@ fields, with nothing hard-coded. Everything is read from a
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 trace_exe        = "./exe/trace_gc"
 trace_start_step = 3000
-trace_inputs     = ["trace_params.nml"]    # next to cases.toml
+trace_inputs     = ["trace_params.nml"]    # in the run folder
 ```
 
 It writes `trace_diag.h5` (energy, mu, psi_N, p_phi, lost, R, Z, phi every
@@ -1238,9 +1240,6 @@ distribution evolve. A marker that leaves the grid is flagged lost and the
 rest carry on. Keep `restart_index = 0`: ashen links the restarts from
 index 0, and `jorek_restart.h5` to the start restart for
 `field_mode = 'static'`.
-
-`fortran/` is gitignored: the sources live in your local clone and are
-copied to the HPC by hand.
 
 **It has never been compiled** -- this repository is developed without a
 Fortran compiler -- so expect the first build to need small fixes. Build it
