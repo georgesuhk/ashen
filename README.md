@@ -1224,8 +1224,8 @@ run folder links as `./exe`. Keep its name to keep ashen's checks for it.
 JOREK's programs hard-code their particles (and re_gc's current-density
 sampling can hang on some equilibria). `fortran/ptrace_gc.f90` is a
 configurable ex7: guiding-centre electrons started at the (R, Z, phi),
-energy and pitch you list, pushed with RK4 through static or evolving
-fields, with nothing hard-coded. Everything is read from a
+energy and pitch you list -- or drawn from the current profile -- pushed
+with RK4 through static or evolving fields, with nothing hard-coded. Everything is read from a
 `ptrace_params.nml` -- start from `fortran/ptrace_params.example.nml`:
 
 ```toml
@@ -1234,6 +1234,24 @@ ptrace_exe        = "./exe/ptrace_gc"
 ptrace_start_step = 3000
 ptrace_inputs     = ["ptrace_params.nml"]    # in the run folder
 ```
+
+**Initialisers.** `initialiser` in `&ptrace` chooses how the markers are
+placed:
+
+| `initialiser` | markers |
+|---|---|
+| `'markers'` (default) | one at each listed `R0`, `Z0`, `phi0`, each with its own `E_kin_eV`, `cos_pitch`, `charge` |
+| `'current_pdf_simple'` | `n_markers` drawn with the toroidal current density at `ptrace_start_step` as their pdf, all at `E_kin_eV(1)`, `cos_pitch(1)`, `charge(1)` |
+
+`current_pdf_simple` samples the n = 0 current profile: JOREK's `zj`
+averaged over `pdf_n_phi` toroidal planes (default 16), which is R·j_phi, so
+particles per unit R-Z area follow the current in each volume. Only the
+current along the net plasma current counts; `ptrace.log` says what
+fraction runs against it and gets no markers. Each grid element is split
+into `pdf_n_sub` × `pdf_n_sub` cells (default 4), markers are drawn from that
+table -- uniform in the element's (s, t) within a cell, uniform in phi -- so
+it always finishes, unlike re_gc's rejection sampling. `seed` (default 1)
+makes it repeatable. Up to 100000 markers.
 
 It writes `ptrace_diag.h5` (energy, mu, psi_N, p_phi, lost, R, Z, phi every
 `diag_step`), `part_restart_s<step>_t<time>.h5` every `snapshot_step` (the

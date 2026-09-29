@@ -86,7 +86,8 @@ PROGRAMS = {
         Program(
             name="ptrace_gc",
             summary="ashen's configurable guiding-centre tracer (fortran/ptrace_gc.f90): "
-            "markers, energies, time span and snapshots from ptrace_params.nml",
+            "markers (listed, or from the current profile), energies, time span and "
+            "snapshots from ptrace_params.nml",
             # ptrace_diag.h5 every diag_step; part_restart_s<step>_t<time>.h5 every
             # snapshot_step (if > 0) and part_restart.h5 at the end.
             outputs=("ptrace_diag.h5", "part_restart.h5"),
