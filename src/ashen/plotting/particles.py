@@ -25,7 +25,12 @@ from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
-from ashen.diagnostics.particles import ParticleSnapshot, inside_polygon
+from ashen.diagnostics.particles import (
+    BoundaryExits,
+    ParticleSnapshot,
+    exits_from_snapshots,
+    freeze_exited,
+)
 from ashen.diagnostics.poincare_cache import LineKey, LineRecord
 from ashen.plotting import DEFAULT_DPI, style
 from ashen.plotting.poincare import draw_poincare
@@ -38,7 +43,6 @@ __all__ = [
     "draw_particles",
     "particle_caption",
     "particle_panels",
-    "outside_boundary",
     "particle_point_size",
     "plot_rz_panels",
     "snapshot_label",
@@ -105,22 +109,16 @@ def snapshot_label(
 ) -> str:
     """Panel title: time in ms -- and, given the first snapshot's time,
     the time since it, which is what changes between panels -- and how many
-    particles are lost so far, and how many more are outside the plasma
-    boundary (n_outside)."""
+    particles are lost so far, and how many have left the plasma boundary
+    (n_outside)."""
     label = f"t = {snapshot.time * 1e3:.5g} ms"
     if start is not None and snapshot.time != start:
         label += f" (+{_duration(snapshot.time - start)})"
     if snapshot.n_lost:
         label += f", {snapshot.n_lost}/{snapshot.n} lost"
     if n_outside:
-        label += f", {n_outside} outside"
+        label += f", {n_outside} left boundary"
     return label
-
-
-def outside_boundary(snapshot: ParticleSnapshot, boundary: np.ndarray) -> np.ndarray:
-    """Particles still on the grid but outside boundary. Lost ones are
-    not counted: they already have their own marker."""
-    return ~snapshot.lost & ~inside_polygon(snapshot.R, snapshot.Z, boundary)
 
 
 def draw_boundary(ax, boundary: np.ndarray) -> None:
@@ -146,7 +144,7 @@ def draw_particles(
     reference, if given (usually the first snapshot), is drawn behind in
     light grey, so each panel shows where the distribution started as well
     as where it is. Lost particles are drawn as red crosses where they were
-    lost; those flagged in outside (see :func:`outside_boundary`) as magenta
+    lost; those flagged in outside (left the boundary) as magenta
     crosses. Drawn above anything already on ax (zorder), so a Poincare
     layer drawn first stays underneath.
     """
@@ -287,13 +285,17 @@ def particle_panels(
     snapshots: Sequence[ParticleSnapshot],
     *,
     boundary: np.ndarray | None = None,
+    exits: BoundaryExits | None = None,
     poincare: Sequence[PoincareOverlay | None] | None = None,
 ) -> list[RZPanel]:
     """One panel per snapshot, each with the first snapshot behind it.
 
-    boundary, an (N, 2) array of (R, Z), is drawn on every panel, with the
-    particles outside it marked. poincare, one entry per snapshot (None for
-    none), is drawn underneath, and its step added to the title.
+    boundary, an (N, 2) array of (R, Z), is drawn on every panel. A particle
+    that has left it is no longer tracked: from then on it is drawn where it
+    first left, as a cross. exits says when and where that was (e.g.
+    exits_from_history, at the diagnostics' resolution); without it, it is
+    judged from the snapshots themselves. poincare, one entry per snapshot
+    (None for none), is drawn underneath, and its step added to the title.
     """
     if not snapshots:
         return []
@@ -302,9 +304,14 @@ def particle_panels(
     if len(poincare) != len(snapshots):
         raise ValueError(f"{len(poincare)} Poincare overlays for {len(snapshots)} snapshots")
 
+    if boundary is not None and exits is None:
+        exits = exits_from_snapshots(snapshots, boundary)
+
     panels = []
     for snapshot, overlay in zip(snapshots, poincare):
-        outside = outside_boundary(snapshot, boundary) if boundary is not None else None
+        outside = None
+        if exits is not None:
+            snapshot, outside = freeze_exited(snapshot, exits)
         layers: list[Layer] = []
         if overlay is not None:
             layers.append(overlay.draw)
@@ -335,8 +342,8 @@ def particle_caption(
         "red x: lost (where it left the grid); all toroidal angles projected onto R-Z"
     ]
     if boundary:
-        lines.append("magenta dashes: plasma boundary before extension; "
-                     "magenta x: on the grid but outside it")
+        lines.append("magenta dashes: plasma boundary before extension; magenta x: "
+                     "left it, drawn where it first did and no longer tracked")
     if poincare:
         lines.append("faint dots: Poincare punctures at the case's phi_start, coloured by psi_n")
     return "\n".join(lines)

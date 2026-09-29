@@ -16,8 +16,11 @@ diagnostics time of
   then written as 0.
 
 A particle *exits* at the first diagnostics time its psi_n exceeds the
-chosen threshold -- or, if it leaves the grid first, at its last recorded
-position on the grid. Exits are only as fine as the program's diag_step.
+chosen threshold, or -- given a boundary, e.g. the plasma boundary before
+extend_bnd -- it is outside that boundary, whichever comes first; or, if it
+leaves the grid before either, at its last recorded position on the grid.
+It is not tracked after that. Exits are only as fine as the program's
+diag_step.
 
 Pure data: no matplotlib here (see ashen.plotting.particle_exits).
 """
@@ -30,12 +33,13 @@ from pathlib import Path
 import numpy as np
 
 from ashen.diagnostics.hdf5 import require_h5py
-from ashen.diagnostics.particles import ParticleFileError
+from ashen.diagnostics.particles import BoundaryExits, ParticleFileError, inside_polygon
 
 __all__ = [
     "ExitResult",
     "ParticleHistory",
     "exit_angles",
+    "exits_from_history",
     "read_particle_diag",
 ]
 
@@ -76,6 +80,8 @@ class ExitResult:
     time: np.ndarray
     #: Of the exits: how many crossed the psi_n threshold on the grid...
     n_crossed: int
+    #: ...how many were first outside the boundary exit_angles was given...
+    n_outside_boundary: int
     #: ...and how many left the grid before a diagnostics time showed them
     #: past it (their angles are from their last position on the grid).
     n_left_grid: int
@@ -85,7 +91,7 @@ class ExitResult:
 
     @property
     def n_exited(self) -> int:
-        return self.n_crossed + self.n_left_grid
+        return self.n_crossed + self.n_outside_boundary + self.n_left_grid
 
 
 def _as_time_by_particle(data: np.ndarray, n_times: int, where: str) -> np.ndarray:
@@ -155,14 +161,44 @@ def read_particle_diag(path: Path | str) -> ParticleHistory:
     )
 
 
+def _first(mask: np.ndarray) -> np.ndarray:
+    """Per column (particle), the first row where mask is set; n_rows if none."""
+    n_rows = mask.shape[0]
+    return np.where(mask.any(axis=0), np.argmax(mask, axis=0), n_rows)
+
+
+def _outside(history: ParticleHistory, boundary: np.ndarray) -> np.ndarray:
+    """(n_times, n_particles): on the grid and outside boundary. A lost
+    particle's position is written as 0, so it never counts."""
+    inside = inside_polygon(history.R.ravel(), history.Z.ravel(), boundary)
+    return ~history.lost & ~inside.reshape(history.R.shape)
+
+
+def exits_from_history(history: ParticleHistory, boundary: np.ndarray) -> BoundaryExits:
+    """When and where each particle was first outside boundary on the grid,
+    at the diagnostics' resolution."""
+    first = _first(_outside(history, boundary))
+    n_times = history.time.size
+    exited = first < n_times
+    cols = np.flatnonzero(exited)
+    time = np.full(history.n, np.inf)
+    R = np.full(history.n, np.nan)
+    Z = np.full(history.n, np.nan)
+    time[cols] = history.time[first[cols]]
+    R[cols] = history.R[first[cols], cols]
+    Z[cols] = history.Z[first[cols], cols]
+    return BoundaryExits(time=time, R=R, Z=Z, source=f"{history.path.name} (every diag_step)")
+
+
 def exit_angles(
     history: ParticleHistory,
     *,
     psi_n: float,
     axis: tuple[float, float] | None = None,
+    boundary: np.ndarray | None = None,
 ) -> ExitResult:
     """Where each particle first goes past psi_n (in the file's own psi_n,
-    see the module docstring) or leaves the grid.
+    see the module docstring), outside boundary if given, or leaves the grid.
 
     theta is the file's own when it has one; otherwise it is computed as
     atan2(Z - Z_axis, R - R_axis) from axis = (R_axis, Z_axis), which is
@@ -179,20 +215,29 @@ def exit_angles(
     if theta_all is None:
         theta_all = np.arctan2(history.Z - axis[1], history.R - axis[0])
 
-    thetas, phis, times = [], [], []
-    n_crossed = n_left = n_considered = 0
     n_times = history.time.size
+    first_cross = _first(crossed)
+    first_out = (
+        _first(_outside(history, boundary)) if boundary is not None
+        else np.full(history.n, n_times)
+    )
+    first_lost = _first(~on_grid)
+
+    thetas, phis, times = [], [], []
+    n_crossed = n_out = n_left = n_considered = 0
     for p in range(history.n):
         if n_times == 0 or not on_grid[0, p]:
             continue
         n_considered += 1
-        first_cross = int(np.argmax(crossed[:, p])) if crossed[:, p].any() else n_times
-        first_lost = int(np.argmax(~on_grid[:, p])) if (~on_grid[:, p]).any() else n_times
-        if first_cross <= first_lost and first_cross < n_times:
-            k = first_cross
-            n_crossed += 1
-        elif first_lost < n_times:
-            k = first_lost - 1  # its last position on the grid; >= 0 as on_grid[0, p]
+        on_grid_exit = min(first_cross[p], first_out[p])
+        if on_grid_exit <= first_lost[p] and on_grid_exit < n_times:
+            k = int(on_grid_exit)
+            if first_out[p] <= first_cross[p]:
+                n_out += 1
+            else:
+                n_crossed += 1
+        elif first_lost[p] < n_times:
+            k = int(first_lost[p]) - 1  # its last position on the grid; >= 0 as on_grid[0, p]
             n_left += 1
         else:
             continue
@@ -207,5 +252,6 @@ def exit_angles(
         theta=theta,
         phi=np.mod(np.asarray(phis, dtype=float), 2 * np.pi),
         time=np.asarray(times, dtype=float),
-        n_crossed=n_crossed, n_left_grid=n_left, n_considered=n_considered,
+        n_crossed=n_crossed, n_outside_boundary=n_out, n_left_grid=n_left,
+        n_considered=n_considered,
     )

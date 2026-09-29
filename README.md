@@ -1301,9 +1301,14 @@ toroidal plane (the case's `phi_start`); the particles are every phi.
 
 **Original boundary.** For a run prepared with `extend_bnd`,
 `ptrace_original_boundary = true` draws the plasma boundary from before the
-extension (`original_bnd.dat`) as a magenta dashed line, and particles
-outside it -- still on the grid, so not lost -- as magenta crosses, counted
-in the panel title as "outside".
+extension (`original_bnd.dat`) as a magenta dashed line and treats it as
+where the plasma ends: a particle that leaves it is **no longer tracked**.
+From then on it is drawn where it first left, as a magenta cross, counted in
+the panel title as "left boundary" -- even if it later wanders back in or
+leaves the grid. When it left is taken from the program's diagnostics file
+(`ptrace_diag.h5`, every `diag_step`) when there is one for the same
+particles, else from the snapshots themselves, which is only as fine as
+their spacing.
 
 A case without `ptrace_exe` is skipped silently in a default (no `--diag`)
 run, and with a note under an explicit `--diag particles`.
@@ -1331,6 +1336,10 @@ python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits --e
   `(psi - psi_axis)/(psi_limit - psi_axis)`, where `psi_limit` is the X-point's
   psi. It is **not** rescaled by `real_psi_edge` the way `theta_target_psi` is.
   With no X-point, `psi_limit` is 0 and JOREK logs a warning in `ptrace.log`.
+- **With `ptrace_original_boundary = true`**, leaving that boundary is an exit
+  too, and a particle exits at whichever of the boundary or the ψ_N
+  threshold it reaches first. The caption counts how many exited each way;
+  a large `--exit-psi-n` makes the boundary the only criterion.
 - **Leaving the grid first.** A particle that leaves the grid before any
   diagnostics time shows it past the threshold still counts as an exit. Its
   angles are taken from its last position on the grid, and the caption says

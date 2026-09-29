@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from ashen.cli import plot as plot_cli
-from ashen.diagnostics.particle_exits import exit_angles, read_particle_diag
+from ashen.diagnostics.particle_exits import exit_angles, exits_from_history, read_particle_diag
 from ashen.diagnostics.particles import ParticleFileError
 from ashen.plotting.particle_exits import exit_caption
 
@@ -99,6 +99,30 @@ def test_missing_variables(tmp_path):
         read_particle_diag(path)
 
 
+#: A boundary R 1.45..1.95, |Z| <= 0.5: particle 1 (R 1.6) stays inside;
+#: particle 0 is outside at the second time (R 2.0), before psi_n 1.3 has it
+#: past; particle 2 is outside at the second time (2.1), before leaving the grid.
+BOUNDARY = np.array([[1.45, -0.5], [1.95, -0.5], [1.95, 0.5], [1.45, 0.5]])
+
+
+def test_boundary_exit_comes_first(diag):
+    history = read_particle_diag(diag)
+    result = exit_angles(history, psi_n=1.3, boundary=BOUNDARY)
+    assert (result.n_outside_boundary, result.n_crossed, result.n_left_grid) == (2, 0, 0)
+    np.testing.assert_allclose(result.theta, [0.5, 4.0 - 2 * np.pi])
+    # Past psi_n on the same diagnostics time counts as the boundary.
+    assert exit_angles(history, psi_n=1.0, boundary=BOUNDARY).n_outside_boundary == 2
+
+
+def test_exits_from_history(diag):
+    exits = exits_from_history(read_particle_diag(diag), BOUNDARY)
+    np.testing.assert_allclose(exits.time, [1e-6, np.inf, 1e-6, np.inf], rtol=1e-6)
+    np.testing.assert_allclose(exits.R[[0, 2]], [2.0, 2.1])
+    # Particle 1 at R 1.6 = inside; particle 3 never on the grid.
+    assert np.isnan(exits.R[[1, 3]]).all()
+    assert exits.source == "ptrace_diag.h5 (every diag_step)"
+
+
 def test_caption(diag):
     result = exit_angles(read_particle_diag(diag), psi_n=1.0)
     assert exit_caption(result, psi_n=1.0) == (
@@ -163,6 +187,48 @@ def test_no_theta_uses_the_logged_axis(campaign, capsys):
     out = capsys.readouterr().out
     assert "computing it about the logged axis (R, Z) = (1.7, 0) m" in out
     assert (folder / "particle_exits.png").is_file()
+
+
+def test_plot_with_the_original_boundary(campaign, capsys):
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    write_diag(folder / "ptrace_diag.h5", t=T, psi_n=PSI, R=R, Z=Z, phi=PHI,
+               lost=LOST, theta=THETA)
+    np.savetxt(campaign / "run" / "original_bnd.dat", BOUNDARY)
+    (campaign / "cases.toml").write_text(
+        CASES.replace("ptrace_exit_psi_n = 1.3", "ptrace_exit_psi_n = 1.3\nptrace_original_boundary = true"),
+        encoding="utf-8",
+    )
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    assert ("2 of 3 particles exit past psi_n = 1.3 or the plasma boundary before "
+            "extension (2 at the boundary, 0 at psi_n)") in capsys.readouterr().out
+
+
+def test_particles_plot_takes_boundary_exits_from_the_diag_file(campaign, capsys, monkeypatch):
+    from test_particles import simple_file
+
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    write_diag(folder / "ptrace_diag.h5", t=T, psi_n=PSI, R=R, Z=Z, phi=PHI,
+               lost=LOST, theta=THETA)
+    simple_file(folder / "part_restart_s003000_t0.000000E+00.h5", 0.0, [1.5, 1.6, 1.7, 0.0],
+                i_elm=[1, 1, 1, 0])
+    simple_file(folder / "part_restart.h5", 2e-6, [2.1, 1.6, 0.0, 0.0], i_elm=[1, 1, 0, 0])
+    np.savetxt(campaign / "run" / "original_bnd.dat", BOUNDARY)
+    (campaign / "cases.toml").write_text(
+        CASES.replace("ptrace_exit_psi_n = 1.3", "ptrace_original_boundary = true"),
+        encoding="utf-8",
+    )
+    seen = {}
+    real = plot_cli.particle_panels
+
+    def spy(snapshots, **kwargs):
+        seen.update(kwargs)
+        return real(snapshots, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "particle_panels", spy)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
+    # Particle 0 left at the diag time between the two snapshots, at R 2.0.
+    np.testing.assert_allclose(seen["exits"].time[:3], [1e-6, np.inf, 1e-6], rtol=1e-6)
+    np.testing.assert_allclose(seen["exits"].R[0], 2.0)
 
 
 def test_not_traced_yet_and_unknown_programs(campaign, capsys):

@@ -57,8 +57,12 @@ from ashen.diagnostics.four_modes import (
     radial_amplitude_series,
     rational_surface_series,
 )
-from ashen.diagnostics.particle_exits import exit_angles, read_particle_diag
-from ashen.diagnostics.particles import find_snapshots, named_step
+from ashen.diagnostics.particle_exits import (
+    exit_angles,
+    exits_from_history,
+    read_particle_diag,
+)
+from ashen.diagnostics.particles import ParticleFileError, find_snapshots, named_step
 from ashen.diagnostics.poincare_cache import read_step, select_lines
 from ashen.diagnostics.profiles import (
     ensure_edge_toroidal_field,
@@ -2246,15 +2250,38 @@ def _run_case(
         print(f"  diag(s) {comparison_only} are comparison-only (use --compare), skipped")
 
 
-def _original_boundary(case: Case, paths: RunPaths):
+def _original_boundary(case: Case, paths: RunPaths, *, diag: str = "particles"):
     """The plasma boundary before extend_bnd (original_bnd.dat, written by
     run_jorek), or None -- with a note -- when there isn't one."""
     path = paths.run_dir / "original_bnd.dat"
     if not path.is_file():
-        print(f"  particles: no {path.name} (the run was not prepared with "
-              "extend_bnd), original boundary not drawn")
+        print(f"  {diag}: no {path.name} (the run was not prepared with "
+              "extend_bnd), original boundary not used")
         return None
     return load_two_col_data(path)
+
+
+def _boundary_exits(case: Case, folder: Path, snapshots, boundary):
+    """When each particle first left boundary, from the program's
+    diagnostics file when it has one for the same particles -- every
+    diag_step, finer than the snapshots -- else None, for particle_panels
+    to judge from the snapshots."""
+    diag_file = program_for(case.ptrace_exe).diag_file
+    diag = folder / diag_file if diag_file else None
+    if diag is None or not diag.is_file():
+        print("  particles: boundary exits judged from the snapshots only "
+              "(no diagnostics file), as fine as their spacing")
+        return None
+    try:
+        history = read_particle_diag(diag)
+    except ParticleFileError as exc:
+        print(f"  particles: boundary exits judged from the snapshots only ({exc})")
+        return None
+    if history.n != snapshots[0].n:
+        print(f"  particles: {diag.name} has {history.n} particles, the snapshots "
+              f"{snapshots[0].n}; boundary exits judged from the snapshots only")
+        return None
+    return exits_from_history(history, boundary)
 
 
 def _poincare_overlays(
@@ -2342,11 +2369,14 @@ def _plot_particles(
         return
 
     boundary = _original_boundary(case, paths) if case.ptrace_original_boundary else None
+    exits = (
+        _boundary_exits(case, folder, snapshots, boundary) if boundary is not None else None
+    )
     poincare = (
         _poincare_overlays(case, paths, snapshots, point_size=point_size, n_workers=n_workers)
         if case.ptrace_poincare else None
     )
-    panels = particle_panels(snapshots, boundary=boundary, poincare=poincare)
+    panels = particle_panels(snapshots, boundary=boundary, exits=exits, poincare=poincare)
     kwargs = _dpi_kwargs(dpi)
     kwargs["caption"] = particle_caption(
         snapshots, boundary=boundary is not None, poincare=poincare is not None,
@@ -2409,12 +2439,17 @@ def _plot_particle_exits(
             return
         print(f"  particle_exits: {diag.name} has no theta; computing it about the "
               f"logged axis (R, Z) = ({axis[0]:.4g}, {axis[1]:.4g}) m")
-    result = exit_angles(history, psi_n=threshold, axis=axis)
+    boundary = (
+        _original_boundary(case, paths, diag="particle_exits")
+        if case.ptrace_original_boundary else None
+    )
+    result = exit_angles(history, psi_n=threshold, axis=axis, boundary=boundary)
+    caption = exit_caption(result, psi_n=threshold, boundary=boundary is not None)
     out = plot_exit_histograms(
         result, folder / "particle_exits.png", bins=case.ptrace_exit_bins,
-        caption=exit_caption(result, psi_n=threshold), **_dpi_kwargs(dpi),
+        caption=caption, **_dpi_kwargs(dpi),
     )
-    print(f"  particle_exits: {exit_caption(result, psi_n=threshold)} -> {out}")
+    print(f"  particle_exits: {caption} -> {out}")
 
 
 def _run_comparisons(
