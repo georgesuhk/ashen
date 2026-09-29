@@ -9,10 +9,12 @@ seconds at ``/time``, and one HDF5 group per particle group under
 - ``i_elm`` -- the grid element the particle is in; <= 0 once it is lost,
 - ``weight`` -- how many physical particles it stands for.
 
-A trace folder (ashen.tracing) holds one file per snapshot the program
+A ptrace folder (ashen.ptracing) holds one file per snapshot the program
 wrote: e.g. re_gc_current_density_initialisation's
 ``part_restart<time>.h5`` every ``write_step`` plus ``part_restart.h5`` at
-the end. :func:`find_snapshots` collects them in time order.
+the end, or ptrace_gc's ``part_restart_s<step>_t<time>.h5``, whose
+``<step>`` :func:`named_step` reads back. :func:`find_snapshots` collects
+them in time order.
 
 Pure data: no matplotlib here (see ashen.plotting.particles).
 """
@@ -21,6 +23,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+
+import re
 
 import numpy as np
 
@@ -31,11 +35,16 @@ __all__ = [
     "ParticleFileError",
     "ParticleSnapshot",
     "find_snapshots",
+    "inside_polygon",
+    "named_step",
     "read_snapshot",
 ]
 
 #: Every particle file a JOREK particle program writes into its folder.
 PARTICLE_FILE_GLOB = "part_restart*.h5"
+
+#: ptrace_gc's snapshot names: part_restart_s<step>_t<time>.h5.
+_NAMED_STEP = re.compile(r"^part_restart_s(\d+)_t")
 
 
 class ParticleFileError(RuntimeError):
@@ -140,3 +149,27 @@ def find_snapshots(folder: Path | str) -> list[ParticleSnapshot]:
         snapshot = read_snapshot(path)
         snapshots.setdefault(snapshot.time, snapshot)
     return [snapshots[t] for t in sorted(snapshots)]
+
+
+def named_step(path: Path | str) -> int | None:
+    """The JOREK step ptrace_gc put in a snapshot's name -- that of the
+    restart closest in time -- or None for a name without one."""
+    match = _NAMED_STEP.match(Path(path).name)
+    return int(match.group(1)) if match else None
+
+
+def inside_polygon(R: np.ndarray, Z: np.ndarray, polygon: np.ndarray) -> np.ndarray:
+    """Whether each point (R, Z) is inside the closed polygon, an (N, 2)
+    array of (R, Z) vertices (first and last need not repeat). Even-odd ray
+    casting, so points exactly on an edge may go either way."""
+    R, Z = np.asarray(R, dtype=float), np.asarray(Z, dtype=float)
+    poly = np.asarray(polygon, dtype=float)
+    r0, z0 = poly[:, 0], poly[:, 1]
+    r1, z1 = np.roll(r0, -1), np.roll(z0, -1)
+    inside = np.zeros(R.shape, dtype=bool)
+    for a_r, a_z, b_r, b_z in zip(r0, z0, r1, z1):
+        crosses = (a_z > Z) != (b_z > Z)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r_cross = a_r + (Z - a_z) * (b_r - a_r) / (b_z - a_z)
+        inside ^= crosses & (R < r_cross)
+    return inside

@@ -9,6 +9,11 @@ Poincare plot is ``[poincare, particles]``, with nothing special-cased.
 
 Particles are projected onto R-Z from every toroidal angle phi, whereas a
 Poincare plot is one phi plane -- keep that in mind when overlaying.
+
+:func:`particle_panels` builds those layers: an optional Poincare layer
+(:class:`PoincareOverlay`, one per snapshot) at the bottom, drawn fainter so
+the particles read over it; the particles; and optionally the plasma
+boundary a run had before extend_bnd, with particles outside it marked.
 """
 
 from __future__ import annotations
@@ -16,19 +21,24 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
-from ashen.diagnostics.particles import ParticleSnapshot
+from ashen.diagnostics.particles import ParticleSnapshot, inside_polygon
+from ashen.diagnostics.poincare_cache import LineKey, LineRecord
 from ashen.plotting import DEFAULT_DPI, style
+from ashen.plotting.poincare import draw_poincare
 
 __all__ = [
+    "PoincareOverlay",
     "RZPanel",
     "animate_rz_panels",
+    "draw_boundary",
     "draw_particles",
     "particle_caption",
     "particle_panels",
+    "outside_boundary",
     "particle_point_size",
     "plot_rz_panels",
     "snapshot_label",
@@ -41,6 +51,12 @@ Layer = Callable[[object], None]
 PARTICLE_COLOR = "black"
 REFERENCE_COLOR = "0.75"
 LOST_COLOR = "tab:red"
+#: The pre-extension plasma boundary, and particles outside it: magenta is
+#: in neither viridis (the Poincare colours) nor the particle colours.
+BOUNDARY_COLOR = "magenta"
+#: Poincare punctures under particles: a little faint, so the particles
+#: stay the thing you see.
+POINCARE_ALPHA = 0.5
 
 
 @dataclass(frozen=True)
@@ -50,6 +66,21 @@ class RZPanel:
 
     title: str
     layers: Sequence[Layer]
+
+
+@dataclass(frozen=True)
+class PoincareOverlay:
+    """The Poincare punctures drawn under one snapshot: which restart step
+    they were traced at, and the lines."""
+
+    step: int
+    records: Mapping[LineKey, LineRecord]
+    #: Marker area, as poincare_point_size.
+    s: float = 0.1
+    alpha: float = POINCARE_ALPHA
+
+    def draw(self, ax) -> None:
+        draw_poincare(ax, self.records, s=self.s, alpha=self.alpha)
 
 
 def particle_point_size(n: int) -> float:
@@ -69,16 +100,36 @@ def _duration(seconds: float) -> str:
     return f"{seconds * 1e3:.3g} ms"
 
 
-def snapshot_label(snapshot: ParticleSnapshot, start: float | None = None) -> str:
+def snapshot_label(
+    snapshot: ParticleSnapshot, start: float | None = None, *, n_outside: int = 0,
+) -> str:
     """Panel title: time in ms -- and, given the first snapshot's time,
     the time since it, which is what changes between panels -- and how many
-    particles are lost so far."""
+    particles are lost so far, and how many more are outside the plasma
+    boundary (n_outside)."""
     label = f"t = {snapshot.time * 1e3:.5g} ms"
     if start is not None and snapshot.time != start:
         label += f" (+{_duration(snapshot.time - start)})"
     if snapshot.n_lost:
         label += f", {snapshot.n_lost}/{snapshot.n} lost"
+    if n_outside:
+        label += f", {n_outside} outside"
     return label
+
+
+def outside_boundary(snapshot: ParticleSnapshot, boundary: np.ndarray) -> np.ndarray:
+    """Particles still on the grid but outside boundary. Lost ones are
+    not counted: they already have their own marker."""
+    return ~snapshot.lost & ~inside_polygon(snapshot.R, snapshot.Z, boundary)
+
+
+def draw_boundary(ax, boundary: np.ndarray) -> None:
+    """A closed (R, Z) outline, over the punctures and particles."""
+    closed = np.vstack([boundary, boundary[:1]])
+    ax.plot(
+        closed[:, 0], closed[:, 1], color=BOUNDARY_COLOR, linewidth=1.2,
+        linestyle="--", zorder=5,
+    )
 
 
 def draw_particles(
@@ -86,6 +137,7 @@ def draw_particles(
     snapshot: ParticleSnapshot,
     *,
     reference: ParticleSnapshot | None = None,
+    outside: np.ndarray | None = None,
     s: float | None = None,
     alpha: float = 0.8,
 ) -> None:
@@ -94,8 +146,9 @@ def draw_particles(
     reference, if given (usually the first snapshot), is drawn behind in
     light grey, so each panel shows where the distribution started as well
     as where it is. Lost particles are drawn as red crosses where they were
-    lost. Drawn above anything already on ax (zorder), so a Poincare layer
-    drawn first stays underneath.
+    lost; those flagged in outside (see :func:`outside_boundary`) as magenta
+    crosses. Drawn above anything already on ax (zorder), so a Poincare
+    layer drawn first stays underneath.
     """
     if s is None:
         s = particle_point_size(snapshot.n)
@@ -104,16 +157,18 @@ def draw_particles(
             reference.R, reference.Z, s=s, color=REFERENCE_COLOR,
             alpha=0.6, linewidths=0, zorder=2,
         )
-    alive = ~snapshot.lost
+    outside = np.zeros(snapshot.n, dtype=bool) if outside is None else outside
+    inside = ~snapshot.lost & ~outside
     ax.scatter(
-        snapshot.R[alive], snapshot.Z[alive], s=s, color=PARTICLE_COLOR,
+        snapshot.R[inside], snapshot.Z[inside], s=s, color=PARTICLE_COLOR,
         alpha=alpha, linewidths=0, zorder=3,
     )
-    if snapshot.n_lost:
-        ax.scatter(
-            snapshot.R[snapshot.lost], snapshot.Z[snapshot.lost], s=max(s, 4.0) * 3,
-            marker="x", color=LOST_COLOR, linewidths=0.8, zorder=4,
-        )
+    for mask, color in ((snapshot.lost, LOST_COLOR), (outside, BOUNDARY_COLOR)):
+        if mask.any():
+            ax.scatter(
+                snapshot.R[mask], snapshot.Z[mask], s=max(s, 4.0) * 3,
+                marker="x", color=color, linewidths=0.8, zorder=4,
+            )
     ax.set_aspect("equal")
     ax.set_xlabel(r"$R$ [m]")
     ax.set_ylabel(r"$Z$ [m]")
@@ -228,24 +283,60 @@ def animate_rz_panels(
     return out_path
 
 
-def particle_panels(snapshots: Sequence[ParticleSnapshot]) -> list[RZPanel]:
-    """One panel per snapshot, each with the first snapshot behind it."""
+def particle_panels(
+    snapshots: Sequence[ParticleSnapshot],
+    *,
+    boundary: np.ndarray | None = None,
+    poincare: Sequence[PoincareOverlay | None] | None = None,
+) -> list[RZPanel]:
+    """One panel per snapshot, each with the first snapshot behind it.
+
+    boundary, an (N, 2) array of (R, Z), is drawn on every panel, with the
+    particles outside it marked. poincare, one entry per snapshot (None for
+    none), is drawn underneath, and its step added to the title.
+    """
     if not snapshots:
         return []
     first = snapshots[0]
-    return [
-        RZPanel(
-            title=snapshot_label(snapshot, start=first.time),
-            layers=[lambda ax, snap=snapshot: draw_particles(ax, snap, reference=first)],
+    poincare = list(poincare) if poincare is not None else [None] * len(snapshots)
+    if len(poincare) != len(snapshots):
+        raise ValueError(f"{len(poincare)} Poincare overlays for {len(snapshots)} snapshots")
+
+    panels = []
+    for snapshot, overlay in zip(snapshots, poincare):
+        outside = outside_boundary(snapshot, boundary) if boundary is not None else None
+        layers: list[Layer] = []
+        if overlay is not None:
+            layers.append(overlay.draw)
+        layers.append(
+            lambda ax, snap=snapshot, out=outside: draw_particles(
+                ax, snap, reference=first, outside=out,
+            )
         )
-        for snapshot in snapshots
-    ]
+        if boundary is not None:
+            layers.append(lambda ax: draw_boundary(ax, boundary))
+        title = snapshot_label(
+            snapshot, start=first.time,
+            n_outside=int(np.count_nonzero(outside)) if outside is not None else 0,
+        )
+        if overlay is not None:
+            title += f"\nPoincare: step {overlay.step}"
+        panels.append(RZPanel(title=title, layers=layers))
+    return panels
 
 
-def particle_caption(snapshots: Sequence[ParticleSnapshot]) -> str:
-    """What the colours in particle_panels mean."""
+def particle_caption(
+    snapshots: Sequence[ParticleSnapshot], *, boundary: bool = False, poincare: bool = False,
+) -> str:
+    """What the colours in particle_panels mean, a line per layer."""
     first = snapshots[0]
-    return (
+    lines = [
         f"black: particles now; grey: at t = {first.time * 1e3:.5g} ms; "
         "red x: lost (where it left the grid); all toroidal angles projected onto R-Z"
-    )
+    ]
+    if boundary:
+        lines.append("magenta dashes: plasma boundary before extension; "
+                     "magenta x: on the grid but outside it")
+    if poincare:
+        lines.append("faint dots: Poincare punctures at the case's phi_start, coloured by psi_n")
+    return "\n".join(lines)

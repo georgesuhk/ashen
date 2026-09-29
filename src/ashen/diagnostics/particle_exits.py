@@ -1,0 +1,211 @@
+"""Where traced particles leave the plasma: poloidal (theta) and toroidal
+(phi) angle at each particle's exit.
+
+The particle counterpart of ashen.diagnostics.theta_histogram, which finds
+where field lines first cross out past a target psi_n. Here the input is a
+particle program's diagnostics file -- JOREK's write_particle_diagnostics
+(``particles/diagnostics/mod_particle_diagnostics.f90``), e.g. ptrace_gc's
+``ptrace_diag.h5`` -- which holds, per particle group, one row per
+diagnostics time of
+
+- ``psi_n`` -- (psi - psi_axis)/(psi_limit - psi_axis), psi_limit the
+  X-point's psi (or 0 with no X-point, which JOREK warns about in the log),
+- ``R``, ``Z``, ``phi``, and ``theta`` = atan2(Z - Z_axis, R - R_axis) when
+  the program asked for it,
+- ``lost`` -- 1 once the particle has left the grid; its other values are
+  then written as 0.
+
+A particle *exits* at the first diagnostics time its psi_n exceeds the
+chosen threshold -- or, if it leaves the grid first, at its last recorded
+position on the grid. Exits are only as fine as the program's diag_step.
+
+Pure data: no matplotlib here (see ashen.plotting.particle_exits).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from ashen.diagnostics.hdf5 import require_h5py
+from ashen.diagnostics.particles import ParticleFileError
+
+__all__ = [
+    "ExitResult",
+    "ParticleHistory",
+    "exit_angles",
+    "read_particle_diag",
+]
+
+#: Datasets exit_angles needs from every group; theta is optional.
+_REQUIRED = ("psi_n", "R", "Z", "phi", "lost")
+
+
+@dataclass(frozen=True)
+class ParticleHistory:
+    """Every particle's diagnostics over time, all groups side by side.
+    Arrays are (n_times, n_particles)."""
+
+    path: Path
+    #: Diagnostics times [s], (n_times,).
+    time: np.ndarray
+    psi_n: np.ndarray
+    R: np.ndarray
+    Z: np.ndarray
+    phi: np.ndarray
+    #: None when the program didn't write theta (see exit_angles' axis).
+    theta: np.ndarray | None
+    lost: np.ndarray
+
+    @property
+    def n(self) -> int:
+        return int(self.psi_n.shape[1])
+
+
+@dataclass(frozen=True)
+class ExitResult:
+    """Each exiting particle's angles, and what happened to the rest."""
+
+    #: Poloidal angle at exit, in (-pi, pi].
+    theta: np.ndarray
+    #: Toroidal angle at exit, in [0, 2 pi).
+    phi: np.ndarray
+    #: Diagnostics time [s] of each exit.
+    time: np.ndarray
+    #: Of the exits: how many crossed the psi_n threshold on the grid...
+    n_crossed: int
+    #: ...and how many left the grid before a diagnostics time showed them
+    #: past it (their angles are from their last position on the grid).
+    n_left_grid: int
+    #: Particles on the grid at the first diagnostics time -- the ones that
+    #: could exit. A particle off the grid from the start is not counted.
+    n_considered: int
+
+    @property
+    def n_exited(self) -> int:
+        return self.n_crossed + self.n_left_grid
+
+
+def _as_time_by_particle(data: np.ndarray, n_times: int, where: str) -> np.ndarray:
+    """Fortran writes (n_particles, n_times); h5py sees it (n_times,
+    n_particles). A transposed layout is accepted too, told apart by the
+    time axis' length."""
+    data = np.asarray(data)
+    if data.ndim == 2 and data.shape[0] == n_times:
+        return data
+    if data.ndim == 2 and data.shape[1] == n_times:
+        return data.T
+    raise ParticleFileError(
+        f"{where} has shape {data.shape}, expected ({n_times}, n_particles) "
+        "-- one row per diagnostics time in t"
+    )
+
+
+def read_particle_diag(path: Path | str) -> ParticleHistory:
+    """Read a write_particle_diagnostics file (e.g. ptrace_diag.h5)."""
+    h5py = require_h5py("reading particle diagnostics", ParticleFileError)
+    path = Path(path)
+    try:
+        f = h5py.File(path, "r")
+    except OSError as exc:
+        raise ParticleFileError(f"{path}: cannot open -- {exc}") from exc
+
+    with f:
+        groups = f.get("groups")
+        if groups is None or not len(groups):
+            raise ParticleFileError(f"{path}: no particle groups under /groups")
+        time = None
+        columns: dict[str, list[np.ndarray]] = {name: [] for name in (*_REQUIRED, "theta")}
+        has_theta = True
+        for name in sorted(groups):
+            group = groups[name]
+            where = f"{path}: group {name!r}"
+            if "t" not in group:
+                raise ParticleFileError(f"{where} has no 't' -- not a particle diagnostics file")
+            t = np.asarray(group["t"], dtype=float).reshape(-1)
+            if time is None:
+                time = t
+            elif t.shape != time.shape or not np.allclose(t, time):
+                raise ParticleFileError(f"{where}: its times differ from the first group's")
+            missing = [d for d in _REQUIRED if d not in group]
+            if missing:
+                raise ParticleFileError(
+                    f"{where} has no {missing} -- the program must write psi_n, R, Z, "
+                    "phi and lost (write_particle_diagnostics' `only`)"
+                )
+            for d in _REQUIRED:
+                columns[d].append(_as_time_by_particle(group[d], t.size, f"{where}: {d}"))
+            if "theta" in group and has_theta:
+                columns["theta"].append(
+                    _as_time_by_particle(group["theta"], t.size, f"{where}: theta")
+                )
+            else:
+                has_theta = False
+
+    def joined(d: str, dtype) -> np.ndarray:
+        return np.concatenate(columns[d], axis=1).astype(dtype)
+
+    return ParticleHistory(
+        path=path, time=time,
+        psi_n=joined("psi_n", float), R=joined("R", float), Z=joined("Z", float),
+        phi=joined("phi", float), lost=joined("lost", int) > 0,
+        theta=joined("theta", float) if has_theta else None,
+    )
+
+
+def exit_angles(
+    history: ParticleHistory,
+    *,
+    psi_n: float,
+    axis: tuple[float, float] | None = None,
+) -> ExitResult:
+    """Where each particle first goes past psi_n (in the file's own psi_n,
+    see the module docstring) or leaves the grid.
+
+    theta is the file's own when it has one; otherwise it is computed as
+    atan2(Z - Z_axis, R - R_axis) from axis = (R_axis, Z_axis), which is
+    then required.
+    """
+    if history.theta is None and axis is None:
+        raise ParticleFileError(
+            f"{history.path}: no theta in the file, and no magnetic axis given to "
+            "compute it from R and Z"
+        )
+    on_grid = ~history.lost
+    crossed = on_grid & (history.psi_n > psi_n)
+    theta_all = history.theta
+    if theta_all is None:
+        theta_all = np.arctan2(history.Z - axis[1], history.R - axis[0])
+
+    thetas, phis, times = [], [], []
+    n_crossed = n_left = n_considered = 0
+    n_times = history.time.size
+    for p in range(history.n):
+        if n_times == 0 or not on_grid[0, p]:
+            continue
+        n_considered += 1
+        first_cross = int(np.argmax(crossed[:, p])) if crossed[:, p].any() else n_times
+        first_lost = int(np.argmax(~on_grid[:, p])) if (~on_grid[:, p]).any() else n_times
+        if first_cross <= first_lost and first_cross < n_times:
+            k = first_cross
+            n_crossed += 1
+        elif first_lost < n_times:
+            k = first_lost - 1  # its last position on the grid; >= 0 as on_grid[0, p]
+            n_left += 1
+        else:
+            continue
+        thetas.append(theta_all[k, p])
+        phis.append(history.phi[k, p])
+        times.append(history.time[k])
+
+    theta = np.asarray(thetas, dtype=float)
+    theta = np.mod(theta, 2 * np.pi)
+    theta[theta > np.pi] -= 2 * np.pi
+    return ExitResult(
+        theta=theta,
+        phi=np.mod(np.asarray(phis, dtype=float), 2 * np.pi),
+        time=np.asarray(times, dtype=float),
+        n_crossed=n_crossed, n_left_grid=n_left, n_considered=n_considered,
+    )
