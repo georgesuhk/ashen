@@ -9,3 +9,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Particle-tracer Fortran sources: copied to the HPC by hand, not versioned here.
+fortran/

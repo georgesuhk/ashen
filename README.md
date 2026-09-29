@@ -1182,8 +1182,10 @@ restarts it sees and how it is launched. Keys: `trace_start_step`
 default all), `trace_particles` (a JOREK particle file to start from,
 relative to `cases.toml`, *copied* in as `part_restart.h5` because the
 program overwrites that file at the end; refused for ex6/ex7, which ignore
-it), `trace_n_mpi`, `trace_omp_threads` (default: `site.toml`'s
-`[diagnostics]`).
+it), `trace_inputs` (files copied into the trace folder under their own
+names before the run, relative to `cases.toml` -- e.g. `trace_gc`'s
+`trace_params.nml`), `trace_n_mpi`, `trace_omp_threads` (default:
+`site.toml`'s `[diagnostics]`).
 
 Each trace runs in `<run>/trace/<executable filename>/`, with its output in
 `trace.log`. A completed trace is `[cached]` until its settings, restarts,
@@ -1212,6 +1214,39 @@ with the **same `MODEL`** as the run (variable indices differ between
 models); the binary lands in the checkout's top folder. Copy it where
 `trace_exe` points -- e.g. the campaign's shared `exe/`, which a prepared
 run folder links as `./exe`. Keep its name to keep ashen's checks for it.
+
+### ashen's own tracer: `trace_gc`
+
+JOREK's programs hard-code their particles (and re_gc's current-density
+sampling can hang on some equilibria). `fortran/trace_gc.f90` is a
+configurable ex7: guiding-centre electrons started at the (R, Z, phi),
+energy and pitch you list, pushed with RK4 through static or evolving
+fields, with nothing hard-coded. Everything is read from a
+`trace_params.nml` -- start from `fortran/trace_params.example.nml`:
+
+```toml
+[cases."qa2.1_g2.3/eta1e-3_RE"]
+trace_exe        = "./exe/trace_gc"
+trace_start_step = 3000
+trace_inputs     = ["trace_params.nml"]    # next to cases.toml
+```
+
+It writes `trace_diag.h5` (energy, mu, psi_N, p_phi, lost, R, Z, phi every
+`diag_step`), `part_restart<time>.h5` every `snapshot_step` and
+`part_restart.h5` at the end -- so `plot --diag particles` shows the
+distribution evolve. A marker that leaves the grid is flagged lost and the
+rest carry on. Keep `restart_index = 0`: ashen links the restarts from
+index 0, and `jorek_restart.h5` to the start restart for
+`field_mode = 'static'`.
+
+`fortran/` is gitignored: the sources live in your local clone and are
+copied to the HPC by hand.
+
+**It has never been compiled** -- this repository is developed without a
+Fortran compiler -- so expect the first build to need small fixes. Build it
+like the others: copy `fortran/trace_gc.f90` into a JOREK checkout's
+`particles/examples/`, `make trace_gc` with the run's `MODEL`, and copy the
+binary to where `trace_exe` points. JOREK itself is never modified by ashen.
 
 ### Plotting particle positions
 

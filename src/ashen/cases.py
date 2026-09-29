@@ -41,7 +41,7 @@ _CASE_KEYS = (
     "four_quantities", "theta_target_psi", "theta_bins", "theta_psi_n_range",
     "theta_wetted_threshold",
     "trace_exe", "trace_start_step", "trace_end_step", "trace_particles",
-    "trace_n_mpi", "trace_omp_threads",
+    "trace_inputs", "trace_n_mpi", "trace_omp_threads",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -231,6 +231,10 @@ class Case:
     #: density; ex6/ex7 would ignore it, so they refuse it). Resolved against
     #: cases.toml's folder.
     trace_particles: Path | None = None
+    #: `bin/trace`: files copied into the trace folder under their own names
+    #: before the program runs -- e.g. trace_gc's trace_params.nml. Resolved
+    #: against cases.toml's folder.
+    trace_inputs: list[Path] = field(default_factory=list)
     #: `bin/trace`: MPI ranks. re_gc samples its particle count per rank.
     trace_n_mpi: int = 1
     #: `bin/trace`: OpenMP threads per rank; 0 = site.toml's [diagnostics].
@@ -392,6 +396,27 @@ def _check_trace_fields(merged: dict, *, case_name: str, source: Path) -> None:
             )
         particles = Path(merged["trace_particles"])
         merged["trace_particles"] = particles if particles.is_absolute() else source.parent / particles
+
+    if "trace_inputs" in merged:
+        spec = merged["trace_inputs"]
+        if isinstance(spec, str):
+            spec = [spec]
+        if not (isinstance(spec, list) and all(isinstance(x, str) and x.strip() for x in spec)):
+            raise CasesError(f"{where}: trace_inputs must be a list of paths, got {spec!r}")
+        inputs = [Path(x) if Path(x).is_absolute() else source.parent / x for x in spec]
+        names = [x.name for x in inputs]
+        clashes = sorted({n for n in names if names.count(n) > 1})
+        if clashes:
+            raise CasesError(
+                f"{where}: trace_inputs are copied in under their own names, but "
+                f"{clashes} appear more than once"
+            )
+        if "part_restart.h5" in names:
+            raise CasesError(
+                f"{where}: part_restart.h5 in trace_inputs -- starting particles "
+                "go in trace_particles"
+            )
+        merged["trace_inputs"] = inputs
 
     n_mpi = int(merged.get("trace_n_mpi", 1))
     omp_threads = int(merged.get("trace_omp_threads", 0))
