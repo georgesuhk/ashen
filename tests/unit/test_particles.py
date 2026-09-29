@@ -513,3 +513,18 @@ def test_original_boundary_missing_is_a_note(campaign, capsys):
     ), encoding="utf-8")
     assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
     assert "no original_bnd.dat" in capsys.readouterr().out
+
+
+def test_particles_are_red_by_default_and_the_colour_can_be_set(snapshots):
+    import matplotlib.colors as mcolors
+
+    first, later = snapshots
+    for color, expected in ((None, "red"), ("tab:orange", "tab:orange")):
+        fig, ax = plt.subplots()
+        kwargs = {} if color is None else {"color": color}
+        draw_particles(ax, later, **kwargs)
+        alive, lost = ax.collections
+        assert mcolors.same_color(alive.get_facecolor()[0][:3], expected)
+        assert mcolors.same_color(lost.get_edgecolor()[0], "black")  # lost crosses stay apart
+        plt.close(fig)
+    assert particle_caption([first], color="tab:orange").startswith("tab:orange: particles now")

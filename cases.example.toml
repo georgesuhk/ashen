@@ -397,6 +397,7 @@ note  = "internal kink investigation"
 # ptrace_poincare_psi_n    = [0.5, 0.9]    # just these psi_n_in lines (implies true)
 # ptrace_poincare_n_turns  = 200           # at most this many turns per line (implies true)
 # ptrace_original_boundary = true
+# ptrace_particle_color    = "red"         # any matplotlib colour; red stands out on viridis
 #
 # plot --diag particle_exits: theta and phi histograms of where particles
 # first go past ptrace_exit_psi_n (psi_n as the tracer's diagnostics file has

@@ -1266,9 +1266,10 @@ python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particles         
 python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particles --animate  # + particles.gif
 ```
 
-Each panel shows the particles at that time in black over the first
+Each panel shows the particles at that time in red (`ptrace_particle_color`,
+any matplotlib colour) over the first
 snapshot's in light grey, so drift away from the start reads in any single
-panel; lost particles (grid element <= 0) are red crosses where they left
+panel; lost particles (grid element <= 0) are black crosses where they left
 the grid, counted in the panel title. Particles at every toroidal angle are
 projected onto the one R-Z plane. `--n-cols` sets the grid width. Figures
 are written into the ptrace folder, next to the files they draw.
