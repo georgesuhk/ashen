@@ -114,7 +114,7 @@ from ashen.quantities import (
     is_known_quantity,
     quantity,
 )
-from ashen.particle_programs import program_for
+from ashen.particle_programs import DIAG_FILES, find_diag_file
 from ashen.ptracing import ptrace_dir
 
 DIAG_CHOICES = (
@@ -2266,9 +2266,8 @@ def _boundary_exits(case: Case, folder: Path, snapshots, boundary):
     diagnostics file when it has one for the same particles -- every
     diag_step, finer than the snapshots -- else None, for particle_panels
     to judge from the snapshots."""
-    diag_file = program_for(case.ptrace_exe).diag_file
-    diag = folder / diag_file if diag_file else None
-    if diag is None or not diag.is_file():
+    diag = find_diag_file(folder)
+    if diag is None:
         print("  particles: boundary exits judged from the snapshots only "
               "(no diagnostics file), as fine as their spacing")
         return None
@@ -2417,15 +2416,11 @@ def _plot_particle_exits(
         if explicit:
             print("  particle_exits: case sets no ptrace_exe, skipped")
         return
-    program = program_for(case.ptrace_exe)
-    if program.diag_file is None:
-        print(f"  particle_exits: ashen doesn't know which diagnostics file "
-              f"{Path(case.ptrace_exe).name} writes, skipped")
-        return
     folder = ptrace_dir(case, paths.run_dir)
-    diag = folder / program.diag_file
-    if not diag.is_file():
-        print(f"  particle_exits: no {diag} (run bin/ptrace first), skipped")
+    diag = find_diag_file(folder)
+    if diag is None:
+        print(f"  particle_exits: no particle diagnostics file ({', '.join(DIAG_FILES)}) "
+              f"in {folder} (run bin/ptrace first), skipped")
         return
 
     threshold = case.ptrace_exit_psi_n if psi_n is None else psi_n

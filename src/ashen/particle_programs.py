@@ -43,8 +43,9 @@ class Program:
     #: Files it reads from its working folder that the case must supply
     #: through ptrace_inputs.
     required_inputs: tuple[str, ...] = ()
-    #: Its write_particle_diagnostics file (psi_n, R, Z, phi, ... over time),
-    #: which `plot --diag particle_exits` reads. None = none known.
+    #: Its write_particle_diagnostics file (psi_n, R, Z, phi, ... over time).
+    #: The plots don't go by this but by which of DIAG_FILES is in the ptrace
+    #: folder, so a binary under any name is plotted the same.
     diag_file: str | None = None
     #: Log lines containing this are things the user should see even when
     #: the run succeeds (e.g. it stopped before its time span was done);
@@ -99,6 +100,23 @@ PROGRAMS = {
         ),
     )
 }
+
+
+#: Every diagnostics file a known program writes, in the order find_diag_file
+#: prefers them.
+DIAG_FILES = tuple(dict.fromkeys(
+    program.diag_file for program in PROGRAMS.values() if program.diag_file
+))
+
+
+def find_diag_file(folder: Path | str) -> Path | None:
+    """The particle diagnostics file in a ptrace folder, whatever the
+    executable is called: the first of DIAG_FILES there, or None."""
+    for name in DIAG_FILES:
+        path = Path(folder) / name
+        if path.is_file():
+            return path
+    return None
 
 
 def program_for(exe: Path | str) -> Program:
