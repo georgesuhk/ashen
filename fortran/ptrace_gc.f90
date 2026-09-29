@@ -20,12 +20,31 @@
 !>     snapshot_step = 1.d-6       ! [s] between part_restart_s<step>_t<time>.h5
 !>                                 !   files; 0 = only the final part_restart.h5
 !>     mass          = 5.48579909065d-4  ! [amu]
+!>     initialiser   = 'markers'   ! how the markers are placed, see below
 !>     n_markers     = 1
 !>     R0 = 3.68  Z0 = 0.  phi0 = 0.     ! [m], [m], [rad]
 !>     E_kin_eV = 1.d7                   ! kinetic energy [eV]
 !>     cos_pitch = 0.                    ! v_par/v
 !>     charge = -1                       ! [e]
 !>   /
+!>
+!> Initialisers (initialiser = ...):
+!>   'markers'            -- each marker k at (R0(k), Z0(k), phi0(k)) with its
+!>                           own E_kin_eV(k), cos_pitch(k), charge(k)
+!>   'current_pdf_simple' -- n_markers placed with the toroidal current
+!>                           density of the first restart as their pdf, all
+!>                           with E_kin_eV(1), cos_pitch(1), charge(1).
+!>                           R0/Z0/phi0 are ignored. Settings:
+!>       pdf_n_sub = 4    ! each grid element split into n_sub x n_sub cells
+!>       pdf_n_phi = 16   ! toroidal planes averaged: the n = 0 (axisymmetric)
+!>                        !   profile, harmonics 1..pdf_n_phi-1 cancelled
+!>       seed      = 1    ! random seed; same seed, same markers
+!>     Particles per unit R-Z area go as R*j_phi, i.e. as JOREK's zj
+!>     (Delta* psi), taking only the current along the net plasma current --
+!>     counter-current regions get none. Each cell's share is its zj times
+!>     its area; within a cell a marker is uniform in (s, t), and phi is
+!>     uniform in [0, 2 pi). Sampling is from that table, so it cannot hang
+!>     the way re_gc's rejection sampling can.
 !>
 !> Under ashen, keep restart_index = 0: ashen links the chosen restarts in
 !> as a consecutive sequence from index 0 (the reader looks only i+1..i+20
@@ -80,7 +99,7 @@ use mpi
 
 implicit none
 
-integer, parameter :: MAX_MARKERS = 10000
+integer, parameter :: MAX_MARKERS = 100000
 character(len=*), parameter :: PARAMS_FILE = 'ptrace_params.nml'
 
 ! --- &ptrace namelist ---
@@ -93,8 +112,11 @@ integer           :: n_markers = 0
 real*8            :: R0(MAX_MARKERS) = 0.d0, Z0(MAX_MARKERS) = 0.d0, phi0(MAX_MARKERS) = 0.d0
 real*8            :: E_kin_eV(MAX_MARKERS) = 0.d0, cos_pitch(MAX_MARKERS) = 0.d0
 integer           :: charge(MAX_MARKERS) = -1
+character(len=32) :: initialiser = 'markers'
+integer           :: pdf_n_sub = 4, pdf_n_phi = 16, seed = 1
 namelist /ptrace/ field_mode, restart_index, hold_last_field, t_span, dt, diag_step, &
-                 snapshot_step, mass, n_markers, R0, Z0, phi0, E_kin_eV, cos_pitch, charge
+                 snapshot_step, mass, n_markers, R0, Z0, phi0, E_kin_eV, cos_pitch, charge, &
+                 initialiser, pdf_n_sub, pdf_n_phi, seed
 
 !> Two times closer than this [s] are the same time (mod_event's TICK).
 real*8, parameter :: SNAP_TICK = 1.d-12
@@ -139,6 +161,20 @@ if (my_rank .eq. 0) then
   end if
   if (trim(field_mode) .ne. 'static' .and. trim(field_mode) .ne. 'evolving') then
     write(*,*) "ERROR: ptrace_gc: field_mode must be 'static' or 'evolving', got ", trim(field_mode)
+    call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+  end if
+  if (trim(initialiser) .ne. 'markers' .and. trim(initialiser) .ne. 'current_pdf_simple') then
+    write(*,*) "ERROR: ptrace_gc: initialiser must be 'markers' or 'current_pdf_simple', got ", &
+      trim(initialiser)
+    call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+  end if
+  if (trim(initialiser) .eq. 'current_pdf_simple' .and. E_kin_eV(1) .le. 0.d0) then
+    write(*,*) 'ERROR: ptrace_gc: current_pdf_simple gives every marker E_kin_eV(1), which is ', &
+      E_kin_eV(1), '; set E_kin_eV = <energy in eV>'
+    call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+  end if
+  if (pdf_n_sub .lt. 1 .or. pdf_n_phi .lt. 1) then
+    write(*,*) 'ERROR: ptrace_gc: pdf_n_sub and pdf_n_phi must be >= 1, got ', pdf_n_sub, pdf_n_phi
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
   end if
 end if
@@ -195,6 +231,23 @@ if (trim(field_mode) .eq. 'evolving' .and. .not. hold_last_field .and. n_rst .gt
       ' s; traced ', t_stop - t_start, ' of ', t_span, &
       ' s. Raise ptrace_end_step, or set hold_last_field = .true. to go on in its frozen field.'
   end if
+end if
+
+! --- initialiser: fill R0, Z0, phi0, ... on rank 0, then share them ---
+if (trim(initialiser) .eq. 'current_pdf_simple') then
+  if (my_rank .eq. 0) then
+    call sample_current_pdf(sim%fields, sim%time, n_markers, pdf_n_sub, pdf_n_phi, seed, &
+                            R0(1:n_markers), Z0(1:n_markers), phi0(1:n_markers))
+    E_kin_eV(1:n_markers)  = E_kin_eV(1)
+    cos_pitch(1:n_markers) = cos_pitch(1)
+    charge(1:n_markers)    = charge(1)
+  end if
+  call MPI_Bcast(R0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(Z0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(phi0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(E_kin_eV, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(cos_pitch, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(charge, n_markers, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
 end if
 
 ! --- markers, round-robin over ranks ---
@@ -304,6 +357,93 @@ subroutine push_all(sim, dt, target_time)
   end do
   !$omp end parallel do
 end subroutine push_all
+
+!> n markers with the toroidal current density at `time` as their pdf in
+!> space (see 'current_pdf_simple' at the top). Per unit R-Z area that is
+!> R*|j_phi| ~ |zj|, zj = Delta* psi: each of n_sub x n_sub cells per grid
+!> element gets zj (averaged over n_phi planes, i.e. its n = 0 part) times
+!> its area, keeping only the part along the net current; markers are drawn
+!> from that table, uniform in (s, t) within their cell and in phi.
+subroutine sample_current_pdf(fields, time, n, n_sub, n_phi, seed, R, Z, phi)
+  use mod_fields,         only: fields_base
+  use mod_model_settings, only: var_zj
+  use constants,          only: TWOPI
+  class(fields_base), intent(in) :: fields
+  real*8,  intent(in)  :: time
+  integer, intent(in)  :: n, n_sub, n_phi, seed
+  real*8,  intent(out) :: R(n), Z(n), phi(n)
+  real*8, allocatable  :: cell(:), cdf(:)
+  integer, allocatable :: seed_arr(:)
+  integer :: n_elm, n_cells, i_elm, i, j, k, c, lo, hi, mid, n_seed
+  real*8  :: s, t, zj(1), zj_s(1), zj_t(1), zj_phi(1), zj_time(1), zj_avg
+  real*8  :: RR, R_s, R_t, ZZ, Z_s, Z_t, net, along, against, u(4)
+
+  n_elm   = fields%element_list%n_elements
+  n_cells = n_elm * n_sub * n_sub
+  allocate(cell(n_cells), cdf(n_cells))
+  c = 0
+  do i_elm = 1, n_elm
+    do i = 1, n_sub
+      do j = 1, n_sub
+        c = c + 1
+        s = (i - 0.5d0) / n_sub
+        t = (j - 0.5d0) / n_sub
+        zj_avg = 0.d0
+        do k = 0, n_phi - 1
+          call fields%interp_PRZ(time, i_elm, [var_zj], 1, s, t, TWOPI * k / n_phi, &
+                                 zj, zj_s, zj_t, zj_phi, zj_time, RR, R_s, R_t, ZZ, Z_s, Z_t)
+          zj_avg = zj_avg + zj(1) / n_phi
+        end do
+        cell(c) = zj_avg * abs(R_s * Z_t - R_t * Z_s) / (n_sub * n_sub)
+      end do
+    end do
+  end do
+
+  ! Only the current along the net current: its sign is the plasma current's.
+  net = sum(cell)
+  cell = sign(1.d0, net) * cell
+  along   = sum(max(cell, 0.d0))
+  against = sum(max(-cell, 0.d0))
+  if (along .le. 0.d0) then
+    write(*,*) 'ERROR: ptrace_gc: current_pdf_simple: no toroidal current on the grid'
+    call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+  end if
+  write(*,'(A,I0,A,I0,A,F6.2,A)') 'ptrace_gc: current_pdf_simple: ', n, ' markers from ', &
+    n_cells, ' cells; ', 100.d0 * against / (along + against), &
+    ' % of |current| runs against the net current and gets none'
+  cdf(1) = max(cell(1), 0.d0)
+  do c = 2, n_cells
+    cdf(c) = cdf(c-1) + max(cell(c), 0.d0)
+  end do
+
+  call random_seed(size=n_seed)
+  allocate(seed_arr(n_seed))
+  seed_arr = seed + 104729 * [(k, k = 0, n_seed - 1)]
+  call random_seed(put=seed_arr)
+  do k = 1, n
+    call random_number(u)
+    ! the first cell whose cumulative share reaches u(1)
+    lo = 1
+    hi = n_cells
+    do while (lo .lt. hi)
+      mid = (lo + hi) / 2
+      if (cdf(mid) .lt. u(1) * cdf(n_cells)) then
+        lo = mid + 1
+      else
+        hi = mid
+      end if
+    end do
+    c = lo - 1                                   ! 0-based: element, then i, then j
+    i_elm = c / (n_sub * n_sub) + 1
+    s = (mod(c, n_sub * n_sub) / n_sub + u(2)) / n_sub
+    t = (mod(c, n_sub) + u(3)) / n_sub
+    call fields%interp_PRZ(time, i_elm, [var_zj], 1, s, t, 0.d0, &
+                           zj, zj_s, zj_t, zj_phi, zj_time, RR, R_s, R_t, ZZ, Z_s, Z_t)
+    R(k)   = RR
+    Z(k)   = ZZ
+    phi(k) = TWOPI * u(4)
+  end do
+end subroutine sample_current_pdf
 
 !> Write every particle to part_restart_s<step>_t<time>.h5: <step> is the
 !> JOREK step of the restart closest in time, <time> the simulation time [s].

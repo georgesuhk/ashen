@@ -16,6 +16,7 @@
   diag_step       = 1.d-8        ! [s] ptrace_diag.h5 writes
   snapshot_step   = 1.d-6        ! [s] part_restart_s<step>_t<time>.h5 files, for plot --diag particles
   mass            = 5.48579909065d-4  ! [amu], electron
+  initialiser     = 'markers'    ! the markers listed below; see the end of this file
   n_markers       = 5
   R0        = 1.4,  1.5,  1.6,  1.7,  1.8   ! [m]
   Z0        = 0.0,  0.0,  0.0,  0.0,  0.0    ! [m]
@@ -24,3 +25,16 @@
   cos_pitch = 0.9,  0.9,  0.9,  0.9,  0.9    ! v_par/v
   charge    = -1,   -1,   -1,   -1,   -1     ! [e]
 /
+
+! Markers from the current profile instead: n_markers placed with the start
+! restart's toroidal current density (its n = 0 part, along the net current)
+! as their pdf, all at one energy and pitch. Replace the marker lines above with:
+!
+!   initialiser = 'current_pdf_simple'
+!   n_markers   = 1000
+!   E_kin_eV    = 1.d7       ! every marker's kinetic energy [eV]
+!   cos_pitch   = 0.9        ! every marker's v_par/v
+!   charge      = -1         ! every marker's charge [e]
+!   pdf_n_sub   = 4          ! cells per grid element side for the pdf table
+!   pdf_n_phi   = 16         ! toroidal planes averaged (keeps the n = 0 profile)
+!   seed        = 1          ! same seed, same markers
