@@ -450,3 +450,24 @@ def test_trace_gc_outputs_are_what_the_particles_plot_reads(run_dir, site, param
     monkeypatch.setenv("STUB_NO_OUTPUT", "1")
     with pytest.raises(TraceError, match=r"did not write \['trace_diag.h5', 'part_restart.h5'\]"):
         run_trace(_plan(run_dir, site, program="trace_gc", inputs=[params]))
+
+
+def test_trace_paths_are_relative_to_the_run_folder(run_dir, site):
+    """trace_inputs and trace_particles resolve like trace_exe: a bare name
+    is the file in the run folder, and "../" works."""
+    (run_dir / "trace_params.nml").write_text("&trace\n/\n", encoding="utf-8")
+    (run_dir.parent / "shared.h5").write_bytes(b"seed")
+    plan = _plan(run_dir, site, inputs=["trace_params.nml"], particles="../shared.h5")
+    assert dict(plan.copies) == {
+        "part_restart.h5": run_dir.parent / "shared.h5",
+        "trace_params.nml": run_dir / "trace_params.nml",
+    }
+
+
+def test_missing_relative_input_names_where_it_looked(run_dir, site):
+    with pytest.raises(TraceError) as info:
+        _plan(run_dir, site, exe="./exe/my_tracer", inputs=["trace_params.nml"])
+    message = str(info.value)
+    assert f"looked for {run_dir / 'trace_params.nml'}" in message
+    assert "relative to the run folder" in message
+

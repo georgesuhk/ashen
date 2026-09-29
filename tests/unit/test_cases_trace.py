@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import textwrap
-from pathlib import Path
 
 import pytest
 
@@ -67,9 +66,11 @@ def test_defaults_seed_trace_fields(tmp_path):
     assert (cases["b"].trace_start_step, cases["b"].trace_n_mpi) == (5000, 8)
 
 
-def test_trace_particles_resolve_against_cases_toml(tmp_path):
+def test_trace_particles_kept_as_written(tmp_path):
+    """Resolved against the run folder at trace time (tracing.run_path),
+    like trace_exe -- not against cases.toml."""
     case = _load(tmp_path, _TRACED + 'trace_particles = "seeds/part.h5"\n')["a"]
-    assert case.trace_particles == tmp_path / "seeds" / "part.h5"
+    assert case.trace_particles == "seeds/part.h5"
 
 
 def test_trace_particles_rejected_for_a_program_that_makes_its_own(tmp_path):
@@ -80,7 +81,7 @@ def test_trace_particles_rejected_for_a_program_that_makes_its_own(tmp_path):
 
 def test_trace_particles_allowed_for_an_unrecognised_executable(tmp_path):
     body = _TRACED.replace(RE_GC, "./exe/my_tracer") + 'trace_particles = "part.h5"\n'
-    assert _load(tmp_path, body)["a"].trace_particles == tmp_path / "part.h5"
+    assert _load(tmp_path, body)["a"].trace_particles == "part.h5"
 
 
 def test_trace_fields_without_an_exe(tmp_path):
@@ -115,14 +116,14 @@ def test_negative_start_step(tmp_path):
         _load(tmp_path, _TRACED.replace("3000", "-1"))
 
 
-def test_trace_inputs_resolve_against_cases_toml(tmp_path):
+def test_trace_inputs_kept_as_written(tmp_path):
     case = _load(tmp_path, _TRACED + 'trace_inputs = ["trace_params.nml", "/abs/x.txt"]\n')["a"]
-    assert case.trace_inputs == [tmp_path / "trace_params.nml", Path("/abs/x.txt")]
+    assert case.trace_inputs == ["trace_params.nml", "/abs/x.txt"]
 
 
 def test_trace_inputs_accepts_a_single_path(tmp_path):
     case = _load(tmp_path, _TRACED + 'trace_inputs = "trace_params.nml"\n')["a"]
-    assert case.trace_inputs == [tmp_path / "trace_params.nml"]
+    assert case.trace_inputs == ["trace_params.nml"]
 
 
 @pytest.mark.parametrize("value, message", [

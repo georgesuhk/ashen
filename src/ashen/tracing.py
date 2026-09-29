@@ -65,6 +65,7 @@ __all__ = [
     "TracePlan",
     "TraceResult",
     "is_current",
+    "run_path",
     "trace_dir",
     "trace_exe_path",
     "plan_trace",
@@ -199,15 +200,20 @@ _RESULT_FIELDS = (
 _KNOWN_OUTPUTS = frozenset(name for p in PROGRAMS.values() for name in p.outputs)
 
 
+def run_path(run_dir: Path, path: str | Path) -> Path:
+    """A trace_* path: relative to the run folder unless absolute,
+    normalised so "../" works. Every trace_* path resolves this one way."""
+    path = Path(path)
+    if not path.is_absolute():
+        path = Path(os.path.normpath(Path(run_dir) / path))
+    return path
+
+
 def trace_exe_path(case: Case, run_dir: Path) -> Path:
-    """The executable case.trace_exe names: relative to the run folder
-    unless absolute, normalised so "../" works."""
+    """The executable case.trace_exe names (see run_path)."""
     if case.trace_exe is None:
         raise TraceError(f"case {case.name!r} has no trace_exe")
-    exe = Path(case.trace_exe)
-    if not exe.is_absolute():
-        exe = Path(os.path.normpath(Path(run_dir) / exe))
-    return exe
+    return run_path(run_dir, case.trace_exe)
 
 
 def trace_dir(case: Case, run_dir: Path) -> Path:
@@ -245,14 +251,22 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
     ]
 
     copies = []
-    particles = case.trace_particles
-    if particles is not None:
+    particles = None
+    if case.trace_particles is not None:
+        particles = run_path(run_dir, case.trace_particles)
         if not particles.is_file():
-            raise TraceError(f"case {case.name!r}: trace_particles {particles} not found")
+            raise TraceError(
+                f"case {case.name!r}: trace_particles {case.trace_particles!r} not found "
+                f"(looked for {particles}; trace_* paths are relative to the run folder)"
+            )
         copies.append((PARTICLES_FILE, particles))
-    for source in case.trace_inputs:
+    for entry in case.trace_inputs:
+        source = run_path(run_dir, entry)
         if not source.is_file():
-            raise TraceError(f"case {case.name!r}: trace_inputs file {source} not found")
+            raise TraceError(
+                f"case {case.name!r}: trace_inputs file {entry!r} not found "
+                f"(looked for {source}; trace_* paths are relative to the run folder)"
+            )
         copies.append((source.name, source))
     missing = [name for name in program.required_inputs if name not in dict(copies)]
     if missing:
@@ -274,7 +288,7 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
 
     settings = {key: getattr(case, key) for key in _RESULT_FIELDS}
     settings["trace_particles"] = str(particles) if particles else None
-    settings["trace_inputs"] = [str(x) for x in case.trace_inputs]
+    settings["trace_inputs"] = [str(source) for name, source in copies if name != PARTICLES_FILE]
     fingerprint = hashlib.sha256(json.dumps(
         {"settings": settings, "steps": steps, "exe": exe.name,
          "exe_stamp": _file_stamp(exe),
