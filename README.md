@@ -1140,16 +1140,18 @@ Connection lengths use `R0` extracted from the run's log
 
 ## Tracing particles
 
-`bin/trace` runs JOREK's own particle programs from `particles/examples`,
-unmodified, against the restarts of a run that already exists. ashen wraps
-them; it does not change what they compute. A case traces when it sets
-`trace_program` and `trace_start_step`, alongside its other keys in
-`cases.toml` (and `[defaults]` can seed any `trace_*` key, like the rest):
+`bin/trace` runs a particle-tracing executable -- normally one of JOREK's
+own `particles/examples` programs -- unmodified, against the restarts of a
+run that already exists. ashen wraps it; it does not change what it
+computes. A case traces when it sets `trace_exe` and `trace_start_step`,
+alongside its other keys in `cases.toml` (and `[defaults]` can seed any
+`trace_*` key, like the rest). `trace_exe` is a path **relative to the run
+folder**, so a binary in the run's `exe/` is `./exe/<name>`:
 
 ```toml
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 steps            = { start = 200, stop = 5800, step = 200 }
-trace_program    = "re_gc_current_density_initialisation"
+trace_exe        = "./exe/re_gc_current_density_initialisation"
 trace_start_step = 3000
 ```
 
@@ -1157,10 +1159,17 @@ trace_start_step = 3000
 python ~/ashen/bin/trace --list                                      # tracing cases, and the programs
 python ~/ashen/bin/trace --case "qa2.1_g2.3/eta1e-3_RE" --dry-run    # what it would link and run
 python ~/ashen/bin/trace --case "qa2.1_g2.3/eta1e-3_RE"
-python ~/ashen/bin/trace                                             # every case that sets trace_program
+python ~/ashen/bin/trace                                             # every case that sets trace_exe
 ```
 
-| `trace_program` | what it traces (all fixed in its source) | writes |
+**Programs ashen recognises.** When `trace_exe`'s *filename* is one of
+these, ashen also applies what it knows about that program: the outputs it
+must write, whether it takes `trace_particles`, the 2.5 ms start check,
+the two-restart minimum, and ex7's lost-particle stop. Any other filename
+-- including one of these renamed -- runs as-is: a zero exit is success,
+and `--list`/each run says which applies.
+
+| filename | what it traces (all fixed in its source) | writes |
 |---|---|---|
 | `re_gc_current_density_initialisation` | 32 relativistic guiding-centre electrons **per MPI rank**, sampled from the current density (20 MeV, pitch near pi), 1e-5 s from `trace_start_step`'s own time -- or the particles in `trace_particles`, if given | `part_diag.h5`, `part_restart.h5` |
 | `ex6_jorek` | one relativistic full-orbit electron, **starting at t = 2.5 ms**, for 1e-5 s | `diag.h5`, `part_restart.h5` |
@@ -1169,14 +1178,14 @@ python ~/ashen/bin/trace                                             # every cas
 Anything else -- particle positions, energies, time step, duration -- means
 editing the program in JOREK and rebuilding it; ashen only chooses which
 restarts it sees and how it is launched. Keys: `trace_start_step`
-(required with `trace_program`), `trace_end_step` (last restart it sees;
-default all), `trace_particles` (re_gc only: a JOREK particle file to start
-from, relative to `cases.toml`, *copied* in as `part_restart.h5` because the
-program overwrites that file at the end), `trace_n_mpi`,
-`trace_omp_threads` (default: `site.toml`'s `[diagnostics]`), `trace_exe`
-(default: the program's name).
+(required with `trace_exe`), `trace_end_step` (last restart it sees;
+default all), `trace_particles` (a JOREK particle file to start from,
+relative to `cases.toml`, *copied* in as `part_restart.h5` because the
+program overwrites that file at the end; refused for ex6/ex7, which ignore
+it), `trace_n_mpi`, `trace_omp_threads` (default: `site.toml`'s
+`[diagnostics]`).
 
-Each trace runs in `<run>/trace/<program>/`, with the program's output in
+Each trace runs in `<run>/trace/<executable filename>/`, with its output in
 `trace.log`. A completed trace is `[cached]` until its settings, restarts,
 particle file or executable change; `--force` reruns it. `--tool-output`
 echoes the program live. ex7 stopping at a lost particle is reported as
@@ -1200,8 +1209,9 @@ so the restarts traced through must share one grid.
 
 **Building.** In the JOREK checkout the run was built from, `make <program>`
 with the **same `MODEL`** as the run (variable indices differ between
-models), and copy the binary into the run's `exe/` under the program's name
-(or set `trace_exe`). A missing executable is reported with the exact command.
+models); the binary lands in the checkout's top folder. Copy it where
+`trace_exe` points -- e.g. the campaign's shared `exe/`, which a prepared
+run folder links as `./exe`. Keep its name to keep ashen's checks for it.
 
 ## Simulation time at a restart step
 
