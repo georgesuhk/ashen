@@ -30,6 +30,7 @@ from typing import Callable, Iterable, Sequence
 from ashen.cases import Case, CasesError, load_cases
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.four_cache import FourCacheError
+from ashen.diagnostics.particles import ParticleFileError
 from ashen.diagnostics.poincare_cache import PoincareCacheError
 from ashen.jorek2 import Jorek2Error
 from ashen.logfile import LogfileError
@@ -65,6 +66,7 @@ CASE_ERRORS = (
     LogfileError,
     PoincareCacheError,
     FourCacheError,
+    ParticleFileError,
     ShotfileError,
 )
 

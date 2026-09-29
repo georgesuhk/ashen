@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -112,3 +113,23 @@ def test_empty_exe(tmp_path):
 def test_negative_start_step(tmp_path):
     with pytest.raises(CasesError, match="trace_start_step must be >= 0"):
         _load(tmp_path, _TRACED.replace("3000", "-1"))
+
+
+def test_trace_inputs_resolve_against_cases_toml(tmp_path):
+    case = _load(tmp_path, _TRACED + 'trace_inputs = ["trace_params.nml", "/abs/x.txt"]\n')["a"]
+    assert case.trace_inputs == [tmp_path / "trace_params.nml", Path("/abs/x.txt")]
+
+
+def test_trace_inputs_accepts_a_single_path(tmp_path):
+    case = _load(tmp_path, _TRACED + 'trace_inputs = "trace_params.nml"\n')["a"]
+    assert case.trace_inputs == [tmp_path / "trace_params.nml"]
+
+
+@pytest.mark.parametrize("value, message", [
+    ('["a/p.nml", "b/p.nml"]', r"\['p.nml'\] appear more than once"),
+    ('["part_restart.h5"]', "go in trace_particles"),
+    ("[1]", "must be a list of paths"),
+])
+def test_invalid_trace_inputs(tmp_path, value, message):
+    with pytest.raises(CasesError, match=message):
+        _load(tmp_path, _TRACED + f"trace_inputs = {value}\n")

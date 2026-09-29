@@ -26,7 +26,11 @@ So the chosen restarts are linked in as a consecutive sequence
 (``t_now``), so the renumbering loses nothing. The extra width does not
 confuse ``last_file_before_time``: a 6-digit ``jorek0000NM.h5`` greps to
 ``0000N`` and sorts right after ``jorek0000N.h5``, so the numbers it
-bisects over stay in ascending order.
+bisects over stay in ascending order. The start restart is also linked as
+``jorek_restart.h5``, the name the reader uses for a frozen field (``i=-1``).
+
+A case's trace_inputs (e.g. trace_gc's trace_params.nml) are copied in
+under their own names, like a particle file.
 
 A trace is cached like the other gathers: it reruns only if its settings,
 restarts, particle file or executable changed since it last completed, or
@@ -61,6 +65,8 @@ __all__ = [
     "TracePlan",
     "TraceResult",
     "is_current",
+    "trace_dir",
+    "trace_exe_path",
     "plan_trace",
     "run_trace",
     "stage",
@@ -75,6 +81,9 @@ PARTICLES_FILE = "part_restart.h5"
 #: Files ashen itself writes into the trace folder.
 META_FILE = "trace_meta.json"
 LOG_FILE = "trace.log"
+
+#: The start restart, under the name the field reader uses for a frozen field.
+STATIC_RESTART = "jorek_restart.h5"
 
 #: Left behind by last_file_before_time if it is interrupted mid-listing.
 _FILENUMS_GLOB = ".jorek_filenums.*"
@@ -181,7 +190,7 @@ def _file_stamp(path: Path | None) -> list[int] | None:
 #: answer. trace_n_mpi stays in: re_gc samples its particle count per rank.
 _RESULT_FIELDS = (
     "trace_exe", "trace_start_step", "trace_end_step", "trace_particles",
-    "trace_n_mpi", "namelist",
+    "trace_inputs", "trace_n_mpi", "namelist",
 )
 
 #: Every known program's outputs: cleared on restaging whichever executable
@@ -190,17 +199,30 @@ _RESULT_FIELDS = (
 _KNOWN_OUTPUTS = frozenset(name for p in PROGRAMS.values() for name in p.outputs)
 
 
+def trace_exe_path(case: Case, run_dir: Path) -> Path:
+    """The executable case.trace_exe names: relative to the run folder
+    unless absolute, normalised so "../" works."""
+    if case.trace_exe is None:
+        raise TraceError(f"case {case.name!r} has no trace_exe")
+    exe = Path(case.trace_exe)
+    if not exe.is_absolute():
+        exe = Path(os.path.normpath(Path(run_dir) / exe))
+    return exe
+
+
+def trace_dir(case: Case, run_dir: Path) -> Path:
+    """The folder a case's trace runs in, and where its outputs land:
+    ``<run>/trace/<executable filename>/``."""
+    return Path(run_dir) / TRACE_DIR / trace_exe_path(case, run_dir).name
+
+
 def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> TracePlan:
     """Decide everything about a case's trace without touching disk.
 
     omp_threads is the fallback for a case that leaves trace_omp_threads at 0.
     """
-    if case.trace_exe is None:
-        raise TraceError(f"case {case.name!r} has no trace_exe")
     run_dir = Path(run_dir)
-    exe = Path(case.trace_exe)
-    if not exe.is_absolute():
-        exe = Path(os.path.normpath(run_dir / exe))
+    exe = trace_exe_path(case, run_dir)
     program = program_for(exe)
     paths = RunPaths.detect(run_dir)
 
@@ -210,6 +232,7 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
         for index, step in enumerate(steps)
         for width in JOREK_PAD_WIDTHS
     ]
+    links.append((STATIC_RESTART, paths.restart(steps[0])))
 
     namelist = run_dir / case.namelist
     if not namelist.is_file():
@@ -227,6 +250,16 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
         if not particles.is_file():
             raise TraceError(f"case {case.name!r}: trace_particles {particles} not found")
         copies.append((PARTICLES_FILE, particles))
+    for source in case.trace_inputs:
+        if not source.is_file():
+            raise TraceError(f"case {case.name!r}: trace_inputs file {source} not found")
+        copies.append((source.name, source))
+    missing = [name for name in program.required_inputs if name not in dict(copies)]
+    if missing:
+        raise TraceError(
+            f"case {case.name!r}: {program.name} reads {missing} from its folder; "
+            "list the file(s) in trace_inputs"
+        )
 
     threads = case.trace_omp_threads or omp_threads
     mpirun = site.launch.mpirun_cmd(case.trace_n_mpi)
@@ -241,15 +274,17 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
 
     settings = {key: getattr(case, key) for key in _RESULT_FIELDS}
     settings["trace_particles"] = str(particles) if particles else None
+    settings["trace_inputs"] = [str(x) for x in case.trace_inputs]
     fingerprint = hashlib.sha256(json.dumps(
         {"settings": settings, "steps": steps, "exe": exe.name,
-         "exe_stamp": _file_stamp(exe), "particles_stamp": _file_stamp(particles)},
+         "exe_stamp": _file_stamp(exe),
+         "copy_stamps": [_file_stamp(source) for _, source in copies]},
         sort_keys=True,
     ).encode()).hexdigest()
 
     return TracePlan(
         case=case, program=program, run_dir=run_dir,
-        work_dir=run_dir / TRACE_DIR / exe.name,
+        work_dir=trace_dir(case, run_dir),
         exe=exe, steps=steps, links=links, copies=copies, namelist=namelist.name,
         command=command, omp_threads=threads, fingerprint=fingerprint,
         warnings=_start_time_warnings(program, paths, steps),
@@ -272,6 +307,7 @@ def _write_meta(plan: TracePlan, *, complete: bool, lost: bool = False) -> None:
         "program": plan.program.name,
         "steps": plan.steps,
         "exe": plan.exe.name,
+        "copied": [name for name, _ in plan.copies],
     }
     (plan.work_dir / META_FILE).write_text(
         json.dumps(meta, indent=2) + "\n", encoding="utf-8"
@@ -284,12 +320,14 @@ def is_current(plan: TracePlan) -> bool:
     return meta.get("fingerprint") == plan.fingerprint and meta.get("complete") is True
 
 
-def _is_managed(entry: Path, plan: TracePlan) -> bool:
+def _is_managed(entry: Path, plan: TracePlan, previously_copied: list[str]) -> bool:
     """Whether ashen or the program put `entry` in the trace folder. Only
     these are cleared on restaging; anything else is left alone."""
     return (
         entry.is_symlink()
         or entry.name in (META_FILE, LOG_FILE, *_KNOWN_OUTPUTS, *plan.program.outputs)
+        or entry.name in previously_copied
+        or entry.name in dict(plan.copies)
         or entry.match("part_restart*.h5")
         or entry.match(_FILENUMS_GLOB)
     )
@@ -303,8 +341,9 @@ def stage(plan: TracePlan) -> None:
     """
     work_dir = plan.work_dir
     work_dir.mkdir(parents=True, exist_ok=True)
+    previously_copied = _read_meta(work_dir).get("copied", [])
     for entry in work_dir.iterdir():
-        if _is_managed(entry, plan):
+        if _is_managed(entry, plan, previously_copied):
             entry.unlink()
     for name, target in plan.links:
         (work_dir / name).symlink_to(os.path.relpath(target, work_dir))

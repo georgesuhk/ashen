@@ -382,3 +382,9 @@ note  = "internal kink investigation"
 # trace_end_step   = 5000
 # trace_n_mpi      = 4          # re_gc samples 32 particles per rank
 # trace_particles  = "seeds/part_restart.h5"
+#
+# ashen's own tracer, fortran/trace_gc.f90 (see README): markers, energies,
+# time span and snapshots all come from a trace_params.nml listed in
+# trace_inputs (start from fortran/trace_params.example.nml).
+# trace_exe        = "./exe/trace_gc"
+# trace_inputs     = ["trace_params.nml"]

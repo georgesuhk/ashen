@@ -41,6 +41,7 @@ echo "program running"
 [ -n "$STUB_NO_OUTPUT" ] && exit 0
 case "$(basename "$0")" in
   re_gc*) touch part_diag.h5 part_restart.h5 part_restart_0001.h5 ;;
+  trace_gc) touch trace_diag.h5 part_restart.h5 part_restart000.00250000.h5 ;;
   *)      touch diag.h5 part_restart.h5 ;;
 esac
 """
@@ -73,7 +74,7 @@ def make_run(root: Path, steps=(3000, 3200, 3400), name: str = "run") -> Path:
         (run / f"jorek{step:05d}.h5").write_bytes(b"h5")
     (run / "in_main").write_text("&in1\n&end\n", encoding="utf-8")
     (run / "T_prof.dat").write_text("1 2\n", encoding="utf-8")
-    for program in (RE_GC, "ex6_jorek", "ex7_jorek"):
+    for program in (RE_GC, "ex6_jorek", "ex7_jorek", "trace_gc"):
         install_program(run, program)
     return run
 
@@ -121,6 +122,8 @@ def test_restarts_linked_consecutively_under_both_widths(run_dir, site):
         ("jorek000000.h5", "jorek03000.h5"), ("jorek00000.h5", "jorek03000.h5"),
         ("jorek000001.h5", "jorek03200.h5"), ("jorek00001.h5", "jorek03200.h5"),
         ("jorek000002.h5", "jorek03400.h5"), ("jorek00002.h5", "jorek03400.h5"),
+        # the start restart again, as the frozen-field reader names it
+        ("jorek_restart.h5", "jorek03000.h5"),
     ]
 
 
@@ -393,3 +396,57 @@ def test_stale_known_outputs_are_cleared_for_any_exe(run_dir, site, monkeypatch)
     (plan.work_dir / "diag.h5").write_bytes(b"stale")
     run_trace(plan)
     assert not (plan.work_dir / "diag.h5").exists()
+
+
+# --- trace_inputs and trace_gc -----------------------------------------------------
+
+
+@pytest.fixture
+def params(tmp_path):
+    path = tmp_path / "inputs" / "trace_params.nml"
+    path.parent.mkdir()
+    path.write_text("&trace\n n_markers = 1\n/\n", encoding="utf-8")
+    return path
+
+
+def test_trace_gc_needs_its_params_file(run_dir, site):
+    with pytest.raises(TraceError, match=r"trace_gc reads \['trace_params.nml'\].*trace_inputs"):
+        _plan(run_dir, site, program="trace_gc")
+
+
+def test_inputs_are_copied_in_under_their_own_names(run_dir, site, params):
+    plan = _plan(run_dir, site, program="trace_gc", inputs=[params])
+    assert plan.copies == [("trace_params.nml", params)]
+    assert run_trace(plan).ran
+    staged = plan.work_dir / "trace_params.nml"
+    assert not staged.is_symlink()
+    assert staged.read_text(encoding="utf-8") == params.read_text(encoding="utf-8")
+
+
+def test_missing_input_file(run_dir, site, tmp_path):
+    with pytest.raises(TraceError, match="trace_inputs file .* not found"):
+        _plan(run_dir, site, exe="./exe/my_tracer", inputs=[tmp_path / "nope.nml"])
+
+
+def test_edited_input_reruns(run_dir, site, params):
+    run_trace(_plan(run_dir, site, program="trace_gc", inputs=[params]))
+    params.write_text("&trace\n n_markers = 2\n/\n", encoding="utf-8")
+    assert not is_current(_plan(run_dir, site, program="trace_gc", inputs=[params]))
+
+
+def test_an_input_dropped_from_the_list_is_cleared(run_dir, site, params, tmp_path):
+    extra = tmp_path / "inputs" / "extra.txt"
+    extra.write_text("x", encoding="utf-8")
+    plan = _plan(run_dir, site, program="trace_gc", inputs=[params, extra])
+    run_trace(plan)
+    assert (plan.work_dir / "extra.txt").is_file()
+    run_trace(_plan(run_dir, site, program="trace_gc", inputs=[params]))
+    assert not (plan.work_dir / "extra.txt").exists()
+
+
+def test_trace_gc_outputs_are_what_the_particles_plot_reads(run_dir, site, params, monkeypatch):
+    """trace_gc writes part_restart.h5 at the end; a run that doesn't is a
+    failure, as for any recognised program."""
+    monkeypatch.setenv("STUB_NO_OUTPUT", "1")
+    with pytest.raises(TraceError, match=r"did not write \['trace_diag.h5', 'part_restart.h5'\]"):
+        run_trace(_plan(run_dir, site, program="trace_gc", inputs=[params]))

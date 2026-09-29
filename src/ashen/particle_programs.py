@@ -40,6 +40,9 @@ class Program:
     #: With a single restart, keeps that field frozen (True) rather than
     #: aborting when it finds no next restart (stop_at_end=.true.).
     holds_last_field: bool = False
+    #: Files it reads from its working folder that the case must supply
+    #: through trace_inputs.
+    required_inputs: tuple[str, ...] = ()
     #: One of PROGRAMS, as opposed to an executable ashen knows nothing about.
     known: bool = True
 
@@ -68,6 +71,18 @@ PROGRAMS = {
             outputs=("diag.h5", "part_restart.h5"),
             fixed_start_time=2.5e-3,  # `sim%time = 2.5d-3`, restart = .false.
             stops_on_loss="PARTICLE IS LOST, STOPPING",
+        ),
+        Program(
+            name="trace_gc",
+            summary="ashen's configurable guiding-centre tracer (fortran/trace_gc.f90): "
+            "markers, energies, time span and snapshots from trace_params.nml",
+            # trace_diag.h5 every diag_step; part_restart<time>.h5 every
+            # snapshot_step (if > 0) and part_restart.h5 at the end.
+            outputs=("trace_diag.h5", "part_restart.h5"),
+            # static mode, or hold_last_field = .true., need only one restart;
+            # otherwise the reader aborts at the last one, which trace.log shows.
+            holds_last_field=True,
+            required_inputs=("trace_params.nml",),
         ),
     )
 }
