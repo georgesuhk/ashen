@@ -35,6 +35,7 @@ __all__ = [
     "find_step_file",
     "resolve_step_file",
     "restart_name",
+    "restart_steps",
     "source_pad_width",
     "step_name_variants",
     "step_str",
@@ -166,6 +167,19 @@ def detect_pad_width(directory: Path | str = ".") -> int:
             "step padding width from."
         )
     return Counter(widths).most_common(1)[0][0]
+
+
+def restart_steps(directory: Path | str) -> list[int]:
+    """Every step with a ``jorek<step>.h5`` in ``directory``, ascending.
+
+    A step present at both widths is listed once -- which file to use for
+    it is :func:`find_step_file`'s decision, not this listing's.
+    """
+    return sorted({
+        int(match.group(1))
+        for path in Path(directory).glob("jorek*.h5")
+        if (match := _RESTART_RE.match(path.name))
+    })
 
 
 def source_pad_width(jorek_tree: Path | str) -> int:

@@ -363,3 +363,20 @@ note  = "internal kink investigation"
 # ]
 # color         = "tab:red"
 # dataset_label = "$\\rho^* = 19$"
+
+# --- particle traces (bin/trace) ---------------------------------------------
+# A case traces when it sets trace_program and trace_start_step -- keys like
+# any other, so [defaults] can seed them. bin/trace runs that JOREK particle
+# program, unmodified, against the case's restarts; see README "Tracing
+# particles" for what each program does. The program sees trace_start_step
+# and every later restart (up to trace_end_step). ex6_jorek/ex7_jorek always
+# start at t = 2.5 ms, whatever trace_start_step is. trace_particles
+# (re_gc only) starts from a JOREK particle file instead of sampling the
+# current density.
+# [cases."qa2.1_g2.3/eta1e-3_RE"]
+# ...
+# trace_program    = "re_gc_current_density_initialisation"
+# trace_start_step = 3000
+# trace_end_step   = 5000
+# trace_n_mpi      = 4          # re_gc samples 32 particles per rank
+# trace_particles  = "seeds/part_restart.h5"
