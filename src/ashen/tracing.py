@@ -61,6 +61,8 @@ __all__ = [
     "TracePlan",
     "TraceResult",
     "is_current",
+    "trace_dir",
+    "trace_exe_path",
     "plan_trace",
     "run_trace",
     "stage",
@@ -190,17 +192,30 @@ _RESULT_FIELDS = (
 _KNOWN_OUTPUTS = frozenset(name for p in PROGRAMS.values() for name in p.outputs)
 
 
+def trace_exe_path(case: Case, run_dir: Path) -> Path:
+    """The executable case.trace_exe names: relative to the run folder
+    unless absolute, normalised so "../" works."""
+    if case.trace_exe is None:
+        raise TraceError(f"case {case.name!r} has no trace_exe")
+    exe = Path(case.trace_exe)
+    if not exe.is_absolute():
+        exe = Path(os.path.normpath(Path(run_dir) / exe))
+    return exe
+
+
+def trace_dir(case: Case, run_dir: Path) -> Path:
+    """The folder a case's trace runs in, and where its outputs land:
+    ``<run>/trace/<executable filename>/``."""
+    return Path(run_dir) / TRACE_DIR / trace_exe_path(case, run_dir).name
+
+
 def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> TracePlan:
     """Decide everything about a case's trace without touching disk.
 
     omp_threads is the fallback for a case that leaves trace_omp_threads at 0.
     """
-    if case.trace_exe is None:
-        raise TraceError(f"case {case.name!r} has no trace_exe")
     run_dir = Path(run_dir)
-    exe = Path(case.trace_exe)
-    if not exe.is_absolute():
-        exe = Path(os.path.normpath(run_dir / exe))
+    exe = trace_exe_path(case, run_dir)
     program = program_for(exe)
     paths = RunPaths.detect(run_dir)
 
@@ -249,7 +264,7 @@ def plan_trace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> Tr
 
     return TracePlan(
         case=case, program=program, run_dir=run_dir,
-        work_dir=run_dir / TRACE_DIR / exe.name,
+        work_dir=trace_dir(case, run_dir),
         exe=exe, steps=steps, links=links, copies=copies, namelist=namelist.name,
         command=command, omp_threads=threads, fingerprint=fingerprint,
         warnings=_start_time_warnings(program, paths, steps),

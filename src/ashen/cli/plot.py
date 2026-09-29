@@ -55,6 +55,7 @@ from ashen.diagnostics.four_modes import (
     radial_amplitude_series,
     rational_surface_series,
 )
+from ashen.diagnostics.particles import find_snapshots
 from ashen.diagnostics.poincare_cache import read_step
 from ashen.diagnostics.profiles import (
     ensure_edge_toroidal_field,
@@ -79,6 +80,12 @@ from ashen.paths import RunPaths, read_float
 from ashen.plotting.colors import DISCRETE_PALETTE
 from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes, plot_mode_radial
+from ashen.plotting.particles import (
+    animate_rz_panels,
+    particle_caption,
+    particle_panels,
+    plot_rz_panels,
+)
 from ashen.plotting.poincare import plot_poincare_step
 from ashen.plotting.profiles import (
     RationalBand,
@@ -98,10 +105,11 @@ from ashen.quantities import (
     is_known_quantity,
     quantity,
 )
+from ashen.tracing import trace_dir
 
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
-    "scan_map",
+    "scan_map", "particles",
 )
 
 #: Diags with a registered --compare renderer -- asking for one without (e.g.
@@ -243,8 +251,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--n-cols", type=int, default=None,
-        help="theta_hist: panels per row (default: 4 for per-case mode, or "
-        "the comparison's own n_cols for --compare)",
+        help="theta_hist, particles: panels per row (default: 4 for per-case "
+        "mode, or the comparison's own n_cols for --compare)",
     )
     parser.add_argument(
         "--theta_wetted_threshold", type=float, default=None,
@@ -269,10 +277,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--animate", action="store_true",
-        help="profiles: also write an animated GIF of the time evolution "
-        "alongside the static PNG, one frame per restart step (skipped, "
-        "with a message, for fewer than two steps); turns this on for "
-        "every case plotted, regardless of the case's own animate setting",
+        help="profiles, particles: also write an animated GIF of the time "
+        "evolution alongside the static PNG, one frame per restart step "
+        "(profiles) or particle snapshot (particles) -- skipped, with a "
+        "message, for fewer than two; turns this on for every case "
+        "plotted, regardless of the case's own animate setting",
     )
     parser.add_argument(
         "--delta-b-quantity", choices=("max", "mode", "deconfinement"), default="max",
@@ -2205,6 +2214,13 @@ def _run_case(
             target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
             threshold=theta_wetted_threshold, dpi=dpi,
         )
+    if "particles" in diags:
+        # Snapshots are times the tracer chose, not restart steps: --step
+        # and [cases.NAME.particles] steps don't apply.
+        _plot_particles(
+            case, paths, dpi=dpi, n_cols=n_cols, animate=animate or case.animate,
+            explicit=explicit_diags,
+        )
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
     if comparison_only and explicit_diags:
         # Gated on explicit_diags: a bare `plot --case X` (no --diag) asks
@@ -2212,6 +2228,43 @@ def _run_case(
         # print this on *every* per-case invocation once scan_map joined
         # DIAG_CHOICES -- it didn't ask for scan_map, it got it by default.
         print(f"  diag(s) {comparison_only} are comparison-only (use --compare), skipped")
+
+
+def _plot_particles(
+    case: Case, paths: RunPaths, *, dpi: int | None, n_cols: int | None,
+    animate: bool, explicit: bool,
+) -> None:
+    """Particle positions on R-Z, one panel per particle file in the case's
+    trace folder (bin/trace), each over the first in grey. Written next to
+    the data, as particles.png (and particles.gif under --animate)."""
+    if case.trace_exe is None:
+        # A default (no --diag) run asks every case for every diag; one
+        # that doesn't trace has nothing to say here.
+        if explicit:
+            print("  particles: case sets no trace_exe, skipped")
+        return
+    folder = trace_dir(case, paths.run_dir)
+    snapshots = find_snapshots(folder) if folder.is_dir() else []
+    if not snapshots:
+        print(f"  particles: no part_restart*.h5 in {folder} (run bin/trace first), skipped")
+        return
+
+    panels = particle_panels(snapshots)
+    kwargs = _dpi_kwargs(dpi)
+    kwargs["caption"] = particle_caption(snapshots)
+    out = plot_rz_panels(panels, folder / "particles.png", n_cols=n_cols or 4, **kwargs)
+    print(f"  particles: {len(snapshots)} snapshot(s) -> {out}")
+    if len(snapshots) == 1:
+        print(
+            "  particles: only one snapshot -- the program writes part_restart<time>.h5 "
+            "every write_step, which may be longer than its run"
+        )
+    if animate:
+        gif = animate_rz_panels(panels, folder / "particles.gif", **kwargs)
+        if gif is None:
+            print("  particles: fewer than two snapshots, no animation written")
+        else:
+            print(f"  particles: {gif}")
 
 
 def _run_comparisons(

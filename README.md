@@ -1213,6 +1213,33 @@ models); the binary lands in the checkout's top folder. Copy it where
 `trace_exe` points -- e.g. the campaign's shared `exe/`, which a prepared
 run folder links as `./exe`. Keep its name to keep ashen's checks for it.
 
+### Plotting particle positions
+
+`plot --diag particles` draws every particle file in a case's trace folder
+(`part_restart*.h5`, sorted by the time stored in each) on the R-Z plane,
+one panel per snapshot, all on the same R and Z limits:
+
+```bash
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particles            # particles.png
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particles --animate  # + particles.gif
+```
+
+Each panel shows the particles at that time in black over the first
+snapshot's in light grey, so drift away from the start reads in any single
+panel; lost particles (grid element <= 0) are red crosses where they left
+the grid, counted in the panel title. Particles at every toroidal angle are
+projected onto the one R-Z plane. `--n-cols` sets the grid width. Figures
+are written into the trace folder, next to the files they draw.
+
+**How many panels you get is up to the program.**
+`re_gc_current_density_initialisation` writes `part_restart<time>.h5`
+every `write_step` (1e-4 s) and `part_restart.h5` at the end -- but its
+run is only 1e-5 s, so out of the box that is two snapshots, start and
+end. More needs a smaller `write_step` in the program itself.
+
+A case without `trace_exe` is skipped silently in a default (no `--diag`)
+run, and with a note under an explicit `--diag particles`.
+
 ## Simulation time at a restart step
 
 `bin/timestep` is a one-off lookup, not a `cases.toml`-driven gather: run it
