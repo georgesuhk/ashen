@@ -257,3 +257,13 @@ def test_ptrace_settings_from_defaults(tmp_path):
 def test_invalid_ptrace_settings(tmp_path, extra, message):
     with pytest.raises(CasesError, match=message):
         _load(tmp_path, _TRACED + extra + "\n")
+
+
+
+def test_pdf_step(tmp_path):
+    assert _load(tmp_path, _TRACED)["a"].ptrace_pdf_step is None
+    assert _load(tmp_path, _TRACED + "ptrace_pdf_step = 2800\n")["a"].ptrace_pdf_step == 2800
+    with pytest.raises(CasesError, match="ptrace_pdf_step must be a step >= 0"):
+        _load(tmp_path, _TRACED + "ptrace_pdf_step = -1\n")
+    with pytest.raises(CasesError, match="unknown key"):
+        _load(tmp_path, _TRACED + "ptrace_pdf_n_phi = 16\n")

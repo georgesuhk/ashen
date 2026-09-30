@@ -1259,7 +1259,7 @@ The keys: `ptrace_field_mode`, `ptrace_hold_last_field`, `ptrace_t_span`,
 `ptrace_dt`, `ptrace_diag_step`, `ptrace_snapshot_step`, `ptrace_mass`,
 `ptrace_initialiser`, `ptrace_n_markers`, `ptrace_R0`, `ptrace_Z0`,
 `ptrace_phi0`, `ptrace_E_kin_eV`, `ptrace_cos_pitch`, `ptrace_charge`,
-`ptrace_pdf_n_sub`, `ptrace_pdf_n_phi`, `ptrace_seed` -- the `&ptrace` names,
+`ptrace_pdf_n_sub`, `ptrace_seed` -- the `&ptrace` names,
 in any case. They're checked when `cases.toml` is loaded, a changed one
 reruns the trace, and `--dry-run` shows the file. Like `[defaults]` for any
 key, `[defaults] ptrace_dt = 1e-10` sets it for every case. Only `ptrace_gc`
@@ -1271,11 +1271,14 @@ placed:
 | `initialiser` | markers |
 |---|---|
 | `'markers'` (default) | one at each listed `R0`, `Z0`, `phi0`, each with its own `E_kin_eV`, `cos_pitch`, `charge` |
-| `'current_pdf_simple'` | `n_markers` drawn with the toroidal current density at `ptrace_start_step` as their pdf, all at `E_kin_eV(1)`, `cos_pitch(1)`, `charge(1)` |
+| `'current_pdf_simple'` | `n_markers` drawn with the toroidal current density of step `ptrace_pdf_step` (default `ptrace_start_step`) as their pdf, all at `E_kin_eV(1)`, `cos_pitch(1)`, `charge(1)` |
 
-`current_pdf_simple` samples the n = 0 current profile: JOREK's `zj`
-averaged over `pdf_n_phi` toroidal planes (default 16), which is R·j_phi, so
-particles per unit R-Z area follow the current in each volume. Only the
+`current_pdf_simple` samples the n = 0 (axisymmetric) current profile of
+one restart: JOREK's `zj`, which is R·j_phi, so particles per unit R-Z area
+follow the current in each volume. Which restart is `ptrace_pdf_step` in
+`cases.toml` -- any step of the run, e.g. the current just before a
+disruption while tracing from a later step; ashen links it into the ptrace
+folder as `jorek_pdf.h5`, and `ptrace.log` names the step it used. Only the
 current along the net plasma current counts; `ptrace.log` says what
 fraction runs against it and gets no markers. Each grid element is split
 into `pdf_n_sub` × `pdf_n_sub` cells (default 4), markers are drawn from that

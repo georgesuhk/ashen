@@ -38,14 +38,17 @@
 !> Initialisers (initialiser = ...):
 !>   'markers'            -- each marker k at (R0(k), Z0(k), phi0(k)) with its
 !>                           own E_kin_eV(k), cos_pitch(k), charge(k)
-!>   'current_pdf_simple' -- n_markers placed with the toroidal current
-!>                           density of the first restart as their pdf, all
-!>                           with E_kin_eV(1), cos_pitch(1), charge(1).
-!>                           R0/Z0/phi0 are ignored. Settings:
+!>   'current_pdf_simple' -- n_markers placed with a restart's toroidal
+!>                           current density as their pdf: jorek_pdf.h5
+!>                           (ashen links ptrace_pdf_step's restart as it),
+!>                           else the first restart. All with E_kin_eV(1),
+!>                           cos_pitch(1), charge(1); R0/Z0/phi0 are ignored.
+!>                           The current is its n = 0 (axisymmetric) part.
+!>                           Settings:
 !>       pdf_n_sub = 4    ! each grid element split into n_sub x n_sub cells
-!>       pdf_n_phi = 16   ! toroidal planes averaged: the n = 0 (axisymmetric)
-!>                        !   profile, harmonics 1..pdf_n_phi-1 cancelled
 !>       seed      = 1    ! random seed; same seed, same markers
+!>       (pdf_n_phi is still accepted, and ignored: the n = 0 part is
+!>       taken directly now, not averaged over toroidal planes.)
 !>     Particles per unit R-Z area go as R*j_phi, i.e. as JOREK's zj
 !>     (Delta* psi), taking only the current along the net plasma current --
 !>     counter-current regions get none. Each cell's share is its zj times
@@ -124,7 +127,7 @@ real*8            :: R0(MAX_MARKERS) = 0.d0, Z0(MAX_MARKERS) = 0.d0, phi0(MAX_MA
 real*8            :: E_kin_eV(MAX_MARKERS) = 0.d0, cos_pitch(MAX_MARKERS) = 0.d0
 integer           :: charge(MAX_MARKERS) = -1
 character(len=32) :: initialiser = 'markers'
-integer           :: pdf_n_sub = 4, pdf_n_phi = 16, seed = 1
+integer           :: pdf_n_sub = 4, pdf_n_phi = 16, seed = 1  ! pdf_n_phi: ignored, kept readable
 namelist /ptrace/ field_mode, restart_index, hold_last_field, t_span, dt, diag_step, &
                  snapshot_step, mass, n_markers, R0, Z0, phi0, E_kin_eV, cos_pitch, charge, &
                  initialiser, pdf_n_sub, pdf_n_phi, seed
@@ -197,8 +200,8 @@ if (my_rank .eq. 0) then
       E_kin_eV(1), '; set E_kin_eV = <energy in eV>'
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
   end if
-  if (pdf_n_sub .lt. 1 .or. pdf_n_phi .lt. 1) then
-    write(*,*) 'ERROR: ptrace_gc: pdf_n_sub and pdf_n_phi must be >= 1, got ', pdf_n_sub, pdf_n_phi
+  if (pdf_n_sub .lt. 1) then
+    write(*,*) 'ERROR: ptrace_gc: pdf_n_sub must be >= 1, got ', pdf_n_sub
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
   end if
 end if
@@ -219,6 +222,26 @@ call MPI_Bcast(phi0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(E_kin_eV, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(cos_pitch, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(charge, n_markers, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+
+! --- initialiser: fill R0, Z0, phi0, ... on rank 0, then share them ---
+! Before the fields are read: sampling imports its own restart, which
+! resets JOREK's globals (time, element search tree) -- reading the fields
+! next sets them back for the trace. Every restart of a run shares its grid.
+if (trim(initialiser) .eq. 'current_pdf_simple') then
+  if (my_rank .eq. 0) then
+    call sample_current_pdf(n_markers, pdf_n_sub, seed, &
+                            R0(1:n_markers), Z0(1:n_markers), phi0(1:n_markers))
+    E_kin_eV(1:n_markers)  = E_kin_eV(1)
+    cos_pitch(1:n_markers) = cos_pitch(1)
+    charge(1:n_markers)    = charge(1)
+  end if
+  call MPI_Bcast(R0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(Z0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(phi0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(E_kin_eV, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(cos_pitch, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Bcast(charge, n_markers, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+end if
 
 ! --- fields: reading them sets sim%time to the first restart's time ---
 if (trim(field_mode) .eq. 'static') then
@@ -273,23 +296,6 @@ if (t_span .gt. 0.d0 .and. trim(field_mode) .eq. 'evolving' .and. .not. hold_las
       ' s; traced ', t_stop - t_start, ' of ', t_span, &
       ' s. Raise ptrace_end_step, or set hold_last_field = .true. to go on in its frozen field.'
   end if
-end if
-
-! --- initialiser: fill R0, Z0, phi0, ... on rank 0, then share them ---
-if (trim(initialiser) .eq. 'current_pdf_simple') then
-  if (my_rank .eq. 0) then
-    call sample_current_pdf(sim%fields, sim%time, n_markers, pdf_n_sub, pdf_n_phi, seed, &
-                            R0(1:n_markers), Z0(1:n_markers), phi0(1:n_markers))
-    E_kin_eV(1:n_markers)  = E_kin_eV(1)
-    cos_pitch(1:n_markers) = cos_pitch(1)
-    charge(1:n_markers)    = charge(1)
-  end if
-  call MPI_Bcast(R0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Bcast(Z0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Bcast(phi0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Bcast(E_kin_eV, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Bcast(cos_pitch, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Bcast(charge, n_markers, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
 end if
 
 ! --- markers, round-robin over ranks ---
@@ -400,27 +406,50 @@ subroutine push_all(sim, dt, target_time)
   !$omp end parallel do
 end subroutine push_all
 
-!> n markers with the toroidal current density at `time` as their pdf in
-!> space (see 'current_pdf_simple' at the top). Per unit R-Z area that is
-!> R*|j_phi| ~ |zj|, zj = Delta* psi: each of n_sub x n_sub cells per grid
-!> element gets zj (averaged over n_phi planes, i.e. its n = 0 part) times
-!> its area, keeping only the part along the net current; markers are drawn
-!> from that table, uniform in (s, t) within their cell and in phi.
-subroutine sample_current_pdf(fields, time, n, n_sub, n_phi, seed, R, Z, phi)
-  use mod_fields,         only: fields_base
+!> n markers with a restart's toroidal current density as their pdf in
+!> space (see 'current_pdf_simple' at the top): PDF_RESTART if it is there
+!> (ashen links ptrace_pdf_step's restart as it), else jorek_restart.h5 (the
+!> first restart). Per unit R-Z area the density is R*|j_phi| ~ |zj|,
+!> zj = Delta* psi: each of n_sub x n_sub cells per grid element gets its
+!> n = 0 zj times its area, keeping only the part along the net current;
+!> markers are drawn from that table, uniform in (s, t) within their cell
+!> and in phi. Imports the restart into lists of its own, which resets
+!> JOREK's globals: call it before the fields are read.
+subroutine sample_current_pdf(n, n_sub, seed, R, Z, phi)
+  use data_structure,     only: type_node_list, type_element_list
+  use mod_import_restart, only: import_hdf5_restart
+  use mod_interp,         only: interp, interp_RZ
   use mod_model_settings, only: var_zj
   use constants,          only: TWOPI
-  class(fields_base), intent(in) :: fields
-  real*8,  intent(in)  :: time
-  integer, intent(in)  :: n, n_sub, n_phi, seed
+  integer, intent(in)  :: n, n_sub, seed
   real*8,  intent(out) :: R(n), Z(n), phi(n)
+  character(len=*), parameter :: PDF_RESTART = 'jorek_pdf.h5'
+  type(type_node_list),    pointer :: nodes
+  type(type_element_list), pointer :: elements
   real*8, allocatable  :: cell(:), cdf(:)
   integer, allocatable :: seed_arr(:)
-  integer :: n_elm, n_cells, i_elm, i, j, k, c, lo, hi, mid, n_seed
-  real*8  :: s, t, zj(1), zj_s(1), zj_t(1), zj_phi(1), zj_time(1), zj_avg
-  real*8  :: RR, R_s, R_t, ZZ, Z_s, Z_t, net, along, against, u(4)
+  character(len=32) :: filename
+  logical :: exists
+  integer :: n_elm, n_cells, i_elm, i, j, k, c, lo, hi, mid, n_seed, rst_err, pdf_step
+  real*8  :: s, t, zj, zj_s, zj_t, zj_st, zj_ss, zj_tt
+  real*8  :: RR, R_s, R_t, ZZ, Z_s, Z_t, net, along, against, u(4), pdf_time, t_norm
 
-  n_elm   = fields%element_list%n_elements
+  filename = 'jorek_restart.h5'
+  inquire(file=PDF_RESTART, exist=exists)
+  if (exists) filename = PDF_RESTART
+  ! The element list is a large fixed-size array: on the heap, not the stack.
+  allocate(nodes, elements)
+  call import_hdf5_restart(nodes, elements, trim(filename), 0, rst_err)
+  if (rst_err .ne. 0) then
+    write(*,*) 'ERROR: ptrace_gc: current_pdf_simple: cannot read ', trim(filename)
+    call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+  end if
+  t_norm = sqrt(MU_ZERO * ATOMIC_MASS_UNIT * central_mass * central_density * 1.d20)
+  call read_restart_stamp(trim(filename), t_norm, pdf_step, pdf_time)
+  write(*,'(A,I0,A,ES12.5,A,A,A)') 'ptrace_gc: current_pdf_simple: current profile of step ', &
+    pdf_step, ' (t = ', pdf_time, ' s, ', trim(filename), ')'
+
+  n_elm   = elements%n_elements
   n_cells = n_elm * n_sub * n_sub
   allocate(cell(n_cells), cdf(n_cells))
   c = 0
@@ -430,13 +459,10 @@ subroutine sample_current_pdf(fields, time, n, n_sub, n_phi, seed, R, Z, phi)
         c = c + 1
         s = (i - 0.5d0) / n_sub
         t = (j - 0.5d0) / n_sub
-        zj_avg = 0.d0
-        do k = 0, n_phi - 1
-          call fields%interp_PRZ(time, i_elm, [var_zj], 1, s, t, TWOPI * k / n_phi, &
-                                 zj, zj_s, zj_t, zj_phi, zj_time, RR, R_s, R_t, ZZ, Z_s, Z_t)
-          zj_avg = zj_avg + zj(1) / n_phi
-        end do
-        cell(c) = zj_avg * abs(R_s * Z_t - R_t * Z_s) / (n_sub * n_sub)
+        ! i_harm = 1: the n = 0 (axisymmetric) part of zj
+        call interp(nodes, elements, i_elm, var_zj, 1, s, t, zj, zj_s, zj_t, zj_st, zj_ss, zj_tt)
+        call interp_RZ(nodes, elements, i_elm, s, t, RR, R_s, R_t, ZZ, Z_s, Z_t)
+        cell(c) = zj * abs(R_s * Z_t - R_t * Z_s) / (n_sub * n_sub)
       end do
     end do
   end do
@@ -479,12 +505,12 @@ subroutine sample_current_pdf(fields, time, n, n_sub, n_phi, seed, R, Z, phi)
     i_elm = c / (n_sub * n_sub) + 1
     s = (mod(c, n_sub * n_sub) / n_sub + u(2)) / n_sub
     t = (mod(c, n_sub) + u(3)) / n_sub
-    call fields%interp_PRZ(time, i_elm, [var_zj], 1, s, t, 0.d0, &
-                           zj, zj_s, zj_t, zj_phi, zj_time, RR, R_s, R_t, ZZ, Z_s, Z_t)
+    call interp_RZ(nodes, elements, i_elm, s, t, RR, R_s, R_t, ZZ, Z_s, Z_t)
     R(k)   = RR
     Z(k)   = ZZ
     phi(k) = TWOPI * u(4)
   end do
+  deallocate(nodes, elements)
 end subroutine sample_current_pdf
 
 !> Write every particle to part_restart_s<step>_t<time>.h5: <step> is the

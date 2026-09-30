@@ -44,7 +44,7 @@ _CASE_KEYS = (
     "ptrace_inputs", "ptrace_n_mpi", "ptrace_omp_threads",
     "ptrace_poincare", "ptrace_poincare_psi_n", "ptrace_poincare_n_turns",
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
-    "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins",
+    "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins", "ptrace_pdf_step",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -231,6 +231,11 @@ class Case:
     #: one. ptrace_gc traces up to this step's time (unless t_span says
     #: otherwise).
     ptrace_end_step: int | None = None
+    #: `bin/ptrace`: the restart step whose current profile ptrace_gc's
+    #: current_pdf_simple initialiser samples, linked in as jorek_pdf.h5.
+    #: None = ptrace_start_step's. Any step of the run, inside the traced
+    #: range or not.
+    ptrace_pdf_step: int | None = None
     #: `bin/ptrace`: a JOREK particle file to start from, copied in as
     #: part_restart.h5 (re_gc reads it instead of sampling the current
     #: density; ex6/ex7 and ptrace_gc ignore it). Relative to the run
@@ -478,6 +483,10 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
     if start < 0:
         raise CasesError(f"{where}: ptrace_start_step must be >= 0, got {start}")
     merged["ptrace_start_step"] = start
+    if merged.get("ptrace_pdf_step") is not None:
+        pdf_step = merged["ptrace_pdf_step"]
+        if isinstance(pdf_step, bool) or not isinstance(pdf_step, int) or pdf_step < 0:
+            raise CasesError(f"{where}: ptrace_pdf_step must be a step >= 0, got {pdf_step!r}")
     if merged.get("ptrace_end_step") is not None:
         end = int(merged["ptrace_end_step"])
         if end < start:

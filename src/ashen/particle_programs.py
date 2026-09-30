@@ -69,7 +69,6 @@ PTRACE_SETTINGS = {
     "cos_pitch": "reals",
     "charge": "ints",
     "pdf_n_sub": "int",
-    "pdf_n_phi": "int",
     "seed": "int",
 }
 
