@@ -1377,7 +1377,14 @@ ptrace_exit_bins  = 72     # bins over each of theta and phi
 ```bash
 python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits
 python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits --exit-psi-n 0.95
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits --animate  # + particle_exits.gif
 ```
+
+`--animate` (or the case's `animate = true`) also writes
+`particle_exits.gif`: the histograms filling in over the trace, 40 frames
+from its start to its end, each counting the exits up to that time. Bars
+are fractions of all the exits, on the final histogram's scale -- drawn as
+a grey outline -- so they grow into it.
 
 - **Units.** The threshold is psi_n as JOREK's particle diagnostics compute it,
   `(psi - psi_axis)/(psi_limit - psi_axis)`, where `psi_limit` is the X-point's
