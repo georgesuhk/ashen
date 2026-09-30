@@ -73,15 +73,11 @@ def test_trace_particles_kept_as_written(tmp_path):
     assert case.ptrace_particles == "seeds/part.h5"
 
 
-def test_trace_particles_rejected_for_a_program_that_makes_its_own(tmp_path):
-    body = _TRACED.replace(RE_GC, "./exe/ex7_jorek") + 'ptrace_particles = "part.h5"\n'
-    with pytest.raises(CasesError, match="ex7_jorek always makes its own particles"):
-        _load(tmp_path, body)
-
-
-def test_trace_particles_allowed_for_an_unrecognised_executable(tmp_path):
-    body = _TRACED.replace(RE_GC, "./exe/my_tracer") + 'ptrace_particles = "part.h5"\n'
-    assert _load(tmp_path, body)["a"].ptrace_particles == "part.h5"
+def test_trace_particles_allowed_for_any_executable(tmp_path):
+    """ashen doesn't judge by name which programs read a particle file."""
+    for exe in ("./exe/ex7_jorek", "./exe/my_tracer"):
+        body = _TRACED.replace(RE_GC, exe) + 'ptrace_particles = "part.h5"\n'
+        assert _load(tmp_path, body)["a"].ptrace_particles == "part.h5"
 
 
 def test_trace_fields_without_an_exe(tmp_path):

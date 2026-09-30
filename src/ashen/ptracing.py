@@ -1,7 +1,7 @@
 """Staging and running a ptrace: the executable a case's ptrace_exe names,
 unmodified, against that case's restarts, as its ptrace_* fields configure
-it (ashen.cases). When the executable is one of JOREK's own particle
-programs, what ashen knows about it applies too (ashen.particle_programs).
+it (ashen.cases). Whatever it is called: ashen goes by what it writes --
+its files and log lines (ashen.particle_programs) -- not by its name.
 
 Each ptrace runs in its own folder, ``<run>/ptrace/<executable name>/``.
 Restarts, the namelist and profile files are symlinked in, relative to the
@@ -57,13 +57,12 @@ from ashen.config import Site
 from ashen.jorek2 import tool_output_enabled
 from ashen.padding import JOREK_PAD_WIDTHS, restart_name, restart_steps
 from ashen.paths import RunPaths
-from ashen.postproc import read_zeroD, zero_d_is_usable
 from ashen.particle_programs import (
+    LOST_MARKER,
+    NOTE_MARKER,
+    OUTPUT_FILES,
     OVERRIDES_FILE,
-    PROGRAMS,
-    Program,
     overrides_namelist,
-    program_for,
 )
 
 __all__ = [
@@ -108,7 +107,6 @@ class PtracePlan:
     """Everything a trace will do, decided before anything is written."""
 
     case: Case
-    program: Program
     run_dir: Path
     work_dir: Path
     exe: Path
@@ -125,8 +123,6 @@ class PtracePlan:
     omp_threads: int
     #: Changes whenever anything that affects the result changes.
     fingerprint: str
-    #: Things worth knowing before running that don't stop it.
-    warnings: list[str] = dataclasses.field(default_factory=list)
     #: (name in work_dir, text): files ashen writes there itself -- the
     #: case's ptrace_<setting> keys as ptrace_overrides.nml.
     writes: list[tuple[str, str]] = dataclasses.field(default_factory=list)
@@ -160,14 +156,15 @@ class PtraceResult:
 
     #: False when the trace was already current and nothing ran.
     ran: bool
-    #: The program stopped at a lost particle (Program.stops_on_loss).
+    #: The program stopped at a lost particle (ex7_jorek's LOST_MARKER).
     lost: bool = False
-    #: Log lines the program marks as worth seeing (Program.note_marker),
-    #: e.g. ptrace_gc stopping at the last restart before t_span was done.
+    #: Log lines the program marks as worth seeing (NOTE_MARKER), e.g.
+    #: ptrace_gc stopping at the last restart before t_span was done -- and
+    #: ashen's own, e.g. that no part_restart.h5 was written.
     notes: tuple[str, ...] = ()
 
 
-def _select_steps(case: Case, program: Program, available: list[int]) -> list[int]:
+def _select_steps(case: Case, available: list[int]) -> list[int]:
     start, end = case.ptrace_start_step, case.ptrace_end_step
     if start not in available:
         nearby = [s for s in available if abs(s - start) <= 1000][:10]
@@ -175,36 +172,7 @@ def _select_steps(case: Case, program: Program, available: list[int]) -> list[in
             f"case {case.name!r}: no restart for ptrace_start_step {start}"
             + (f"; nearby: {nearby}" if nearby else "")
         )
-    steps = [s for s in available if s >= start and (end is None or s <= end)]
-    if len(steps) < 2 and not program.holds_last_field:
-        raise PtraceError(
-            f"case {case.name!r}: {program.name} aborts when it finds no next "
-            f"restart, so it needs at least two from step {start}; found {steps}"
-        )
-    return steps
-
-
-def _start_time_warnings(program: Program, paths: RunPaths, steps: list[int]) -> list[str]:
-    """For a program with a hard-coded start time: whether the linked
-    restarts span it, judged from the zeroD cache when there is one."""
-    start = program.fixed_start_time
-    if start is None:
-        return []
-    first, last = paths.zero_d(steps[0]), paths.zero_d(steps[-1])
-    if not (zero_d_is_usable(first) and zero_d_is_usable(last)):
-        return [
-            f"{program.name} always starts at t = {start:g} s; cannot check the "
-            f"restarts cover it without zeroD for steps {steps[0]} and {steps[-1]} "
-            "(`analyse --diag zerod` gathers it)"
-        ]
-    t_first, t_last = read_zeroD(first)["Time"], read_zeroD(last)["Time"]
-    if t_first <= start < t_last:
-        return []
-    return [
-        f"{program.name} always starts at t = {start:g} s, but the linked restarts "
-        f"span {t_first:g} .. {t_last:g} s (steps {steps[0]}..{steps[-1]}); its "
-        "fields at the start will not be the ones it expects"
-    ]
+    return [s for s in available if s >= start and (end is None or s <= end)]
 
 
 def _file_stamp(path: Path | None) -> list[int] | None:
@@ -221,11 +189,6 @@ _RESULT_FIELDS = (
     "ptrace_exe", "ptrace_start_step", "ptrace_end_step", "ptrace_particles",
     "ptrace_inputs", "ptrace_n_mpi", "namelist", "ptrace_settings",
 )
-
-#: Every known program's outputs: cleared on restaging whichever executable
-#: runs, so a stale diag file is never mistaken for, or appended to by, a
-#: new trace.
-_KNOWN_OUTPUTS = frozenset(name for p in PROGRAMS.values() for name in p.outputs)
 
 
 def run_path(run_dir: Path, path: str | Path) -> Path:
@@ -257,10 +220,9 @@ def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> P
     """
     run_dir = Path(run_dir)
     exe = ptrace_exe_path(case, run_dir)
-    program = program_for(exe)
     paths = RunPaths.detect(run_dir)
 
-    steps = _select_steps(case, program, restart_steps(run_dir))
+    steps = _select_steps(case, restart_steps(run_dir))
     links = [
         (restart_name(index, width), paths.restart(step))
         for index, step in enumerate(steps)
@@ -296,15 +258,7 @@ def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> P
                 f"(looked for {source}; ptrace_* paths are relative to the run folder)"
             )
         copies.append((source.name, source))
-    missing = [name for name in program.required_inputs if name not in dict(copies)]
-    if missing:
-        raise PtraceError(
-            f"case {case.name!r}: {program.name} reads {missing} from its folder; "
-            "list the file(s) in ptrace_inputs"
-        )
-
     writes = []
-    warnings = _start_time_warnings(program, paths, steps)
     if case.ptrace_settings:
         if OVERRIDES_FILE in dict(copies):
             raise PtraceError(
@@ -312,12 +266,6 @@ def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> P
                 f"ptrace_<setting> keys; don't list one in ptrace_inputs as well"
             )
         writes.append((OVERRIDES_FILE, overrides_namelist(case.ptrace_settings)))
-        if program.known and program.name != "ptrace_gc":
-            warnings.append(
-                f"{program.name} doesn't read {OVERRIDES_FILE}: the case's "
-                f"ptrace_<setting> keys ({', '.join(case.ptrace_settings)}) only "
-                "apply to ptrace_gc"
-            )
 
     threads = case.ptrace_omp_threads or omp_threads
     mpirun = site.launch.mpirun_cmd(case.ptrace_n_mpi)
@@ -341,11 +289,11 @@ def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> P
     ).encode()).hexdigest()
 
     return PtracePlan(
-        case=case, program=program, run_dir=run_dir,
+        case=case, run_dir=run_dir,
         work_dir=ptrace_dir(case, run_dir),
         exe=exe, steps=steps, links=links, copies=copies, namelist=namelist.name,
         command=command, omp_threads=threads, fingerprint=fingerprint,
-        warnings=warnings, writes=writes,
+        writes=writes,
     )
 
 
@@ -365,7 +313,6 @@ def _write_meta(
         "lost": lost,
         "notes": list(notes),
         "case": plan.case.name,
-        "program": plan.program.name,
         "steps": plan.steps,
         "exe": plan.exe.name,
         "copied": [name for name, _ in plan.copies],
@@ -386,8 +333,7 @@ def _is_managed(entry: Path, plan: PtracePlan, previously_copied: list[str]) -> 
     these are cleared on restaging; anything else is left alone."""
     return (
         entry.is_symlink()
-        or entry.name in (META_FILE, LOG_FILE, OVERRIDES_FILE, *_KNOWN_OUTPUTS,
-                          *plan.program.outputs)
+        or entry.name in (META_FILE, LOG_FILE, OVERRIDES_FILE, *OUTPUT_FILES)
         or entry.name in previously_copied
         or entry.name in dict(plan.copies)
         or entry.match("part_restart*.h5")
@@ -446,26 +392,22 @@ def _launch(plan: PtracePlan) -> int:
 def run_ptrace(plan: PtracePlan, *, force: bool = False) -> PtraceResult:
     """Stage and run one trace, unless it is already current.
 
-    Raises PtraceError if the executable is missing, the program exits
-    non-zero, or it exits without writing its outputs -- except that a
-    program which stops at its first lost particle (ex7_jorek) has done
-    what it does, and is reported as lost rather than failed.
+    Raises PtraceError if the executable is missing or the program exits
+    non-zero. A program that stops at its first lost particle (ex7_jorek's
+    LOST_MARKER) has done what it does, and is reported as lost; one that
+    exits 0 without writing part_restart.h5 gets a note.
     """
     if not force and is_current(plan):
         meta = _read_meta(plan.work_dir)
         return PtraceResult(
             ran=False, lost=meta.get("lost", False), notes=tuple(meta.get("notes", ())),
         )
-    spec = plan.program
     if not plan.exe.is_file():
-        build = (
-            f" Build it with `make {spec.name}` in the JOREK checkout, with the "
-            f"same MODEL as this run, and copy the binary there."
-            if spec.known else ""
-        )
         raise PtraceError(
             f"case {plan.case.name!r}: ptrace_exe {plan.case.ptrace_exe!r} not found "
-            f"(looked for {plan.exe}; ptrace_exe is relative to the run folder).{build}"
+            f"(looked for {plan.exe}; ptrace_exe is relative to the run folder). "
+            "Build it with `make <program>` in the JOREK checkout, with the same "
+            "MODEL as this run, and copy the binary there."
         )
     stage(plan)
     try:
@@ -482,23 +424,19 @@ def run_ptrace(plan: PtracePlan, *, force: bool = False) -> PtraceResult:
             f"last lines of {log}:\n  {_log_tail(log)}"
         )
     text = log.read_text(encoding="utf-8", errors="replace")
-    lost = spec.stops_on_loss is not None and spec.stops_on_loss in text
-    if not lost:
-        missing = [name for name in spec.outputs if not (plan.work_dir / name).is_file()]
-        if missing:
-            raise PtraceError(
-                f"case {plan.case.name!r}: {plan.exe.name} exited 0 but did not "
-                f"write {missing}; last lines of {log}:\n  {_log_tail(log)}"
-            )
-    notes = _notes(text, spec.note_marker)
+    lost = LOST_MARKER in text
+    notes = _notes(text, NOTE_MARKER)
+    if not lost and not (plan.work_dir / PARTICLES_FILE).is_file():
+        notes += (
+            f"{plan.exe.name} exited 0 without writing {PARTICLES_FILE}, which every "
+            f"JOREK particle program writes at the end -- see {log}",
+        )
     _write_meta(plan, complete=True, lost=lost, notes=notes)
     return PtraceResult(ran=True, lost=lost, notes=notes)
 
 
-def _notes(log_text: str, marker: str | None) -> tuple[str, ...]:
+def _notes(log_text: str, marker: str) -> tuple[str, ...]:
     """The log lines carrying marker, marker and surrounding space removed."""
-    if marker is None:
-        return ()
     return tuple(
         line.split(marker, 1)[1].strip()
         for line in log_text.splitlines() if marker in line

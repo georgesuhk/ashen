@@ -1162,14 +1162,17 @@ python ~/ashen/bin/ptrace --case "qa2.1_g2.3/eta1e-3_RE"
 python ~/ashen/bin/ptrace                                             # every case that sets ptrace_exe
 ```
 
-**Programs ashen recognises.** When `ptrace_exe`'s *filename* is one of
-these, ashen also applies what it knows about that program: the outputs it
-must write, whether it takes `ptrace_particles`, the 2.5 ms start check,
-the two-restart minimum, and ex7's lost-particle stop. Any other filename
--- including one of these renamed -- runs as-is: a zero exit is success,
-and `--list`/each run says which applies.
+**Any executable, under any name.** ashen never goes by the
+executable's filename: a zero exit is success, and what it does beyond
+that it reads from what the program writes -- a `ptrace_gc: NOTE:` line in
+the log is repeated as a `note:`, ex7's `PARTICLE IS LOST, STOPPING` is
+reported as a lost particle rather than a failure, a run that exits 0
+without writing `part_restart.h5` gets a note, and the plots use whichever
+particle files are in the folder. So a program built per model under its
+own name (`ptrace_gc_refluid_fixed_T_rho`) works the same. JOREK's own
+programs, for reference:
 
-| filename | what it traces (all fixed in its source) | writes |
+| program | what it traces (all fixed in its source) | writes |
 |---|---|---|
 | `re_gc_current_density_initialisation` | 32 relativistic guiding-centre electrons **per MPI rank**, sampled from the current density (20 MeV, pitch near pi), 1e-5 s from `ptrace_start_step`'s own time -- or the particles in `ptrace_particles`, if given | `part_diag.h5`, `part_restart.h5` |
 | `ex6_jorek` | one relativistic full-orbit electron, **starting at t = 2.5 ms**, for 1e-5 s | `diag.h5`, `part_restart.h5` |
@@ -1181,7 +1184,7 @@ restarts it sees and how it is launched. Keys: `ptrace_start_step`
 (required with `ptrace_exe`), `ptrace_end_step` (last restart it sees;
 default all), `ptrace_particles` (a JOREK particle file to start from,
 *copied* in as `part_restart.h5` because the program overwrites that file
-at the end; refused for ex6/ex7, which ignore it), `ptrace_inputs` (files
+at the end; ex6/ex7 and `ptrace_gc` ignore it), `ptrace_inputs` (files
 copied into the ptrace folder under their own names before the run -- e.g.
 `ptrace_gc`'s `ptrace_params.nml`), `ptrace_n_mpi`, `ptrace_omp_threads`
 (default: `site.toml`'s `[diagnostics]`). Like `ptrace_exe`, the paths in
@@ -1196,10 +1199,10 @@ echoes the program live. ex7 stopping at a lost particle is reported as
 such, not as a failure.
 
 **ex6/ex7 start at a hard-coded 2.5 ms**, whatever `ptrace_start_step` is: they
-pick the last linked restart before that time. `ptrace` warns when the
-linked restarts don't span it, judged from the zeroD cache
-(`analyse --diag zerod` fills it) -- otherwise the particle starts in
-fields from the wrong time, and the program only prints a warning.
+pick the last linked restart before that time, so choose restarts that span
+it -- otherwise the particle starts in fields from the wrong time, and the
+program only prints a warning. They also abort when they find no next
+restart, so give them at least two.
 
 **How the restarts reach the program.** JOREK's particle field reader looks
 at most 20 file numbers ahead for the next restart, opens each at one
@@ -1259,9 +1262,8 @@ The keys: `ptrace_field_mode`, `ptrace_hold_last_field`, `ptrace_t_span`,
 `ptrace_pdf_n_sub`, `ptrace_pdf_n_phi`, `ptrace_seed` -- the `&ptrace` names,
 in any case. They're checked when `cases.toml` is loaded, a changed one
 reruns the trace, and `--dry-run` shows the file. Like `[defaults]` for any
-key, `[defaults] ptrace_dt = 1e-10` sets it for every case. They are only
-read by `ptrace_gc` (under any filename); ashen warns if a case sets them
-for one of JOREK's own programs.
+key, `[defaults] ptrace_dt = 1e-10` sets it for every case. Only `ptrace_gc`
+(under any filename) reads them; JOREK's own programs ignore the file.
 
 **Initialisers.** `initialiser` in `&ptrace` chooses how the markers are
 placed:
@@ -1316,9 +1318,13 @@ Each panel shows the particles at that time in red (`ptrace_particle_color`,
 any matplotlib colour) over the first
 snapshot's in light grey, so drift away from the start reads in any single
 panel; lost particles (grid element <= 0) are black crosses where they left
-the grid, counted in the panel title. Particles at every toroidal angle are
-projected onto the one R-Z plane. `--n-cols` sets the grid width. Figures
-are written into the ptrace folder, next to the files they draw.
+the grid. Each panel's title gives the time and how many of all the
+particles have escaped so far, as `XX/XX escaped` -- lost from the grid, or (with
+`ptrace_original_boundary`) out of the plasma boundary. Particles at every
+toroidal angle are projected onto the one R-Z plane. `--n-cols` sets the
+grid width. The PNG has a caption saying what the colours mean; the GIF
+doesn't. Figures are written into the ptrace folder, next to the files
+they draw.
 
 **How many panels you get is up to the program.**
 `re_gc_current_density_initialisation` writes `part_restart<time>.h5`
@@ -1351,7 +1357,7 @@ toroidal plane (the case's `phi_start`); the particles are every phi.
 extension (`original_bnd.dat`) as a magenta dashed line and treats it as
 where the plasma ends: a particle that leaves it is **no longer tracked**.
 From then on it is drawn where it first left, as a magenta cross, counted in
-the panel title as "left boundary" -- even if it later wanders back in or
+the panel title's `XX/XX escaped` -- even if it later wanders back in or
 leaves the grid. When it left is taken from the program's diagnostics file
 (`ptrace_diag.h5`, every `diag_step`) when there is one for the same
 particles, else from the snapshots themselves, which is only as fine as

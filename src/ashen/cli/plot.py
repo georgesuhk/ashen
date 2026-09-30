@@ -2461,7 +2461,11 @@ def _plot_particles(
             "write_step (re_gc) or snapshot_step (ptrace_gc), which may be longer than its run"
         )
     if animate:
-        gif = animate_rz_panels(panels, folder / "particles.gif", **kwargs)
+        # No caption on the animation: the frames speak for themselves.
+        gif = animate_rz_panels(
+            panels, folder / "particles.gif",
+            **{k: v for k, v in kwargs.items() if k != "caption"},
+        )
         if gif is None:
             print("  particles: fewer than two snapshots, no animation written")
         else:
