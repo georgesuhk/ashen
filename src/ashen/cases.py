@@ -44,7 +44,7 @@ _CASE_KEYS = (
     "ptrace_inputs", "ptrace_n_mpi", "ptrace_omp_threads",
     "ptrace_poincare", "ptrace_poincare_psi_n", "ptrace_poincare_n_turns",
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
-    "ptrace_particle_color",
+    "ptrace_particle_color", "ptrace_settings",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -227,7 +227,9 @@ class Case:
     #: ptrace_exe. re_gc starts at this step's own time; ex6/ex7 always
     #: start at 2.5 ms and pick from the restarts from here on.
     ptrace_start_step: int | None = None
-    #: `bin/ptrace`: last restart step the program sees. None = every later one.
+    #: `bin/ptrace`: last restart step the program sees. None = every later
+    #: one. ptrace_gc traces up to this step's time (unless t_span says
+    #: otherwise).
     ptrace_end_step: int | None = None
     #: `bin/ptrace`: a JOREK particle file to start from, copied in as
     #: part_restart.h5 (re_gc reads it instead of sampling the current
@@ -242,6 +244,11 @@ class Case:
     ptrace_n_mpi: int = 1
     #: `bin/ptrace`: OpenMP threads per rank; 0 = site.toml's [diagnostics].
     ptrace_omp_threads: int = 0
+    #: `bin/ptrace`: ptrace_gc's &ptrace settings, from the case's
+    #: ptrace_<setting> keys (ptrace_dt, ptrace_initialiser, ...; see
+    #: particle_programs.PTRACE_SETTINGS). Written to ptrace_overrides.nml,
+    #: which ptrace_gc reads after ptrace_params.nml, so these win.
+    ptrace_settings: dict = field(default_factory=dict)
     #: `plot --diag particles`: draw the Poincare punctures `analyse --diag
     #: poincare` cached, under each snapshot, from the traced restart nearest
     #: it in time. Implied by either key below.
@@ -386,6 +393,68 @@ def _ylim_table_from_spec(
     return ylim
 
 
+def _ptrace_setting(name: str, kind: str, value: object, where: str) -> object:
+    """One ptrace_<setting> value, checked against its PTRACE_SETTINGS kind
+    and normalised (ints to floats for reals, a single value to a list)."""
+    from ashen.particle_programs import PTRACE_SETTING_CHOICES
+
+    def bad(expected: str):
+        return CasesError(f"{where}: ptrace_{name} must be {expected}, got {value!r}")
+
+    def is_int(v) -> bool:
+        return isinstance(v, int) and not isinstance(v, bool)
+
+    def is_real(v) -> bool:
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    if kind == "str":
+        choices = PTRACE_SETTING_CHOICES.get(name)
+        if not isinstance(value, str) or (choices and value not in choices):
+            raise bad(f"one of {list(choices)}" if choices else "a string")
+        return value
+    if kind == "bool":
+        if not isinstance(value, bool):
+            raise bad("true or false")
+        return value
+    if kind == "int":
+        if not is_int(value):
+            raise bad("a whole number")
+        return value
+    if kind == "real":
+        if not is_real(value):
+            raise bad("a number")
+        return float(value)
+    values = value if isinstance(value, list) else [value]
+    check, cast = (is_int, int) if kind == "ints" else (is_real, float)
+    if not values or not all(check(v) for v in values):
+        raise bad("a number or a list of numbers, one per marker"
+                  if kind == "reals" else "a whole number or a list of them, one per marker")
+    return [cast(v) for v in values]
+
+
+def _collect_ptrace_settings(merged: dict, where: str) -> None:
+    """Move every ptrace_<setting> key (PTRACE_SETTINGS; any case, as a
+    Fortran namelist is) into merged["ptrace_settings"], checked."""
+    from ashen.particle_programs import PTRACE_SETTINGS
+
+    if "ptrace_settings" in merged:
+        raise CasesError(
+            f"{where}: set ptrace_gc's settings one key each (ptrace_dt, "
+            "ptrace_initialiser, ...), not as ptrace_settings"
+        )
+    by_lower = {name.lower(): name for name in PTRACE_SETTINGS}
+    settings: dict[str, object] = {}
+    for key in [k for k in merged if k.startswith("ptrace_")]:
+        name = by_lower.get(key[len("ptrace_"):].lower())
+        if name is None:
+            continue
+        if name in settings:
+            raise CasesError(f"{where} sets ptrace_{name} twice (names ignore case)")
+        settings[name] = _ptrace_setting(name, PTRACE_SETTINGS[name], merged.pop(key), where)
+    if settings:
+        merged["ptrace_settings"] = settings
+
+
 def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
     """Validate and normalise a case's ptrace_* fields in place."""
     from ashen.particle_programs import program_for
@@ -397,6 +466,7 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
         if others:
             raise CasesError(f"{where} sets {others} but no ptrace_exe")
         return
+    _collect_ptrace_settings(merged, where)
     if not isinstance(exe, str) or not exe.strip():
         raise CasesError(f"{where}: ptrace_exe must be a path, got {exe!r}")
     program = program_for(exe)

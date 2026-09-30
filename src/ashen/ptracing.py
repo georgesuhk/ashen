@@ -31,7 +31,9 @@ bisects over stay in ascending order. The start restart is also linked as
 ``jorek_restart.h5``, the name the reader uses for a frozen field (``i=-1``).
 
 A case's ptrace_inputs (e.g. ptrace_gc's ptrace_params.nml) are copied in
-under their own names, like a particle file.
+under their own names, like a particle file. A case's ptrace_<setting> keys
+(ptrace_dt, ptrace_initialiser, ...) are written into ptrace_overrides.nml,
+which ptrace_gc reads after ptrace_params.nml.
 
 A trace is cached like the other gathers: it reruns only if its settings,
 restarts, particle file or executable changed since it last completed, or
@@ -56,7 +58,13 @@ from ashen.jorek2 import tool_output_enabled
 from ashen.padding import JOREK_PAD_WIDTHS, restart_name, restart_steps
 from ashen.paths import RunPaths
 from ashen.postproc import read_zeroD, zero_d_is_usable
-from ashen.particle_programs import PROGRAMS, Program, program_for
+from ashen.particle_programs import (
+    OVERRIDES_FILE,
+    PROGRAMS,
+    Program,
+    overrides_namelist,
+    program_for,
+)
 
 __all__ = [
     "LOG_FILE",
@@ -119,6 +127,9 @@ class PtracePlan:
     fingerprint: str
     #: Things worth knowing before running that don't stop it.
     warnings: list[str] = dataclasses.field(default_factory=list)
+    #: (name in work_dir, text): files ashen writes there itself -- the
+    #: case's ptrace_<setting> keys as ptrace_overrides.nml.
+    writes: list[tuple[str, str]] = dataclasses.field(default_factory=list)
 
     @property
     def restart_links(self) -> list[str]:
@@ -135,6 +146,9 @@ class PtracePlan:
             for name, target in self.links
         ]
         lines += [f"copy     {name} <- {source}" for name, source in self.copies]
+        for name, text in self.writes:
+            lines += [f"write    {name}:"]
+            lines += [f"           {line}" for line in text.splitlines() if not line.startswith("!")]
         lines += ["run:"]
         lines += [f"           {line}" for line in self.command.splitlines()]
         return lines
@@ -205,7 +219,7 @@ def _file_stamp(path: Path | None) -> list[int] | None:
 #: answer. ptrace_n_mpi stays in: re_gc samples its particle count per rank.
 _RESULT_FIELDS = (
     "ptrace_exe", "ptrace_start_step", "ptrace_end_step", "ptrace_particles",
-    "ptrace_inputs", "ptrace_n_mpi", "namelist",
+    "ptrace_inputs", "ptrace_n_mpi", "namelist", "ptrace_settings",
 )
 
 #: Every known program's outputs: cleared on restaging whichever executable
@@ -289,6 +303,22 @@ def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> P
             "list the file(s) in ptrace_inputs"
         )
 
+    writes = []
+    warnings = _start_time_warnings(program, paths, steps)
+    if case.ptrace_settings:
+        if OVERRIDES_FILE in dict(copies):
+            raise PtraceError(
+                f"case {case.name!r}: ashen writes {OVERRIDES_FILE} from the case's "
+                f"ptrace_<setting> keys; don't list one in ptrace_inputs as well"
+            )
+        writes.append((OVERRIDES_FILE, overrides_namelist(case.ptrace_settings)))
+        if program.known and program.name != "ptrace_gc":
+            warnings.append(
+                f"{program.name} doesn't read {OVERRIDES_FILE}: the case's "
+                f"ptrace_<setting> keys ({', '.join(case.ptrace_settings)}) only "
+                "apply to ptrace_gc"
+            )
+
     threads = case.ptrace_omp_threads or omp_threads
     mpirun = site.launch.mpirun_cmd(case.ptrace_n_mpi)
     command = "\n".join(
@@ -315,7 +345,7 @@ def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> P
         work_dir=ptrace_dir(case, run_dir),
         exe=exe, steps=steps, links=links, copies=copies, namelist=namelist.name,
         command=command, omp_threads=threads, fingerprint=fingerprint,
-        warnings=_start_time_warnings(program, paths, steps),
+        warnings=warnings, writes=writes,
     )
 
 
@@ -356,7 +386,8 @@ def _is_managed(entry: Path, plan: PtracePlan, previously_copied: list[str]) -> 
     these are cleared on restaging; anything else is left alone."""
     return (
         entry.is_symlink()
-        or entry.name in (META_FILE, LOG_FILE, *_KNOWN_OUTPUTS, *plan.program.outputs)
+        or entry.name in (META_FILE, LOG_FILE, OVERRIDES_FILE, *_KNOWN_OUTPUTS,
+                          *plan.program.outputs)
         or entry.name in previously_copied
         or entry.name in dict(plan.copies)
         or entry.match("part_restart*.h5")
@@ -380,6 +411,8 @@ def stage(plan: PtracePlan) -> None:
         (work_dir / name).symlink_to(os.path.relpath(target, work_dir))
     for name, source in plan.copies:
         shutil.copy2(source, work_dir / name)
+    for name, text in plan.writes:
+        (work_dir / name).write_text(text, encoding="utf-8")
     _write_meta(plan, complete=False)
 
 
