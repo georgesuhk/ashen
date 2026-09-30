@@ -87,7 +87,11 @@ from ashen.paths import RunPaths, read_float
 from ashen.plotting.colors import DISCRETE_PALETTE
 from ashen.plotting.connection_length import plot_connection_length_map
 from ashen.plotting.four_modes import plot_mode_amplitudes, plot_mode_radial
-from ashen.plotting.particle_exits import exit_caption, plot_exit_histograms
+from ashen.plotting.particle_exits import (
+    animate_exit_histograms,
+    exit_caption,
+    plot_exit_histograms,
+)
 from ashen.plotting.particles import (
     PoincareOverlay,
     animate_rz_panels,
@@ -292,11 +296,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--animate", action="store_true",
-        help="profiles, particles: also write an animated GIF of the time "
-        "evolution alongside the static PNG, one frame per restart step "
-        "(profiles) or particle snapshot (particles) -- skipped, with a "
-        "message, for fewer than two; turns this on for every case "
-        "plotted, regardless of the case's own animate setting",
+        help="profiles, particles, particle_exits: also write an animated GIF "
+        "of the time evolution alongside the static PNG, one frame per restart "
+        "step (profiles), particle snapshot (particles), or 40 times over the "
+        "trace as the exit histograms fill in (particle_exits) -- skipped, with "
+        "a message, when there is nothing to animate; turns this on for every "
+        "case plotted, regardless of the case's own animate setting",
     )
     parser.add_argument(
         "--delta-b-quantity", choices=("max", "mode", "deconfinement"), default="max",
@@ -2240,6 +2245,7 @@ def _run_case(
     if "particle_exits" in diags:
         _plot_particle_exits(
             case, paths, dpi=dpi, psi_n=exit_psi_n, explicit=explicit_diags,
+            animate=animate or case.animate,
         )
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
     if comparison_only and explicit_diags:
@@ -2412,10 +2418,12 @@ def _log_axis(paths: RunPaths) -> tuple[float, float] | None:
 
 def _plot_particle_exits(
     case: Case, paths: RunPaths, *, dpi: int | None, psi_n: float | None, explicit: bool,
+    animate: bool = False,
 ) -> None:
     """Histograms of the poloidal and toroidal angle where each traced
     particle first goes past psi_n (or leaves the grid), from the program's
-    diagnostics file. Written into the ptrace folder as particle_exits.png."""
+    diagnostics file. Written into the ptrace folder as particle_exits.png,
+    and under --animate as particle_exits.gif, filling in over the trace."""
     if case.ptrace_exe is None:
         if explicit:
             print("  particle_exits: case sets no ptrace_exe, skipped")
@@ -2449,6 +2457,17 @@ def _plot_particle_exits(
         caption=caption, **_dpi_kwargs(dpi),
     )
     print(f"  particle_exits: {caption} -> {out}")
+    if animate:
+        gif = animate_exit_histograms(
+            result, folder / "particle_exits.gif", bins=case.ptrace_exit_bins,
+            t_range=(float(history.time[0]), float(history.time[-1])) if history.time.size
+            else (0.0, 0.0),
+            caption=caption, **_dpi_kwargs(dpi),
+        )
+        if gif is None:
+            print("  particle_exits: no exits, or a trace with no time span -- no animation written")
+        else:
+            print(f"  particle_exits: {gif}")
 
 
 def _run_comparisons(

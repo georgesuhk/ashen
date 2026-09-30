@@ -12,7 +12,7 @@ import pytest
 from ashen.cli import plot as plot_cli
 from ashen.diagnostics.particle_exits import exit_angles, exits_from_history, read_particle_diag
 from ashen.diagnostics.particles import ParticleFileError
-from ashen.plotting.particle_exits import exit_caption
+from ashen.plotting.particle_exits import animate_exit_histograms, exit_caption
 
 h5py = pytest.importorskip("h5py")
 
@@ -229,6 +229,38 @@ def test_particles_plot_takes_boundary_exits_from_the_diag_file(campaign, capsys
     # Particle 0 left at the diag time between the two snapshots, at R 2.0.
     np.testing.assert_allclose(seen["exits"].time[:3], [1e-6, np.inf, 1e-6], rtol=1e-6)
     np.testing.assert_allclose(seen["exits"].R[0], 2.0)
+
+
+def test_animation_fills_in_over_the_trace(diag, tmp_path):
+    result = exit_angles(read_particle_diag(diag), psi_n=1.0)
+    out = animate_exit_histograms(result, tmp_path / "e.gif", t_range=(0.0, 2e-6),
+                                  n_frames=5, dpi=40)
+    assert out.is_file() and out.read_bytes()[:3] == b"GIF"
+    from PIL import Image
+
+    assert Image.open(out).n_frames == 5
+
+
+def test_no_animation_without_exits_or_time(diag, tmp_path):
+    history = read_particle_diag(diag)
+    import dataclasses
+
+    # Nobody past psi_n 10, and (pretend) nobody leaves the grid either.
+    none_out = dataclasses.replace(exit_angles(history, psi_n=10.0), n_left_grid=0)
+    assert animate_exit_histograms(none_out, tmp_path / "a.gif", t_range=(0, 1)) is None
+    result = exit_angles(history, psi_n=1.0)
+    assert animate_exit_histograms(result, tmp_path / "b.gif", t_range=(1e-6, 1e-6)) is None
+    assert not list(tmp_path.glob("*.gif"))
+
+
+def test_plot_animate_writes_the_gif(campaign, capsys):
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    write_diag(folder / "ptrace_diag.h5", t=T, psi_n=PSI, R=R, Z=Z, phi=PHI,
+               lost=LOST, theta=THETA)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--animate",
+                          "--dpi", "40"]) == 0
+    assert f"particle_exits: {folder / 'particle_exits.gif'}" in capsys.readouterr().out
+    assert (folder / "particle_exits.gif").is_file()
 
 
 def test_not_traced_yet(campaign, capsys):
