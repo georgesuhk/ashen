@@ -27,7 +27,7 @@ Pure data: no matplotlib here (see ashen.plotting.particle_exits).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -66,6 +66,22 @@ class ParticleHistory:
     @property
     def n(self) -> int:
         return int(self.psi_n.shape[1])
+
+    def within(self, t_min: float, t_max: float | None) -> "ParticleHistory":
+        """Only the diagnostics times in [t_min, t_max] (None: no upper
+        bound), with a relative tolerance for the 4-byte times. Particles
+        are not tracked past t_max -- an exit after it doesn't count."""
+        tol = 1e-6
+        keep = self.time >= t_min - abs(t_min) * tol
+        if t_max is not None:
+            keep &= self.time <= t_max + abs(t_max) * tol
+        if keep.all():
+            return self
+        return replace(
+            self, time=self.time[keep], psi_n=self.psi_n[keep], R=self.R[keep],
+            Z=self.Z[keep], phi=self.phi[keep], lost=self.lost[keep],
+            theta=None if self.theta is None else self.theta[keep],
+        )
 
 
 @dataclass(frozen=True)

@@ -1357,6 +1357,15 @@ leaves the grid. When it left is taken from the program's diagnostics file
 particles, else from the snapshots themselves, which is only as fine as
 their spacing.
 
+**Clipped to the traced steps.** Both particle plots (`particles` and
+`particle_exits`) show only what happened between the times of
+`ptrace_start_step` and `ptrace_end_step` -- a trace can run past the end
+step (`t_span`, `hold_last_field`), and anything after it is left out, with
+a note: later snapshots aren't drawn, and a particle that only exits after
+the end step doesn't count. The times come from `ptrace_gc`'s restart table
+in `ptrace.log`, else from an existing zeroD cache; without either, the
+plots aren't clipped and say so.
+
 A case without `ptrace_exe` is skipped silently in a default (no `--diag`)
 run, and with a note under an explicit `--diag particles`.
 
