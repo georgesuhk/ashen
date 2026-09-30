@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
@@ -62,6 +63,7 @@ from ashen.diagnostics.particle_exits import (
     exits_from_history,
     read_particle_diag,
 )
+from ashen.diagnostics.particle_wetted import Wall, wall_hits, wetted_area
 from ashen.diagnostics.particles import ParticleFileError, find_snapshots, named_step
 from ashen.diagnostics.poincare_cache import read_step, select_lines
 from ashen.diagnostics.profiles import (
@@ -92,6 +94,7 @@ from ashen.plotting.particle_exits import (
     exit_caption,
     plot_exit_histograms,
 )
+from ashen.plotting.particle_wetted import plot_wetted_area, wetted_caption
 from ashen.plotting.particles import (
     PoincareOverlay,
     animate_rz_panels,
@@ -123,7 +126,7 @@ from ashen.ptracing import LOG_FILE, ptrace_dir
 
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
-    "scan_map", "particles", "particle_exits",
+    "scan_map", "particles", "particle_exits", "particle_wetted",
 )
 
 #: Diags with a registered --compare renderer -- asking for one without (e.g.
@@ -2247,6 +2250,8 @@ def _run_case(
             case, paths, dpi=dpi, psi_n=exit_psi_n, explicit=explicit_diags,
             animate=animate or case.animate,
         )
+    if "particle_wetted" in diags:
+        _plot_particle_wetted(case, paths, dpi=dpi, explicit=explicit_diags)
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
     if comparison_only and explicit_diags:
         # Gated on explicit_diags: a bare `plot --case X` (no --diag) asks
@@ -2542,6 +2547,53 @@ def _plot_particle_exits(
             print("  particle_exits: no exits, or a trace with no time span -- no animation written")
         else:
             print(f"  particle_exits: {gif}")
+
+
+#: Where _plot_particle_wetted writes its numbers, in the ptrace folder.
+WETTED_RESULTS_FILE = "particle_wetted.json"
+
+
+def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, explicit: bool) -> None:
+    """How widely the traced particles wet the wall -- the plasma boundary
+    before extend_bnd -- poloidally, toroidally and in total (see
+    ashen.diagnostics.particle_wetted). Written into the ptrace folder as
+    particle_wetted.png, and the numbers as particle_wetted.json."""
+    if case.ptrace_exe is None:
+        if explicit:
+            print("  particle_wetted: case sets no ptrace_exe, skipped")
+        return
+    folder = ptrace_dir(case, paths.run_dir)
+    diag = find_diag_file(folder)
+    if diag is None:
+        print(f"  particle_wetted: no particle diagnostics file ({', '.join(DIAG_FILES)}) "
+              f"in {folder} (run bin/ptrace first), skipped")
+        return
+    boundary = _original_boundary(case, paths, diag="particle_wetted")
+    if boundary is None:
+        print("  particle_wetted: the wall is the boundary before extend_bnd; skipped")
+        return
+
+    history = read_particle_diag(diag)
+    window = _traced_window(case, paths, folder, diag="particle_wetted")
+    if window is not None:
+        history = history.within(*window)
+    wall = Wall.from_points(boundary)
+    hits = wall_hits(history, wall)
+    if hits.n == 0:
+        print(f"  particle_wetted: none of {hits.n_considered} particles hit the wall, skipped")
+        return
+    n_l, n_phi = case.ptrace_wetted_bins
+    result = wetted_area(hits, wall, n_l=n_l, n_phi=n_phi)
+    out = plot_wetted_area(result, hits, folder / "particle_wetted.png", **_dpi_kwargs(dpi))
+    numbers = {
+        **result.as_dict(),
+        "n_hits": hits.n, "n_considered": hits.n_considered, "n_left_grid": hits.n_left_grid,
+        "wall_area": wall.area, "wall_length": wall.length, "bins": [n_l, n_phi],
+    }
+    (folder / WETTED_RESULTS_FILE).write_text(
+        json.dumps(numbers, indent=2) + "\n", encoding="utf-8"
+    )
+    print(f"  particle_wetted: {wetted_caption(result, hits).replace(chr(10), '; ')} -> {out}")
 
 
 def _run_comparisons(

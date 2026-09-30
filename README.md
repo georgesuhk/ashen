@@ -1425,6 +1425,49 @@ a grey outline -- so they grow into it.
   `ptrace_gc_refluid_fixed_T_rho` plots the same. It must hold psi_n, R, Z,
   phi and lost.
 
+### How much wall the particles wet
+
+`plot --diag particle_wetted` measures how widely the escaping particles
+spread over the wall -- the plasma boundary before `extend_bnd`
+(`original_bnd.dat`), so it needs a run prepared with it:
+
+```bash
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_wetted
+```
+
+Each hit is placed on the wall by its arc length l (from the outboard
+midplane, counter-clockwise) and phi -- not by geometric theta, whose equal
+steps cover unequal lengths of wall. The crossing is interpolated between
+the last diagnostics row inside and the first outside, so it is finer than
+`diag_step`; a particle that leaves the grid first is put at the nearest
+wall point. Four numbers, each with a bootstrap error bar:
+
+| | what it is |
+|---|---|
+| `f_pol` | fraction of the wall's poloidal extent wetted, over all phi |
+| `f_tor` | fraction of the torus wetted, over all l |
+| `f_tot` | fraction of the wall's area wetted, over (l, phi) cells -- also in m² |
+| `s` | `f_tot / (f_pol * f_tor)`: 1 for a separable footprint (same poloidal pattern at every phi), well below 1 for a helical stripe, which can reach every angle while wetting little |
+
+Each fraction is a participation ratio, `(Σn)² / Σ(n²/A)` over the cells
+(area A, hits n) divided by the wall's area: the area the hits would cover
+spread evenly at their mean density -- total load over peak load, but
+using every cell rather than the single peak, so steadier with few markers.
+Areas are true wall areas, `R dl dphi`, so an outboard cell counts for more
+than an inboard one.
+
+`ptrace_wetted_bins = [n_l, n_phi]` (default `[36, 36]`, or one number for
+both) sets the cells. The 2D `f_tot` needs many more hits than cells to be
+trusted -- use thousands of markers (`ptrace_initialiser = "current_pdf_simple"`)
+-- while `f_pol` and `f_tor` settle with far fewer; halving the bins and
+seeing the numbers barely move is a quick check. The figure,
+`particle_wetted.png`, is the hit density on (phi, l) with the toroidal and
+poloidal profiles alongside; the numbers also go to `particle_wetted.json`
+in the ptrace folder. Like the other particle plots it is clipped to
+`ptrace_start_step..ptrace_end_step`. With `diag_step` much above the RK4
+`dt`, the exit positions are still interpolated rather than exact -- a
+10 MeV electron covers about 3 m per 10 ns, mostly toroidally.
+
 ## Simulation time at a restart step
 
 `bin/timestep` is a one-off lookup, not a `cases.toml`-driven gather: run it

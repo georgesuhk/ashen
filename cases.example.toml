@@ -411,3 +411,7 @@ note  = "internal kink investigation"
 # it), or leave the grid. --exit-psi-n overrides it for one plot.
 # ptrace_exit_psi_n = 1.0
 # ptrace_exit_bins  = 72
+#
+# plot --diag particle_wetted: how widely the particles wet the wall (the
+# boundary before extend_bnd): f_pol, f_tor, f_tot and s -- see README.
+# ptrace_wetted_bins = [36, 36]   # [along the wall, around the torus]
