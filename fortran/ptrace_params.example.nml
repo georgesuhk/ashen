@@ -29,9 +29,11 @@
   charge    = -1,   -1,   -1,   -1,   -1     ! [e]
 /
 
-! Markers from the current profile instead: n_markers placed with the start
+! Markers from the current profile instead: n_markers placed with a
 ! restart's toroidal current density (its n = 0 part, along the net current)
-! as their pdf, all at one energy and pitch. Replace the marker lines above with:
+! as their pdf, all at one energy and pitch -- ptrace_pdf_step in cases.toml
+! chooses the restart (default: ptrace_start_step). Replace the marker lines
+! above with:
 !
 !   initialiser = 'current_pdf_simple'
 !   n_markers   = 1000
@@ -39,5 +41,4 @@
 !   cos_pitch   = 0.9        ! every marker's v_par/v
 !   charge      = -1         ! every marker's charge [e]
 !   pdf_n_sub   = 4          ! cells per grid element side for the pdf table
-!   pdf_n_phi   = 16         ! toroidal planes averaged (keeps the n = 0 profile)
 !   seed        = 1          ! same seed, same markers

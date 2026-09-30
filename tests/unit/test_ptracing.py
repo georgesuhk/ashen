@@ -118,6 +118,9 @@ def test_restarts_linked_consecutively_under_both_widths(run_dir, site):
         ("jorek000002.h5", "jorek03400.h5"), ("jorek00002.h5", "jorek03400.h5"),
         # the start restart again, as the frozen-field reader names it
         ("jorek_restart.h5", "jorek03000.h5"),
+        # and as current_pdf_simple's profile (ptrace_pdf_step's otherwise);
+        # not jorek[0-9]*, so last_file_before_time never sees it
+        ("jorek_pdf.h5", "jorek03000.h5"),
     ]
 
 
@@ -500,3 +503,24 @@ def test_notes_from_an_exe_under_any_name(run_dir, site, monkeypatch):
     monkeypatch.setenv("STUB_NOTE", "1")
     result = run_ptrace(_plan(run_dir, site, exe="./exe/ptrace_gc_refluid"))
     assert result.notes == ("stopped early -- t_span runs past the last restart",)
+
+
+
+def test_pdf_restart_is_the_start_step_by_default(run_dir, site):
+    links = dict(_plan(run_dir, site).links)
+    assert links["jorek_pdf.h5"] == run_dir / "jorek03000.h5"
+
+
+def test_pdf_step_chooses_the_current_profile_restart(run_dir, site):
+    """Any step of the run -- here one after the traced range."""
+    plan = _plan(run_dir, site, end_step=3200, pdf_step=3400)
+    assert dict(plan.links)["jorek_pdf.h5"] == run_dir / "jorek03400.h5"
+    assert "jorek_pdf.h5" in plan.restart_links  # removed after the run, like the others
+    run_ptrace(plan)
+    assert not (plan.work_dir / "jorek_pdf.h5").exists()
+    assert not is_current(_plan(run_dir, site, end_step=3200, pdf_step=3000))
+
+
+def test_missing_pdf_step(run_dir, site):
+    with pytest.raises(PtraceError, match="no restart for ptrace_pdf_step 3100"):
+        _plan(run_dir, site, pdf_step=3100)

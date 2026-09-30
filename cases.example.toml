@@ -392,6 +392,7 @@ note  = "internal kink investigation"
 # ptrace_exe         = "./exe/ptrace_gc"
 # ptrace_inputs      = ["ptrace_params.nml"]   # optional; the file in the run folder
 # ptrace_initialiser = "current_pdf_simple"
+# ptrace_pdf_step    = 2800              # whose current profile it samples (default: start step)
 # ptrace_n_markers   = 1000
 # ptrace_E_kin_eV    = 1e7
 # ptrace_cos_pitch   = 0.9

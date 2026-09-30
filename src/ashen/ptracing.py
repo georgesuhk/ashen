@@ -94,6 +94,10 @@ LOG_FILE = "ptrace.log"
 #: The start restart, under the name the field reader uses for a frozen field.
 STATIC_RESTART = "jorek_restart.h5"
 
+#: The restart whose current profile ptrace_gc's current_pdf_simple samples
+#: (ptrace_pdf_step, else the start step).
+PDF_RESTART = "jorek_pdf.h5"
+
 #: Left behind by last_file_before_time if it is interrupted mid-listing.
 _FILENUMS_GLOB = ".jorek_filenums.*"
 
@@ -187,7 +191,7 @@ def _file_stamp(path: Path | None) -> list[int] | None:
 #: answer. ptrace_n_mpi stays in: re_gc samples its particle count per rank.
 _RESULT_FIELDS = (
     "ptrace_exe", "ptrace_start_step", "ptrace_end_step", "ptrace_particles",
-    "ptrace_inputs", "ptrace_n_mpi", "namelist", "ptrace_settings",
+    "ptrace_inputs", "ptrace_n_mpi", "namelist", "ptrace_settings", "ptrace_pdf_step",
 )
 
 
@@ -229,6 +233,10 @@ def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> P
         for width in JOREK_PAD_WIDTHS
     ]
     links.append((STATIC_RESTART, paths.restart(steps[0])))
+    pdf_step = case.ptrace_pdf_step if case.ptrace_pdf_step is not None else steps[0]
+    if not paths.restart(pdf_step).is_file():
+        raise PtraceError(f"case {case.name!r}: no restart for ptrace_pdf_step {pdf_step}")
+    links.append((PDF_RESTART, paths.restart(pdf_step)))
 
     namelist = run_dir / case.namelist
     if not namelist.is_file():
