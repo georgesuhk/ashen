@@ -1225,15 +1225,43 @@ JOREK's programs hard-code their particles (and re_gc's current-density
 sampling can hang on some equilibria). `fortran/ptrace_gc.f90` is a
 configurable ex7: guiding-centre electrons started at the (R, Z, phi),
 energy and pitch you list -- or drawn from the current profile -- pushed
-with RK4 through static or evolving fields, with nothing hard-coded. Everything is read from a
-`ptrace_params.nml` -- start from `fortran/ptrace_params.example.nml`:
+with RK4 through static or evolving fields, with nothing hard-coded.
+
+**It traces from `ptrace_start_step` to `ptrace_end_step`** -- from the
+first linked restart's time to the last one's -- static or evolving. No
+`ptrace_end_step` means every later restart of the run. (`t_span` > 0 in
+the settings traces for that long instead; static fields with a single
+restart need it.)
+
+**Settings** come from a `&ptrace` namelist, `ptrace_params.nml` (start
+from `fortran/ptrace_params.example.nml`), and/or from the case itself: any
+setting as `ptrace_<name>` in `cases.toml`. ashen writes those into
+`ptrace_overrides.nml`, which `ptrace_gc` reads after `ptrace_params.nml`,
+so a case key wins. Either can be left out; everything in one place works:
 
 ```toml
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 ptrace_exe        = "./exe/ptrace_gc"
 ptrace_start_step = 3000
-ptrace_inputs     = ["ptrace_params.nml"]    # in the run folder
+ptrace_end_step   = 3400
+ptrace_inputs     = ["ptrace_params.nml"]    # optional: shared settings, in the run folder
+ptrace_initialiser = "current_pdf_simple"    # these override ptrace_params.nml
+ptrace_n_markers   = 1000
+ptrace_E_kin_eV    = 1e7
+ptrace_cos_pitch   = 0.9
+ptrace_dt          = 1e-10
 ```
+
+The keys: `ptrace_field_mode`, `ptrace_hold_last_field`, `ptrace_t_span`,
+`ptrace_dt`, `ptrace_diag_step`, `ptrace_snapshot_step`, `ptrace_mass`,
+`ptrace_initialiser`, `ptrace_n_markers`, `ptrace_R0`, `ptrace_Z0`,
+`ptrace_phi0`, `ptrace_E_kin_eV`, `ptrace_cos_pitch`, `ptrace_charge`,
+`ptrace_pdf_n_sub`, `ptrace_pdf_n_phi`, `ptrace_seed` -- the `&ptrace` names,
+in any case. They're checked when `cases.toml` is loaded, a changed one
+reruns the trace, and `--dry-run` shows the file. Like `[defaults]` for any
+key, `[defaults] ptrace_dt = 1e-10` sets it for every case. They are only
+read by `ptrace_gc` (under any filename); ashen warns if a case sets them
+for one of JOREK's own programs.
 
 **Initialisers.** `initialiser` in `&ptrace` chooses how the markers are
 placed:
@@ -1259,11 +1287,11 @@ JOREK step of the closest restart, and the time in seconds, e.g.
 `part_restart_s003200_t2.500000E-03.h5`) and
 `part_restart.h5` at the end -- so `plot --diag particles` shows the
 distribution evolve. A marker that leaves the grid is flagged lost and the
-rest carry on. With `hold_last_field = .false.`, a `t_span` that runs past
-the last restart it sees (`ptrace_end_step`) stops at that restart's time
-with every output written -- JOREK's reader on its own would abort with
-nothing written -- and `bin/ptrace` prints a `note:` saying how much of
-`t_span` was traced. Keep `restart_index = 0`: ashen links the restarts from
+rest carry on. With `hold_last_field = .false.`, a `t_span` > 0 that runs
+past the last restart it sees (`ptrace_end_step`) stops at that restart's
+time with every output written -- JOREK's reader on its own would abort
+with nothing written -- and `bin/ptrace` prints a `note:` saying how much
+of `t_span` was traced. Keep `restart_index = 0`: ashen links the restarts from
 index 0, and `jorek_restart.h5` to the start restart for
 `field_mode = 'static'`.
 

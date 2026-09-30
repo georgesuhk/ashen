@@ -384,11 +384,18 @@ note  = "internal kink investigation"
 # ptrace_n_mpi      = 4          # re_gc samples 32 particles per rank
 # ptrace_particles  = "seeds/part_restart.h5"
 #
-# ashen's own tracer, fortran/ptrace_gc.f90 (see README): markers, energies,
-# time span and snapshots all come from a ptrace_params.nml listed in
-# ptrace_inputs (start from fortran/ptrace_params.example.nml).
-# ptrace_exe        = "./exe/ptrace_gc"
-# ptrace_inputs     = ["ptrace_params.nml"]   # the file in the run folder
+# ashen's own tracer, fortran/ptrace_gc.f90 (see README): traces from
+# ptrace_start_step to ptrace_end_step. Markers, energies and snapshots come
+# from a ptrace_params.nml listed in ptrace_inputs (start from
+# fortran/ptrace_params.example.nml) and/or from ptrace_<setting> keys here,
+# which win: any &ptrace name, e.g.
+# ptrace_exe         = "./exe/ptrace_gc"
+# ptrace_inputs      = ["ptrace_params.nml"]   # optional; the file in the run folder
+# ptrace_initialiser = "current_pdf_simple"
+# ptrace_n_markers   = 1000
+# ptrace_E_kin_eV    = 1e7
+# ptrace_cos_pitch   = 0.9
+# ptrace_dt          = 1e-10
 #
 # plot --diag particles: draw the Poincare punctures `analyse --diag poincare`
 # cached under each snapshot (from the traced restart closest in time), and/or

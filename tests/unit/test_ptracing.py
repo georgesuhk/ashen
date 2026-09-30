@@ -416,9 +416,54 @@ def params(tmp_path):
     return path
 
 
-def test_trace_gc_needs_its_params_file(run_dir, site):
-    with pytest.raises(PtraceError, match=r"ptrace_gc reads \['ptrace_params.nml'\].*ptrace_inputs"):
-        _plan(run_dir, site, program="ptrace_gc")
+def test_trace_gc_runs_on_case_settings_alone(run_dir, site):
+    """ptrace_params.nml is optional: the case's ptrace_<setting> keys can
+    say everything, written as ptrace_overrides.nml."""
+    plan = _plan(run_dir, site, program="ptrace_gc",
+                 settings={"n_markers": 2, "dt": 1e-10, "initialiser": "current_pdf_simple",
+                           "E_kin_eV": [1e7], "hold_last_field": True})
+    assert plan.copies == []
+    (name, text), = plan.writes
+    assert name == "ptrace_overrides.nml"
+    assert "&ptrace\n" in text and text.endswith("/\n")
+    for line in ("  hold_last_field = .true.", "  dt = 1d-10",
+                 "  initialiser = 'current_pdf_simple'", "  n_markers = 2",
+                 "  E_kin_eV = 10000000.0"):
+        assert line in text.splitlines()
+    run_ptrace(plan)
+    assert (plan.work_dir / "ptrace_overrides.nml").read_text(encoding="utf-8") == text
+
+
+def test_case_settings_are_in_the_dry_run(run_dir, site):
+    lines = _plan(run_dir, site, program="ptrace_gc", settings={"dt": 5e-11}).describe()
+    assert "write    ptrace_overrides.nml:" in lines
+    assert "             dt = 5d-11" in lines
+
+
+def test_changed_case_settings_rerun_and_dropped_ones_are_cleared(run_dir, site):
+    plan = _plan(run_dir, site, program="ptrace_gc", settings={"dt": 1e-10})
+    run_ptrace(plan)
+    assert not is_current(_plan(run_dir, site, program="ptrace_gc", settings={"dt": 2e-10}))
+    bare = _plan(run_dir, site, program="ptrace_gc")
+    assert not is_current(bare)
+    run_ptrace(bare)
+    assert not (bare.work_dir / "ptrace_overrides.nml").exists()
+
+
+def test_case_settings_and_an_overrides_input_clash(run_dir, site, tmp_path):
+    mine = tmp_path / "ptrace_overrides.nml"
+    mine.write_text("&ptrace\n/\n", encoding="utf-8")
+    with pytest.raises(PtraceError, match="don't list one in ptrace_inputs"):
+        _plan(run_dir, site, program="ptrace_gc", settings={"dt": 1e-10}, inputs=[mine])
+
+
+def test_case_settings_warn_for_programs_that_ignore_them(run_dir, site):
+    plan = _plan(run_dir, site, program="ex7_jorek", settings={"dt": 1e-10})
+    assert any("only apply to ptrace_gc" in w for w in plan.warnings)
+    # Any name ashen doesn't know -- e.g. ptrace_gc built under another -- gets
+    # the file without a warning.
+    plan = _plan(run_dir, site, exe="./exe/ptrace_gc_refluid", settings={"dt": 1e-10})
+    assert plan.writes and not plan.warnings
 
 
 def test_inputs_are_copied_in_under_their_own_names(run_dir, site, params):

@@ -200,3 +200,64 @@ def test_particle_color(tmp_path):
 def test_invalid_particle_color(tmp_path, value):
     with pytest.raises(CasesError, match="ptrace_particle_color must be a matplotlib colour"):
         _load(tmp_path, _TRACED + f"ptrace_particle_color = {value}\n")
+
+
+# --- ptrace_<setting>: ptrace_gc's &ptrace settings ------------------------------
+
+
+def test_ptrace_settings_are_collected_and_normalised(tmp_path):
+    case = _load(tmp_path, _TRACED + textwrap.dedent("""
+        ptrace_dt          = 1e-10
+        ptrace_initialiser = "current_pdf_simple"
+        ptrace_n_markers   = 1000
+        ptrace_E_kin_eV    = 10000000
+        ptrace_R0          = [1.5, 1.6]
+        ptrace_charge      = -1
+        ptrace_hold_last_field = true
+    """))["a"]
+    assert case.ptrace_settings == {
+        "dt": 1e-10, "initialiser": "current_pdf_simple", "n_markers": 1000,
+        "E_kin_eV": [1e7], "R0": [1.5, 1.6], "charge": [-1], "hold_last_field": True,
+    }
+    assert isinstance(case.ptrace_settings["E_kin_eV"][0], float)
+
+
+def test_ptrace_setting_names_ignore_case(tmp_path):
+    case = _load(tmp_path, _TRACED + "ptrace_e_kin_ev = 1e7\n")["a"]
+    assert case.ptrace_settings == {"E_kin_eV": [1e7]}
+    with pytest.raises(CasesError, match="sets ptrace_E_kin_eV twice"):
+        _load(tmp_path, _TRACED + "ptrace_e_kin_ev = 1e7\nptrace_E_kin_eV = 2e7\n")
+
+
+def test_no_ptrace_settings_by_default(tmp_path):
+    assert _load(tmp_path, _TRACED)["a"].ptrace_settings == {}
+
+
+def test_ptrace_settings_from_defaults(tmp_path):
+    cases = _load(tmp_path, f"""
+        [defaults]
+        ptrace_dt = 1e-10
+
+        [cases.a]
+        steps             = [1]
+        ptrace_exe        = "{RE_GC}"
+        ptrace_start_step = 3000
+        ptrace_dt         = 2e-10
+    """)
+    assert cases["a"].ptrace_settings == {"dt": 2e-10}
+
+
+@pytest.mark.parametrize("extra, message", [
+    ('ptrace_initialiser = "uniform"', r"ptrace_initialiser must be one of \['markers', 'current_pdf_simple'\]"),
+    ('ptrace_field_mode = "frozen"', "ptrace_field_mode must be one of"),
+    ('ptrace_dt = "1e-10"', "ptrace_dt must be a number"),
+    ("ptrace_n_markers = 2.5", "ptrace_n_markers must be a whole number"),
+    ("ptrace_hold_last_field = 1", "ptrace_hold_last_field must be true or false"),
+    ('ptrace_R0 = [1.5, "x"]', "ptrace_R0 must be a number or a list of numbers"),
+    ("ptrace_charge = [-1.5]", "ptrace_charge must be a whole number or a list"),
+    ("ptrace_restart_index = 1", "unknown key"),
+    ("ptrace_settings = { dt = 1e-10 }", "one key each"),
+])
+def test_invalid_ptrace_settings(tmp_path, extra, message):
+    with pytest.raises(CasesError, match=message):
+        _load(tmp_path, _TRACED + extra + "\n")

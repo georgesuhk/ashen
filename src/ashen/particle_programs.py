@@ -7,8 +7,10 @@ applies what it knows about it: which files it writes, whether it reads a
 particle file, its hard-coded start time, how it reports a lost particle.
 Any other executable is run as-is (:func:`program_for`).
 
-ashen does not change what a program computes -- its particles, energies,
-time step and duration are fixed in its source.
+ashen does not change what JOREK's own programs compute -- their particles,
+energies, time step and duration are fixed in their source. ashen's own
+ptrace_gc reads all of those from a &ptrace namelist, which a case can set
+key by key (:data:`PTRACE_SETTINGS`).
 """
 
 from __future__ import annotations
@@ -16,7 +18,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["PROGRAMS", "Program", "program_for"]
+__all__ = [
+    "OVERRIDES_FILE",
+    "PROGRAMS",
+    "PTRACE_SETTINGS",
+    "PTRACE_SETTING_CHOICES",
+    "Program",
+    "overrides_namelist",
+    "program_for",
+]
 
 
 @dataclass(frozen=True)
@@ -86,21 +96,82 @@ PROGRAMS = {
         Program(
             name="ptrace_gc",
             summary="ashen's configurable guiding-centre tracer (fortran/ptrace_gc.f90): "
-            "markers (listed, or from the current profile), energies, time span and "
-            "snapshots from ptrace_params.nml",
+            "markers (listed, or from the current profile), energies and snapshots "
+            "from ptrace_params.nml and the case's ptrace_<setting> keys",
             # ptrace_diag.h5 every diag_step; part_restart_s<step>_t<time>.h5 every
             # snapshot_step (if > 0) and part_restart.h5 at the end.
             outputs=("ptrace_diag.h5", "part_restart.h5"),
             diag_file="ptrace_diag.h5",
-            # Runs on one restart; without hold_last_field it stops at the last
-            # restart's time -- outputs written, a NOTE logged -- if t_span
-            # reaches past it.
+            # Static fields need only one restart (with t_span > 0); by default
+            # it runs to the last linked restart and stops there.
             holds_last_field=True,
-            required_inputs=("ptrace_params.nml",),
             note_marker="ptrace_gc: NOTE:",
         ),
     )
 }
+
+
+#: ptrace_gc's &ptrace settings a case can set as ptrace_<name> in cases.toml,
+#: and what each takes: "str", "bool", "int", "real", or "ints"/"reals" -- a
+#: list, one value per marker (a single value is a list of one). ashen writes
+#: them to OVERRIDES_FILE, which ptrace_gc reads after ptrace_params.nml.
+#: restart_index is left out: ashen links the restarts from index 0.
+PTRACE_SETTINGS = {
+    "field_mode": "str",
+    "hold_last_field": "bool",
+    "t_span": "real",
+    "dt": "real",
+    "diag_step": "real",
+    "snapshot_step": "real",
+    "mass": "real",
+    "initialiser": "str",
+    "n_markers": "int",
+    "R0": "reals",
+    "Z0": "reals",
+    "phi0": "reals",
+    "E_kin_eV": "reals",
+    "cos_pitch": "reals",
+    "charge": "ints",
+    "pdf_n_sub": "int",
+    "pdf_n_phi": "int",
+    "seed": "int",
+}
+
+#: Allowed values of the "str" settings that have a fixed set.
+PTRACE_SETTING_CHOICES = {
+    "field_mode": ("static", "evolving"),
+    "initialiser": ("markers", "current_pdf_simple"),
+}
+
+#: The file ashen writes a case's PTRACE_SETTINGS into, as a &ptrace namelist.
+OVERRIDES_FILE = "ptrace_overrides.nml"
+
+
+def _fortran_value(value) -> str:
+    """One namelist value: 'quoted' strings, .true./.false., d-exponent reals."""
+    if isinstance(value, bool):
+        return ".true." if value else ".false."
+    if isinstance(value, str):
+        return "'" + value.replace("'", "''") + "'"
+    if isinstance(value, float):
+        text = repr(value)
+        return text.replace("e", "d") if "e" in text else text
+    return str(value)
+
+
+def overrides_namelist(settings: dict) -> str:
+    """The &ptrace namelist for OVERRIDES_FILE, settings in PTRACE_SETTINGS order."""
+    lines = ["! Written by ashen from the case's ptrace_<setting> keys in cases.toml.",
+             "! ptrace_gc reads it after ptrace_params.nml, so these values win.",
+             "&ptrace"]
+    for name in PTRACE_SETTINGS:
+        if name not in settings:
+            continue
+        value = settings[name]
+        values = value if isinstance(value, list) else [value]
+        lines.append(f"  {name} = " + ", ".join(_fortran_value(v) for v in values))
+    lines.append("/")
+    return "\n".join(lines) + "\n"
 
 
 #: Every diagnostics file a known program writes, in the order find_diag_file

@@ -1,10 +1,15 @@
 !> Trace relativistic guiding centres through the fields of an existing JOREK run.
 !>
 !> A configurable version of ex7_jorek, for ashen's `ptrace` (a case's
-!> ptrace_exe pointing at the built binary, ptrace_params.nml given in its
-!> ptrace_inputs). Built only on the HPC -- ashen is developed without a
-!> Fortran compiler. Everything ex7_jorek hard-codes is read from
-!> ptrace_params.nml (example: ashen's fortran/ptrace_params.example.nml):
+!> ptrace_exe pointing at the built binary). Built only on the HPC -- ashen
+!> is developed without a Fortran compiler. Everything ex7_jorek hard-codes
+!> is read from the &ptrace namelist, in two files, both optional:
+!>
+!>   ptrace_params.nml     -- yours, via the case's ptrace_inputs (example:
+!>                            ashen's fortran/ptrace_params.example.nml)
+!>   ptrace_overrides.nml  -- written by ashen from the case's ptrace_<name>
+!>                            keys in cases.toml (ptrace_dt, ptrace_initialiser,
+!>                            ...); read second, so a value there wins
 !>
 !>   &ptrace
 !>     field_mode    = 'evolving'  ! 'static': jorek_restart.h5 only, frozen
@@ -14,7 +19,9 @@
 !>     hold_last_field = .false.   ! evolving: past the last restart, keep its
 !>                                 !   field frozen (.true.) or stop there
 !>                                 !   (.false.), with every output written
-!>     t_span        = 1.d-5       ! [s] traced, from the first restart's time
+!>     t_span        = 0.d0        ! [s] traced, from the first restart's time;
+!>                                 !   0 = until the last linked restart's time,
+!>                                 !   i.e. ptrace_end_step under ashen
 !>     dt            = 1.d-10      ! [s] RK4 step
 !>     diag_step     = 1.d-8       ! [s] between diagnostics writes
 !>     snapshot_step = 1.d-6       ! [s] between part_restart_s<step>_t<time>.h5
@@ -62,10 +69,12 @@
 !>   initialisation's loop). ex7 advanced sim%time inside the particle loop,
 !>   so with more than one particle every later one saw fields at the wrong time
 !> - markers are shared round-robin between MPI ranks
-!> - with hold_last_field = .false., a t_span reaching past the last restart
-!>   (ptrace_end_step under ashen) stops at that restart's time, writes its
-!>   outputs as usual and logs a 'ptrace_gc: NOTE:' line, where JOREK's field
-!>   reader would MPI_Abort with nothing written
+!> - by default it runs from the first linked restart to the last one
+!>   (ptrace_start_step to ptrace_end_step under ashen), static or evolving
+!> - with hold_last_field = .false., a t_span > 0 reaching past the last
+!>   restart stops at that restart's time, writes its outputs as usual and
+!>   logs a 'ptrace_gc: NOTE:' line, where JOREK's field reader would
+!>   MPI_Abort with nothing written
 !>
 !> Outputs: ptrace_diag.h5 (write_particle_diagnostics: energy, mu, psi_n,
 !> p_phi, lost, theta, phi, R, Z per diag_step -- what `plot --diag
@@ -79,7 +88,8 @@
 !> it into a JOREK checkout's particles/examples/ -- the Makefile picks up
 !> any program there by filename -- then `make ptrace_gc` with the same MODEL
 !> as the run being traced.
-!> Run with `mpirun -n N ./ptrace_gc < in_main`, next to ptrace_params.nml.
+!> Run with `mpirun -n N ./ptrace_gc < in_main`, next to ptrace_params.nml
+!> and/or ptrace_overrides.nml.
 
 program ptrace_gc
 
@@ -100,13 +110,14 @@ use mpi
 implicit none
 
 integer, parameter :: MAX_MARKERS = 100000
-character(len=*), parameter :: PARAMS_FILE = 'ptrace_params.nml'
+!> Read in this order; a later file overrides what an earlier one set.
+character(len=*), parameter :: PARAMS_FILES(2) = ['ptrace_params.nml   ', 'ptrace_overrides.nml']
 
 ! --- &ptrace namelist ---
 character(len=16) :: field_mode = 'evolving'
 integer           :: restart_index = 0
 logical           :: hold_last_field = .false.
-real*8            :: t_span = 1.d-5, dt = 1.d-10, diag_step = 1.d-8, snapshot_step = 0.d0
+real*8            :: t_span = 0.d0, dt = 1.d-10, diag_step = 1.d-8, snapshot_step = 0.d0
 real*8            :: mass = 5.48579909065d-4
 integer           :: n_markers = 0
 real*8            :: R0(MAX_MARKERS) = 0.d0, Z0(MAX_MARKERS) = 0.d0, phi0(MAX_MARKERS) = 0.d0
@@ -127,7 +138,8 @@ type(write_particle_diagnostics) :: diag
 type(particle_gc_relativistic)   :: marker
 real*8                           :: t_start, t_stop, target_time, rest_energy_eV, t_snap
 integer                          :: u, io, ierr, k, j, n_local, ifail, n_lost, n_snap
-integer                          :: my_rank, n_ranks
+integer                          :: my_rank, n_ranks, n_read
+logical                          :: exists
 ! The restarts this run reads: their JOREK step (index_now) and time [s]
 integer                          :: n_rst
 integer, allocatable             :: rst_steps(:)
@@ -140,15 +152,27 @@ call MPI_COMM_SIZE(MPI_COMM_WORLD, n_ranks, ierr)
 
 ! --- parameters: read on rank 0, broadcast ---
 if (my_rank .eq. 0) then
-  open(newunit=u, file=PARAMS_FILE, status='old', action='read', iostat=io)
-  if (io .ne. 0) then
-    write(*,*) 'ERROR: ptrace_gc: cannot open ', PARAMS_FILE
+  n_read = 0
+  do k = 1, size(PARAMS_FILES)
+    inquire(file=trim(PARAMS_FILES(k)), exist=exists)
+    if (.not. exists) cycle
+    open(newunit=u, file=trim(PARAMS_FILES(k)), status='old', action='read', iostat=io)
+    if (io .eq. 0) read(u, nml=ptrace, iostat=io)
+    close(u)
+    if (io .ne. 0) then
+      write(*,*) 'ERROR: ptrace_gc: cannot read the &ptrace namelist in ', trim(PARAMS_FILES(k))
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    end if
+    write(*,*) 'ptrace_gc: settings from ', trim(PARAMS_FILES(k))
+    n_read = n_read + 1
+  end do
+  if (n_read .eq. 0) then
+    write(*,*) 'ERROR: ptrace_gc: found neither ', trim(PARAMS_FILES(1)), ' nor ', &
+      trim(PARAMS_FILES(2)), ' -- nothing says how many markers or where'
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
   end if
-  read(u, nml=ptrace, iostat=io)
-  close(u)
-  if (io .ne. 0) then
-    write(*,*) 'ERROR: ptrace_gc: cannot read the &ptrace namelist in ', PARAMS_FILE
+  if (t_span .lt. 0.d0) then
+    write(*,*) 'ERROR: ptrace_gc: t_span must be >= 0 (0 = until the last restart), got ', t_span
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
   end if
   if (n_markers .lt. 1 .or. n_markers .gt. MAX_MARKERS) then
@@ -179,6 +203,8 @@ if (my_rank .eq. 0) then
   end if
 end if
 call MPI_Bcast(field_mode, len(field_mode), MPI_CHARACTER, 0, MPI_COMM_WORLD, ierr)
+! Every rank takes the initialiser's branch below (its broadcasts are collective).
+call MPI_Bcast(initialiser, len(initialiser), MPI_CHARACTER, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(restart_index, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(hold_last_field, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(t_span, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
@@ -206,9 +232,9 @@ call with(sim, field_reader)
 t_start = sim%time
 if (my_rank .eq. 0) write(*,'(A,ES14.6,A)') 'ptrace_gc: start time ', t_start, ' s'
 
-! --- which JOREK step each restart is, for naming snapshots ---
+! --- which JOREK step each restart is: where to stop, and to name snapshots ---
 if (my_rank .eq. 0) then
-  call read_restart_table(trim(field_mode) .eq. 'static', restart_index, n_rst, rst_steps, rst_times)
+  call read_restart_table(restart_index, n_rst, rst_steps, rst_times)
   do k = 1, n_rst
     write(*,'(A,I0,A,ES14.6,A)') 'ptrace_gc: restart step ', rst_steps(k), ' at t = ', rst_times(k), ' s'
   end do
@@ -220,9 +246,25 @@ if (n_rst .gt. 0) then
   call MPI_Bcast(rst_times, n_rst, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 end if
 
-! --- when to stop: t_span on, or at the last restart if the fields end first ---
-t_stop = t_start + t_span
-if (trim(field_mode) .eq. 'evolving' .and. .not. hold_last_field .and. n_rst .gt. 0) then
+! --- when to stop: at the last linked restart, or t_span on if given ---
+if (t_span .le. 0.d0) then
+  t_stop = t_start
+  if (n_rst .gt. 0) t_stop = max(rst_times(n_rst), t_start)
+  if (my_rank .eq. 0) then
+    if (t_stop .le. t_start + SNAP_TICK) then
+      write(*,*) 'ERROR: ptrace_gc: nothing to trace -- t_span = 0 runs to the last linked ', &
+        'restart, and there is none after the first. Set ptrace_end_step past ', &
+        'ptrace_start_step, or t_span > 0 (e.g. for static fields)'
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    end if
+    write(*,'(A,I0,A,ES12.5,A)') 'ptrace_gc: tracing to the last restart, step ', &
+      rst_steps(n_rst), ', t = ', t_stop, ' s'
+  end if
+else
+  t_stop = t_start + t_span
+end if
+if (t_span .gt. 0.d0 .and. trim(field_mode) .eq. 'evolving' .and. .not. hold_last_field &
+    .and. n_rst .gt. 0) then
   if (t_stop .gt. rst_times(n_rst) + SNAP_TICK) then
     t_stop = max(rst_times(n_rst), t_start)
     if (my_rank .eq. 0) write(*,'(A,ES12.5,A,I0,A,ES12.5,A,ES12.5,A,ES12.5,A)') &
@@ -446,13 +488,15 @@ subroutine sample_current_pdf(fields, time, n, n_sub, n_phi, seed, R, Z, phi)
 end subroutine sample_current_pdf
 
 !> Write every particle to part_restart_s<step>_t<time>.h5: <step> is the
-!> JOREK step of the restart closest in time, <time> the simulation time [s].
+!> JOREK step of the restart closest in time (static fields: the first
+!> restart's, the field used), <time> the simulation time [s].
 !> Collective over MPI ranks, like write_simulation_hdf5 itself.
 subroutine write_snapshot()
   character(len=128) :: fname
   integer :: closest
   if (n_rst .gt. 0) then
     closest = minloc(abs(rst_times(1:n_rst) - sim%time), dim=1)
+    if (trim(field_mode) .eq. 'static') closest = 1
     write(fname,'(A,I6.6,A,ES12.6,A)') 'part_restart_s', rst_steps(closest), '_t', sim%time, '.h5'
   else
     write(fname,'(A,ES12.6,A)') 'part_restart_t', sim%time, '.h5'
@@ -460,13 +504,13 @@ subroutine write_snapshot()
   call write_simulation_hdf5(sim, trim(fname))
 end subroutine write_snapshot
 
-!> The JOREK step and time of every restart this run reads: the linked
-!> sequence jorek<i>.h5 from first_index, or jorek_restart.h5 alone when
-!> static. Looked for at 6 digits, then 5: ashen links both, and JOREK
+!> The JOREK step and time of every linked restart: the sequence
+!> jorek<i>.h5 from first_index -- ashen links it for static fields too, so
+!> the last one says where to stop -- or, without one, jorek_restart.h5
+!> alone. Looked for at 6 digits, then 5: ashen links both, and JOREK
 !> versions differ in which one the field reader opens (newer ones name it
 !> in mod_import_restart's rst_file_ind_fmt, which older ones lack).
-subroutine read_restart_table(static, first_index, n, steps, times)
-  logical, intent(in)                :: static
+subroutine read_restart_table(first_index, n, steps, times)
   integer, intent(in)                :: first_index
   integer, intent(out)               :: n
   integer, allocatable, intent(out)  :: steps(:)
@@ -483,21 +527,23 @@ subroutine read_restart_table(static, first_index, n, steps, times)
   t_norm = sqrt(MU_ZERO * ATOMIC_MASS_UNIT * central_mass * central_density * 1.d20)
   allocate(all_steps(MAX_RESTARTS), all_times(MAX_RESTARTS))
   n = 0
-  if (static) then
-    n = 1
-    call read_restart_stamp('jorek_restart.h5', t_norm, all_steps(1), all_times(1))
-  else
-    do i = first_index, first_index + MAX_RESTARTS - 1
-      write(fname, '(A,I6.6,A)') 'jorek', i, '.h5'
+  do i = first_index, first_index + MAX_RESTARTS - 1
+    write(fname, '(A,I6.6,A)') 'jorek', i, '.h5'
+    inquire(file=trim(fname), exist=exists)
+    if (.not. exists) then
+      write(fname, '(A,I5.5,A)') 'jorek', i, '.h5'
       inquire(file=trim(fname), exist=exists)
-      if (.not. exists) then
-        write(fname, '(A,I5.5,A)') 'jorek', i, '.h5'
-        inquire(file=trim(fname), exist=exists)
-      end if
-      if (.not. exists) exit
-      n = n + 1
-      call read_restart_stamp(trim(fname), t_norm, all_steps(n), all_times(n))
-    end do
+    end if
+    if (.not. exists) exit
+    n = n + 1
+    call read_restart_stamp(trim(fname), t_norm, all_steps(n), all_times(n))
+  end do
+  if (n .eq. 0) then
+    inquire(file='jorek_restart.h5', exist=exists)
+    if (exists) then
+      n = 1
+      call read_restart_stamp('jorek_restart.h5', t_norm, all_steps(1), all_times(1))
+    end if
   end if
   allocate(steps(n), times(n))
   steps = all_steps(1:n)
