@@ -266,7 +266,7 @@ def test_plot_animate_writes_the_gif(campaign, capsys):
 def test_not_traced_yet(campaign, capsys):
     assert plot_cli.main(["--case", "run", "--diag", "particle_exits"]) == 0
     out = capsys.readouterr().out
-    assert "no particle diagnostics file (part_diag.h5, diag.h5, ptrace_diag.h5)" in out
+    assert "no particle diagnostics file (ptrace_diag.h5, part_diag.h5, diag.h5)" in out
     assert "run bin/ptrace first" in out
 
 

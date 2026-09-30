@@ -102,14 +102,6 @@ def _plan(run_dir, site, **overrides):
     return plan_ptrace(_case(**overrides), run_dir, site, omp_threads=4)
 
 
-def _write_zero_d(run_dir: Path, step: int, time: float) -> None:
-    postproc = run_dir / "postproc"
-    postproc.mkdir(exist_ok=True)
-    (postproc / f"zeroD_quantities_s{step:05d}.dat").write_text(
-        f"Time Ip\n{time:.6e} 1.0\n", encoding="utf-8"
-    )
-
-
 # --- restart links -------------------------------------------------------------
 
 
@@ -155,15 +147,11 @@ def test_missing_start_step_names_nearby_steps(run_dir, site):
         _plan(run_dir, site, start_step=3100)
 
 
-def test_re_gc_runs_from_a_single_restart(run_dir, site):
-    """It keeps the last field frozen rather than aborting."""
-    assert _plan(run_dir, site, start_step=3400).steps == [3400]
-
-
-@pytest.mark.parametrize("program", ["ex6_jorek", "ex7_jorek"])
-def test_ex_programs_need_two_restarts(run_dir, site, program):
-    with pytest.raises(PtraceError, match="at least two"):
-        _plan(run_dir, site, program=program, start_step=3400)
+def test_a_single_restart_is_allowed(run_dir, site):
+    """Whether one restart is enough is the program's business (ptrace_gc
+    with t_span, re_gc with its frozen field) -- ashen doesn't guess by name."""
+    for program in (RE_GC, "ex7_jorek", "ptrace_gc"):
+        assert _plan(run_dir, site, program=program, start_step=3400).steps == [3400]
 
 
 def test_namelist_and_present_profiles_are_linked(run_dir, site):
@@ -179,7 +167,6 @@ def test_namelist_and_present_profiles_are_linked(run_dir, site):
 def test_exe_is_relative_to_the_run_folder(run_dir, site):
     plan = _plan(run_dir, site)
     assert plan.exe == run_dir / "exe" / RE_GC
-    assert plan.program.known and plan.program.name == RE_GC
     assert plan.work_dir == run_dir / "ptrace" / RE_GC
 
 
@@ -187,7 +174,6 @@ def test_exe_outside_exe_folder(run_dir, site):
     """Any path, not only under exe/ -- normalised, so ../ works too."""
     plan = _plan(run_dir, site, exe="../tools/re_gc_current_density_initialisation")
     assert plan.exe == run_dir.parent / "tools" / RE_GC
-    assert plan.program.known
 
 
 def test_absolute_exe(run_dir, site, tmp_path):
@@ -195,10 +181,8 @@ def test_absolute_exe(run_dir, site, tmp_path):
     assert _plan(run_dir, site, exe=str(exe)).exe == exe
 
 
-def test_renamed_known_program_is_not_recognised(run_dir, site):
-    """Recognition is by filename; a renamed binary runs as-is."""
+def test_each_exe_name_gets_its_own_folder(run_dir, site):
     plan = _plan(run_dir, site, exe="./exe/re_gc_model600")
-    assert not plan.program.known
     assert plan.work_dir == run_dir / "ptrace" / "re_gc_model600"
 
 
@@ -212,32 +196,6 @@ def test_omp_threads_are_exported_after_the_prelude(run_dir, site):
 
 def test_trace_own_omp_threads_override_the_default(run_dir, site):
     assert _plan(run_dir, site, omp_threads=2).omp_threads == 2
-
-
-# --- the hard-coded start time of ex6/ex7 ---------------------------------------
-
-
-def test_no_warning_when_restarts_cover_the_fixed_start(run_dir, site):
-    _write_zero_d(run_dir, 3000, 2.0e-3)
-    _write_zero_d(run_dir, 3400, 3.0e-3)
-    assert _plan(run_dir, site, program="ex7_jorek").warnings == []
-
-
-def test_warning_when_restarts_miss_the_fixed_start(run_dir, site):
-    _write_zero_d(run_dir, 3000, 3.0e-3)
-    _write_zero_d(run_dir, 3400, 4.0e-3)
-    [warning] = _plan(run_dir, site, program="ex6_jorek").warnings
-    assert "always starts at t = 0.0025 s" in warning
-    assert "span 0.003 .. 0.004 s" in warning
-
-
-def test_warning_when_the_start_cannot_be_checked(run_dir, site):
-    [warning] = _plan(run_dir, site, program="ex7_jorek").warnings
-    assert "analyse --diag zerod" in warning
-
-
-def test_no_start_time_check_for_re_gc(run_dir, site):
-    assert _plan(run_dir, site).warnings == []
 
 
 # --- particles --------------------------------------------------------------------
@@ -352,10 +310,14 @@ def test_failing_program_quotes_its_log(run_dir, site, monkeypatch):
     assert (plan.work_dir / META_FILE).is_file()
 
 
-def test_program_without_outputs_is_an_error(run_dir, site, monkeypatch):
+def test_no_particle_file_written_is_a_note(run_dir, site, monkeypatch):
+    """Every JOREK particle program writes part_restart.h5 at the end;
+    exiting 0 without it is still a success, but worth saying."""
     monkeypatch.setenv("STUB_NO_OUTPUT", "1")
-    with pytest.raises(PtraceError, match=r"did not write \['part_diag.h5', 'part_restart.h5'\]"):
-        run_ptrace(_plan(run_dir, site))
+    result = run_ptrace(_plan(run_dir, site))
+    assert result.ran
+    (note,) = result.notes
+    assert "exited 0 without writing part_restart.h5" in note
 
 
 def test_missing_program_says_how_to_build_it(run_dir, site):
@@ -365,32 +327,18 @@ def test_missing_program_says_how_to_build_it(run_dir, site):
     message = str(info.value)
     assert f"ptrace_exe './exe/{RE_GC}' not found" in message
     assert "relative to the run folder" in message
-    assert f"make {RE_GC}" in message
+    assert "make <program>" in message
 
 
-def test_missing_unrecognised_exe_has_no_build_hint(run_dir, site):
-    with pytest.raises(PtraceError) as info:
-        run_ptrace(_plan(run_dir, site, exe="./exe/my_tracer"))
-    assert "not found" in str(info.value)
-    assert "make" not in str(info.value)
-
-
-# --- an executable ashen does not recognise ------------------------------------
-
-
-def test_unrecognised_exe_runs_as_is(run_dir, site, monkeypatch):
-    """No expected outputs: a zero exit is success, even writing nothing."""
+def test_any_exe_name_runs_the_same(run_dir, site, monkeypatch):
+    """Nothing depends on the name: my_tracer's lost-particle stop and notes
+    are read from its log like any other's."""
     install_program(run_dir, "my_tracer")
-    monkeypatch.setenv("STUB_NO_OUTPUT", "1")
+    monkeypatch.setenv("STUB_LOST", "1")
     plan = _plan(run_dir, site, exe="./exe/my_tracer")
-    assert run_ptrace(plan).ran
+    result = run_ptrace(plan)
+    assert result.ran and result.lost
     assert is_current(plan)
-
-
-def test_unrecognised_exe_gets_no_start_time_check_and_one_restart_is_enough(run_dir, site):
-    plan = _plan(run_dir, site, exe="./exe/my_tracer", start_step=3400)
-    assert plan.steps == [3400]
-    assert plan.warnings == []
 
 
 def test_stale_known_outputs_are_cleared_for_any_exe(run_dir, site, monkeypatch):
@@ -457,15 +405,6 @@ def test_case_settings_and_an_overrides_input_clash(run_dir, site, tmp_path):
         _plan(run_dir, site, program="ptrace_gc", settings={"dt": 1e-10}, inputs=[mine])
 
 
-def test_case_settings_warn_for_programs_that_ignore_them(run_dir, site):
-    plan = _plan(run_dir, site, program="ex7_jorek", settings={"dt": 1e-10})
-    assert any("only apply to ptrace_gc" in w for w in plan.warnings)
-    # Any name ashen doesn't know -- e.g. ptrace_gc built under another -- gets
-    # the file without a warning.
-    plan = _plan(run_dir, site, exe="./exe/ptrace_gc_refluid", settings={"dt": 1e-10})
-    assert plan.writes and not plan.warnings
-
-
 def test_inputs_are_copied_in_under_their_own_names(run_dir, site, params):
     plan = _plan(run_dir, site, program="ptrace_gc", inputs=[params])
     assert plan.copies == [("ptrace_params.nml", params)]
@@ -494,14 +433,6 @@ def test_an_input_dropped_from_the_list_is_cleared(run_dir, site, params, tmp_pa
     assert (plan.work_dir / "extra.txt").is_file()
     run_ptrace(_plan(run_dir, site, program="ptrace_gc", inputs=[params]))
     assert not (plan.work_dir / "extra.txt").exists()
-
-
-def test_trace_gc_outputs_are_what_the_particles_plot_reads(run_dir, site, params, monkeypatch):
-    """ptrace_gc writes part_restart.h5 at the end; a run that doesn't is a
-    failure, as for any recognised program."""
-    monkeypatch.setenv("STUB_NO_OUTPUT", "1")
-    with pytest.raises(PtraceError, match=r"did not write \['ptrace_diag.h5', 'part_restart.h5'\]"):
-        run_ptrace(_plan(run_dir, site, program="ptrace_gc", inputs=[params]))
 
 
 def test_trace_paths_are_relative_to_the_run_folder(run_dir, site):
@@ -548,7 +479,6 @@ def test_dry_run_marks_the_restart_links(run_dir, site):
     assert any(l.startswith("link     in_main") and "removed" not in l for l in lines)
 
 
-
 def test_program_notes_are_reported_and_remembered(run_dir, site, params, monkeypatch):
     """ptrace_gc stopping at the last restart before t_span is done is a
     success -- outputs written -- but one the user should hear about, on the
@@ -563,6 +493,10 @@ def test_program_notes_are_reported_and_remembered(run_dir, site, params, monkey
     assert not cached.ran and cached.notes == result.notes
 
 
-def test_programs_without_a_note_marker_have_no_notes(run_dir, site, monkeypatch):
+def test_notes_from_an_exe_under_any_name(run_dir, site, monkeypatch):
+    """ptrace_gc built as, say, ptrace_gc_refluid: ashen doesn't know the
+    name, but its notes are still repeated."""
+    install_program(run_dir, "ptrace_gc_refluid")
     monkeypatch.setenv("STUB_NOTE", "1")
-    assert run_ptrace(_plan(run_dir, site, program="ex7_jorek")).notes == ()
+    result = run_ptrace(_plan(run_dir, site, exe="./exe/ptrace_gc_refluid"))
+    assert result.notes == ("stopped early -- t_span runs past the last restart",)

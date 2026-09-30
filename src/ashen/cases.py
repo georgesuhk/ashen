@@ -233,8 +233,8 @@ class Case:
     ptrace_end_step: int | None = None
     #: `bin/ptrace`: a JOREK particle file to start from, copied in as
     #: part_restart.h5 (re_gc reads it instead of sampling the current
-    #: density; ex6/ex7 would ignore it, so they refuse it). Relative to the
-    #: run folder, like ptrace_exe.
+    #: density; ex6/ex7 and ptrace_gc ignore it). Relative to the run
+    #: folder, like ptrace_exe.
     ptrace_particles: str | None = None
     #: `bin/ptrace`: files copied into the trace folder under their own names
     #: before the program runs -- e.g. ptrace_gc's ptrace_params.nml. Relative
@@ -457,8 +457,6 @@ def _collect_ptrace_settings(merged: dict, where: str) -> None:
 
 def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
     """Validate and normalise a case's ptrace_* fields in place."""
-    from ashen.particle_programs import program_for
-
     where = f"{source}: case {case_name!r}"
     exe = merged.get("ptrace_exe")
     if exe is None:
@@ -469,7 +467,6 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
     _collect_ptrace_settings(merged, where)
     if not isinstance(exe, str) or not exe.strip():
         raise CasesError(f"{where}: ptrace_exe must be a path, got {exe!r}")
-    program = program_for(exe)
     if "ptrace_start_step" not in merged:
         raise CasesError(f"{where} sets ptrace_exe but no ptrace_start_step")
 
@@ -486,11 +483,6 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
         merged["ptrace_end_step"] = end
 
     if merged.get("ptrace_particles") is not None:
-        if not program.reads_particles:
-            raise CasesError(
-                f"{where}: {program.name} always makes its own particles; "
-                "ptrace_particles only applies to a program that reads part_restart.h5"
-            )
         particles = merged["ptrace_particles"]
         if not isinstance(particles, str) or not particles.strip():
             raise CasesError(f"{where}: ptrace_particles must be a path, got {particles!r}")

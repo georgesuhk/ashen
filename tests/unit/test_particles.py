@@ -205,10 +205,10 @@ def test_draw_particles_no_reference_on_the_first_panel(snapshots):
 
 def test_snapshot_label(snapshots):
     first, later = snapshots
-    assert snapshot_label(first) == "t = 1 ms"
-    assert snapshot_label(first, start=first.time) == "t = 1 ms"
-    assert snapshot_label(later) == "t = 2 ms, 1/3 lost"
-    assert snapshot_label(later, start=first.time) == "t = 2 ms (+1 ms), 1/3 lost"
+    assert snapshot_label(first) == "t = 1 ms, 0/3 escaped"
+    assert snapshot_label(first, start=first.time) == "t = 1 ms, 0/3 escaped"
+    assert snapshot_label(later) == "t = 2 ms, 1/3 escaped"
+    assert snapshot_label(later, start=first.time) == "t = 2 ms (+1 ms), 1/3 escaped"
     assert snapshot_label(later, start=first.time + 0.998e-3).startswith(r"t = 2 ms (+2 $\mu$s)")
 
 
@@ -378,8 +378,8 @@ def test_freeze_exited_needs_the_same_particles(snapshots):
 def test_panels_freeze_particles_that_left_the_boundary(snapshots):
     first, later = snapshots
     panels = particle_panels([first, later], boundary=SHRUNK)
-    assert panels[0].title == "t = 1 ms, 1 left boundary"
-    assert panels[1].title == "t = 2 ms (+1 ms), 2 left boundary"
+    assert panels[0].title == "t = 1 ms, 1/3 escaped"
+    assert panels[1].title == "t = 2 ms (+1 ms), 2/3 escaped"
     fig, ax = plt.subplots()
     for layer in panels[1].layers:
         layer(ax)
@@ -403,7 +403,8 @@ def test_outside_particles_are_magenta_crosses(snapshots):
 
 def test_label_counts_particles_outside(snapshots):
     _, later = snapshots
-    assert snapshot_label(later, n_outside=1) == "t = 2 ms, 1/3 lost, 1 left boundary"
+    # Lost from the grid and out of the boundary both count as escaped.
+    assert snapshot_label(later, n_outside=1) == "t = 2 ms, 2/3 escaped"
 
 
 def _record(psi_n, n):
@@ -528,3 +529,19 @@ def test_particles_are_red_by_default_and_the_colour_can_be_set(snapshots):
         assert mcolors.same_color(lost.get_edgecolor()[0], "black")  # lost crosses stay apart
         plt.close(fig)
     assert particle_caption([first], color="tab:orange").startswith("tab:orange: particles now")
+
+
+def test_animation_has_no_caption(campaign, monkeypatch):
+    folder = campaign / "run" / "ptrace" / "ex7_jorek"
+    simple_file(folder / "part_restart000.00250000.h5", 2.5e-3, [3.6, 3.7])
+    simple_file(folder / "part_restart.h5", 2.6e-3, [3.62, 3.9], i_elm=[1, 0])
+    seen = {}
+    real = plot_cli.animate_rz_panels
+
+    def spy(frames, out, **kwargs):
+        seen.update(kwargs)
+        return real(frames, out, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "animate_rz_panels", spy)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--animate", "--dpi", "40"]) == 0
+    assert "caption" not in seen

@@ -111,16 +111,13 @@ def snapshot_label(
 ) -> str:
     """Panel title: time in ms -- and, given the first snapshot's time,
     the time since it, which is what changes between panels -- and how many
-    particles are lost so far, and how many have left the plasma boundary
-    (n_outside)."""
+    of all the particles have escaped so far, "XX/XX escaped": lost from the
+    grid, or out of the plasma boundary (n_outside). Always shown, 0 included, so
+    an animation's count can be watched rising."""
     label = f"t = {snapshot.time * 1e3:.5g} ms"
     if start is not None and snapshot.time != start:
         label += f" (+{_duration(snapshot.time - start)})"
-    if snapshot.n_lost:
-        label += f", {snapshot.n_lost}/{snapshot.n} lost"
-    if n_outside:
-        label += f", {n_outside} left boundary"
-    return label
+    return label + f", {snapshot.n_lost + n_outside}/{snapshot.n} escaped"
 
 
 def draw_boundary(ax, boundary: np.ndarray) -> None:

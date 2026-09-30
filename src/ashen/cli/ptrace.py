@@ -1,5 +1,5 @@
-"""`ptrace` entry point: run JOREK's own particle programs against an
-existing run's restarts.
+"""`ptrace` entry point: run a particle program (JOREK's own, or ashen's
+ptrace_gc) against an existing run's restarts.
 
 A case traces when it sets ptrace_exe (and ptrace_start_step) in the same
 cases.toml `analyse` and `plot` read -- see ashen.cases; staging and running
@@ -14,7 +14,6 @@ from pathlib import Path
 from ashen.cli._common import CASE_ERRORS, error, load_cases_or_exit, show_config
 from ashen.config import SiteConfigError, load_site
 from ashen.jorek2 import enable_tool_output
-from ashen.particle_programs import PROGRAMS, program_for
 from ashen.ptracing import LOG_FILE, PtraceError, plan_ptrace, run_ptrace
 
 __all__ = ["build_parser", "main"]
@@ -23,8 +22,9 @@ __all__ = ["build_parser", "main"]
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ptrace",
-        description="Run JOREK's particle programs (particles/examples) against "
-        "an existing run's restarts, for cases in cases.toml that set ptrace_exe.",
+        description="Run a particle program (JOREK's particles/examples, or ashen's "
+        "ptrace_gc) against an existing run's restarts, for cases in cases.toml "
+        "that set ptrace_exe.",
     )
     parser.add_argument(
         "--cases", type=Path, default=Path("cases.toml"),
@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--list", action="store_true",
-        help="list the cases that trace, and the programs ashen recognises, then exit",
+        help="list the cases that trace, then exit",
     )
     parser.add_argument(
         "--force", action="store_true",
@@ -56,13 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="print where site.toml was found and what each key resolved to",
     )
     return parser
-
-
-def _recognised(exe: str) -> str:
-    program = program_for(exe)
-    if program.known:
-        return f"recognised as {program.name}"
-    return "not a program ashen knows: run as-is, success = exit code 0"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,13 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         for name in tracing:
             case = cases[name]
             note = f" -- {case.note}" if case.note else ""
-            print(
-                f"{name}: {case.ptrace_exe} from step {case.ptrace_start_step} "
-                f"[{_recognised(case.ptrace_exe)}]{note}"
-            )
-        print("\nprograms ashen recognises by filename (anything else runs as-is):")
-        for program in PROGRAMS.values():
-            print(f"  {program.name}: {program.summary}")
+            end = f" to {case.ptrace_end_step}" if case.ptrace_end_step is not None else ""
+            print(f"{name}: {case.ptrace_exe} from step {case.ptrace_start_step}{end}{note}")
         return 0
 
     selected = args.selected or tracing
@@ -120,9 +108,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"==== {name} ({case.ptrace_exe}) ====")
         try:
             plan = plan_ptrace(case, Path.cwd() / name, site, omp_threads=omp_threads)
-            print(f"  {_recognised(case.ptrace_exe)}")
-            for warning in plan.warnings:
-                print(f"  warning: {warning}")
             if args.dry_run:
                 for line in plan.describe():
                     print(f"  {line}")
@@ -131,10 +116,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"  steps {plan.steps[0]}..{plan.steps[-1]} ({len(plan.steps)} restart(s))"
             )
             result = run_ptrace(plan, force=args.force)
-            lost = (
-                f" -- stopped at a lost particle ({plan.program.name} stops at the first)"
-                if result.lost else ""
-            )
+            lost = " -- stopped at its first lost particle" if result.lost else ""
             status = "done" if result.ran else "[cached]"
             print(f"  {status}: {plan.work_dir}{lost}")
             for note in result.notes:
