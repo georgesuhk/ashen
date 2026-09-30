@@ -277,3 +277,83 @@ def test_any_executable_name_is_plotted_from_the_file_in_its_folder(campaign, ca
                t=T, psi_n=PSI, R=R, Z=Z, phi=PHI, lost=LOST, theta=THETA)
     assert plot_cli.main(["--case", "other", "--diag", "particle_exits", "--dpi", "40"]) == 0
     assert "2 of 3 particles exit past psi_n = 1" in capsys.readouterr().out
+
+
+# --- clipped to ptrace_start_step..ptrace_end_step ---------------------------------
+
+LOG = """ptrace_gc: restart step 3000 at t =   0.000000E+00 s
+ptrace_gc: restart step 3100 at t =   1.000000E-06 s
+ptrace_gc: restart step 3200 at t =   2.000000E-06 s
+"""
+
+
+def test_history_within():
+    from ashen.diagnostics.particle_exits import ParticleHistory
+
+    h = ParticleHistory(path=None, time=np.array(T, dtype=np.float32).astype(float),
+                        psi_n=np.array(PSI), R=np.array(R), Z=np.array(Z), phi=np.array(PHI),
+                        theta=np.array(THETA), lost=np.array(LOST) > 0)
+    assert h.within(0.0, None) is h
+    assert h.within(0.0, 1e-6).time.size == 2  # float32 1e-6 still counts
+    assert h.within(1e-6, 2e-6).psi_n.shape == (2, 4)
+
+
+def test_exits_after_the_end_step_are_left_out(campaign, capsys):
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    write_diag(folder / "ptrace_diag.h5", t=T, psi_n=PSI, R=R, Z=Z, phi=PHI,
+               lost=LOST, theta=THETA)
+    (folder / "ptrace.log").write_text(LOG, encoding="utf-8")
+    (campaign / "cases.toml").write_text(
+        CASES.replace("ptrace_exit_psi_n = 1.3",
+                      "ptrace_exit_psi_n = 1.3\nptrace_end_step = 3100"),
+        encoding="utf-8",
+    )
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    # Particle 0 passes 1.3 only at the third time, after step 3100; particle 2
+    # leaves the grid then too. Neither counts.
+    assert "1 diagnostics time(s) outside ptrace_start_step..ptrace_end_step left out" in out
+    assert "0 of 3 particles exit past psi_n = 1.3" in out
+
+
+def test_no_times_means_no_clipping(campaign, capsys):
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    write_diag(folder / "ptrace_diag.h5", t=T, psi_n=PSI, R=R, Z=Z, phi=PHI,
+               lost=LOST, theta=THETA)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "no time for step(s) [3000] in ptrace.log or the zeroD cache; not clipped" in out
+    assert "2 of 3 particles exit past psi_n = 1.3" in out
+
+
+def test_window_from_the_zero_d_cache(campaign, capsys):
+    postproc = campaign / "run" / "postproc"
+    postproc.mkdir()
+    for step, time in ((3000, 0.0), (3100, 1e-6)):
+        (postproc / f"zeroD_quantities_s{step:05d}.dat").write_text(
+            f"Time Ip\n{time:.6e} 1.0\n", encoding="utf-8")
+    (campaign / "cases.toml").write_text(
+        CASES.replace("ptrace_exit_psi_n = 1.3", "ptrace_end_step = 3100"), encoding="utf-8")
+    from ashen.cases import load_cases
+    from ashen.paths import RunPaths
+
+    case = load_cases(campaign / "cases.toml")["run"]
+    window = plot_cli._traced_window(case, RunPaths.detect(campaign / "run"),
+                                     campaign / "run" / "ptrace" / "ptrace_gc", diag="x")
+    assert window == (0.0, pytest.approx(1e-6))
+
+
+def test_snapshots_after_the_end_step_are_left_out(campaign, capsys):
+    from test_particles import simple_file
+
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    (folder).mkdir(parents=True)
+    (folder / "ptrace.log").write_text(LOG, encoding="utf-8")
+    for i, t in enumerate(T):
+        simple_file(folder / f"part_restart_s00{3000 + 100 * i}_t{t:.6E}.h5", t, [1.6])
+    (campaign / "cases.toml").write_text(
+        CASES.replace("ptrace_exit_psi_n = 1.3", "ptrace_end_step = 3100"), encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "1 snapshot(s) outside ptrace_start_step..ptrace_end_step left out" in out
+    assert "particles: 2 snapshot(s) ->" in out

@@ -119,7 +119,7 @@ from ashen.quantities import (
     quantity,
 )
 from ashen.particle_programs import DIAG_FILES, find_diag_file
-from ashen.ptracing import ptrace_dir
+from ashen.ptracing import LOG_FILE, ptrace_dir
 
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
@@ -2267,7 +2267,62 @@ def _original_boundary(case: Case, paths: RunPaths, *, diag: str = "particles"):
     return load_two_col_data(path)
 
 
-def _boundary_exits(case: Case, folder: Path, snapshots, boundary):
+#: ptrace_gc's restart table in ptrace.log: "ptrace_gc: restart step N at t = T s".
+_LOGGED_RESTART = re.compile(r"ptrace_gc: restart step (\d+) at t =\s*(\S+) s")
+
+
+def _traced_window(
+    case: Case, paths: RunPaths, folder: Path, *, diag: str,
+) -> tuple[float, float | None] | None:
+    """The times [s] of ptrace_start_step and ptrace_end_step (None without
+    one), which the particle plots are clipped to -- a trace can run past
+    ptrace_end_step (t_span, hold_last_field). From ptrace_gc's restart
+    table in ptrace.log, else an existing zeroD cache; None, with a note,
+    when neither has them (not gathered: that would run JOREK's tools)."""
+    wanted = [case.ptrace_start_step]
+    if case.ptrace_end_step is not None:
+        wanted.append(case.ptrace_end_step)
+    times: dict[int, float] = {}
+    log = folder / LOG_FILE
+    if log.is_file():
+        for match in _LOGGED_RESTART.finditer(log.read_text(encoding="utf-8", errors="replace")):
+            try:
+                times.setdefault(int(match.group(1)), float(match.group(2)))
+            except ValueError:
+                continue
+    for step in wanted:
+        if step not in times and zero_d_is_usable(paths.zero_d(step)):
+            try:
+                times[step] = float(read_zeroD(paths.zero_d(step))["Time"])
+            except (OSError, KeyError, ValueError):
+                pass
+    missing = [step for step in wanted if step not in times]
+    if missing:
+        print(f"  {diag}: no time for step(s) {missing} in {LOG_FILE} or the zeroD cache; "
+              "not clipped to ptrace_start_step..ptrace_end_step")
+        return None
+    return times[case.ptrace_start_step], times.get(case.ptrace_end_step)
+
+
+def _clip_snapshots(snapshots, window, *, diag: str):
+    """The snapshots inside window (see _traced_window), saying how many
+    were left out."""
+    if window is None:
+        return snapshots
+    t_min, t_max = window
+    tol = 1e-9
+    kept = [
+        snap for snap in snapshots
+        if snap.time >= t_min - abs(t_min) * tol
+        and (t_max is None or snap.time <= t_max + abs(t_max) * tol)
+    ]
+    if len(kept) < len(snapshots):
+        print(f"  {diag}: {len(snapshots) - len(kept)} snapshot(s) outside "
+              f"ptrace_start_step..ptrace_end_step left out")
+    return kept
+
+
+def _boundary_exits(case: Case, folder: Path, snapshots, boundary, window=None):
     """When each particle first left boundary, from the program's
     diagnostics file when it has one for the same particles -- every
     diag_step, finer than the snapshots -- else None, for particle_panels
@@ -2286,6 +2341,8 @@ def _boundary_exits(case: Case, folder: Path, snapshots, boundary):
         print(f"  particles: {diag.name} has {history.n} particles, the snapshots "
               f"{snapshots[0].n}; boundary exits judged from the snapshots only")
         return None
+    if window is not None:
+        history = history.within(*window)
     return exits_from_history(history, boundary)
 
 
@@ -2372,10 +2429,16 @@ def _plot_particles(
     if not snapshots:
         print(f"  particles: no part_restart*.h5 in {folder} (run bin/ptrace first), skipped")
         return
+    window = _traced_window(case, paths, folder, diag="particles")
+    snapshots = _clip_snapshots(snapshots, window, diag="particles")
+    if not snapshots:
+        print("  particles: no snapshot within ptrace_start_step..ptrace_end_step, skipped")
+        return
 
     boundary = _original_boundary(case, paths) if case.ptrace_original_boundary else None
     exits = (
-        _boundary_exits(case, folder, snapshots, boundary) if boundary is not None else None
+        _boundary_exits(case, folder, snapshots, boundary, window)
+        if boundary is not None else None
     )
     poincare = (
         _poincare_overlays(case, paths, snapshots, point_size=point_size, n_workers=n_workers)
@@ -2437,6 +2500,13 @@ def _plot_particle_exits(
 
     threshold = case.ptrace_exit_psi_n if psi_n is None else psi_n
     history = read_particle_diag(diag)
+    window = _traced_window(case, paths, folder, diag="particle_exits")
+    if window is not None:
+        n_times = history.time.size
+        history = history.within(*window)
+        if history.time.size < n_times:
+            print(f"  particle_exits: {n_times - history.time.size} diagnostics time(s) outside "
+                  "ptrace_start_step..ptrace_end_step left out")
     axis = None
     if history.theta is None:
         axis = _log_axis(paths)
