@@ -44,7 +44,7 @@ _CASE_KEYS = (
     "ptrace_inputs", "ptrace_n_mpi", "ptrace_omp_threads",
     "ptrace_poincare", "ptrace_poincare_psi_n", "ptrace_poincare_n_turns",
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
-    "ptrace_particle_color", "ptrace_settings",
+    "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -269,6 +269,10 @@ class Case:
     ptrace_exit_psi_n: float = 1.0
     #: `plot --diag particle_exits`: bins over each of theta and phi.
     ptrace_exit_bins: int = 72
+    #: `plot --diag particle_wetted`: [n_l, n_phi] bins along the wall and
+    #: around the torus (a single number: both). The 2D map needs many more
+    #: hits than cells to mean much; the 1D profiles far fewer.
+    ptrace_wetted_bins: list[int] = field(default_factory=lambda: [36, 36])
     #: `plot --diag particles`: the colour of the particles, any matplotlib
     #: colour ("red", "#ff8800", "tab:orange"). Red stands out against the
     #: Poincare plot's viridis.
@@ -525,6 +529,18 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
         value = merged["ptrace_exit_bins"]
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise CasesError(f"{where}: ptrace_exit_bins must be a whole number >= 1, got {value!r}")
+
+    if "ptrace_wetted_bins" in merged:
+        value = merged["ptrace_wetted_bins"]
+        bins = [value, value] if not isinstance(value, list) else value
+        if len(bins) != 2 or not all(
+            isinstance(b, int) and not isinstance(b, bool) and b >= 1 for b in bins
+        ):
+            raise CasesError(
+                f"{where}: ptrace_wetted_bins must be a whole number >= 1 or "
+                f"[n_l, n_phi], got {value!r}"
+            )
+        merged["ptrace_wetted_bins"] = list(bins)
 
     if "ptrace_particle_color" in merged:
         from matplotlib.colors import is_color_like
