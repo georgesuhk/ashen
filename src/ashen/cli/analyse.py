@@ -26,6 +26,7 @@ from ashen.cases import Case
 from ashen.cli import plot as plot_cli
 from ashen.cli._common import (
     CASE_ERRORS,
+    CASE_HELP,
     error,
     load_cases_or_exit,
     print_case_list,
@@ -57,8 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="path to cases.toml (default: ./cases.toml)",
     )
     parser.add_argument(
-        "--case", action="append", dest="selected",
-        help="case name to run (repeatable; default: every case in the file)",
+        "--case", action="extend", nargs="+", dest="selected", metavar="CASE",
+        help=f"case(s) to run: {CASE_HELP} (default: every case in the file)",
     )
     parser.add_argument("--list", action="store_true", help="list defined cases and exit")
     parser.add_argument(

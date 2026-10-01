@@ -220,3 +220,21 @@ def test_status_follows_a_queued_trace_to_the_end(queued_campaign, capsys, monke
     assert "[cached] steps 3000..3400" in capsys.readouterr().out
     assert ptrace_cli.main(["--case", "run", "--run"]) == 0
     assert "[cached]" in capsys.readouterr().out
+
+
+# --- --case patterns ---------------------------------------------------------------
+
+
+def test_a_pattern_picks_the_matching_cases_that_trace(campaign, capsys):
+    """"*" matches run, other and untraced; only the first two trace."""
+    assert ptrace_cli.main(["--case", "*", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "==== run (" in out and "==== other (" in out and "untraced" not in out
+    assert ptrace_cli.main(["--case", "o*", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "==== other (" in out and "==== run (" not in out
+
+
+def test_a_pattern_matching_only_untraced_cases(campaign, capsys):
+    assert ptrace_cli.main(["--case", "untr*"]) == 1
+    assert "none of the cases ['untr*'] select sets ptrace_exe" in capsys.readouterr().err

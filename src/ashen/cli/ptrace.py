@@ -18,7 +18,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ashen.cli._common import CASE_ERRORS, error, load_cases_or_exit, show_config
+from ashen.cli._common import (
+    CASE_ERRORS,
+    CASE_HELP,
+    error,
+    load_cases_or_exit,
+    resolve_selection,
+    show_config,
+)
 from ashen.config import SiteConfigError, load_site
 from ashen.jorek2 import enable_tool_output
 from ashen.ptracing import (
@@ -52,8 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="path to cases.toml (default: ./cases.toml)",
     )
     parser.add_argument(
-        "--case", action="append", dest="selected",
-        help="case to trace (repeatable; default: every case that sets ptrace_exe)",
+        "--case", action="extend", nargs="+", dest="selected", metavar="CASE",
+        help=f"case(s) to trace: {CASE_HELP} (default: every case that sets ptrace_exe)",
     )
     parser.add_argument(
         "--list", action="store_true",
@@ -122,17 +129,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{name}: {case.ptrace_exe} {span}{note}")
         return 0
 
-    selected = args.selected or tracing
-    unknown = [name for name in selected if name not in cases]
-    if unknown:
-        error(f"unknown case(s) {unknown}; --list to see the cases that trace")
+    if not tracing:
+        error(f"no case in {args.cases} sets ptrace_exe")
         return 1
-    untraced = [name for name in selected if name not in tracing]
+    matched = resolve_selection(args.selected, cases)
+    if matched is None:
+        return 1
+    # A case named outright must trace; a pattern or folder picks the ones
+    # that do out of what it matches.
+    untraced = [
+        name.rstrip("/") for name in args.selected or ()
+        if name.rstrip("/") in cases and name.rstrip("/") not in tracing
+    ]
     if untraced:
         error(f"case(s) {untraced} set no ptrace_exe")
         return 1
+    selected = [name for name in matched if name in tracing]
     if not selected:
-        error(f"no case in {args.cases} sets ptrace_exe")
+        error(f"none of the cases {args.selected} select sets ptrace_exe")
         return 1
 
     if args.job is not None and not args.run:
