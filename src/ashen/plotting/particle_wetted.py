@@ -37,17 +37,26 @@ def wetted_caption(result: WettedResult, hits: WallHits) -> str:
     )
 
 
+#: The map's colour scale: a density, so not bounded by 1.
+DENSITY_LABEL = r"(fraction of total hits) / m$^2$"
+
+
 def plot_wetted_area(
     result: WettedResult,
     hits: WallHits,
     out_path: Path | str,
     *,
     figsize: tuple[float, float] = (8.0, 6.0),
+    density_range: tuple[float, float] | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path:
-    """Draw and save the (phi, l) hit-density map -- hits per m^2 of wall,
-    as a fraction of all hits -- with the toroidal profile above it and the
-    poloidal one to its right, each as the fraction of hits per bin."""
+    """Draw and save the (phi, l) hit-density map -- the share of all hits
+    per m^2 of wall, a density in 1/m^2 that integrates to 1 over the wall
+    (so it passes 1 wherever a cell much smaller than 1 m^2 holds a few
+    percent of the hits) -- with the toroidal profile above it and the
+    poloidal one to its right, each as the fraction of hits per bin.
+    density_range, (min, max) in 1/m^2, fixes the colour scale; cells
+    beyond it take the end colours, and the colourbar says so."""
     import matplotlib.pyplot as plt
 
     out_path = Path(out_path)
@@ -65,8 +74,13 @@ def plot_wetted_area(
         mesh = ax_map.pcolormesh(
             result.phi_edges, result.l_edges, np.ma.masked_equal(density, 0),
             cmap="viridis", shading="flat",
+            vmin=density_range[0] if density_range else None,
+            vmax=density_range[1] if density_range else None,
         )
-        fig.colorbar(mesh, ax=ax_pol, label=r"fraction of hits per m$^2$")
+        extend = "neither"
+        if density_range is not None and density.max() > density_range[1]:
+            extend = "max"
+        fig.colorbar(mesh, ax=ax_pol, extend=extend, label=DENSITY_LABEL)
         ax_map.set_xlim(0, 2 * np.pi)
         ax_map.set_ylim(result.l_edges[0], result.l_edges[-1])
         ax_map.set_xticks(_PHI_TICKS[0])

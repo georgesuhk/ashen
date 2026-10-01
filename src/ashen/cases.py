@@ -45,6 +45,7 @@ _CASE_KEYS = (
     "ptrace_poincare", "ptrace_poincare_psi_n", "ptrace_poincare_n_turns",
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
     "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins", "ptrace_pdf_step",
+    "ptrace_wetted_density_range",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -279,6 +280,10 @@ class Case:
     #: around the torus (a single number: both). The 2D map needs many more
     #: hits than cells to mean much; the 1D profiles far fewer.
     ptrace_wetted_bins: list[int] = field(default_factory=lambda: [36, 36])
+    #: `plot --diag particle_wetted`: [min, max] of the hit-density map's
+    #: colour scale, in 1/m^2 (share of all hits per m^2 of wall). None =
+    #: the data's own range. Set it to compare maps between cases.
+    ptrace_wetted_density_range: list[float] | None = None
     #: `plot --diag particles`: the colour of the particles, any matplotlib
     #: colour ("red", "#ff8800", "tab:orange"). Red stands out against the
     #: Poincare plot's viridis.
@@ -551,6 +556,19 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
                 f"[n_l, n_phi], got {value!r}"
             )
         merged["ptrace_wetted_bins"] = list(bins)
+
+    if merged.get("ptrace_wetted_density_range") is not None:
+        value = merged["ptrace_wetted_density_range"]
+        if not (
+            isinstance(value, list) and len(value) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value)
+            and 0 <= value[0] < value[1]
+        ):
+            raise CasesError(
+                f"{where}: ptrace_wetted_density_range must be [min, max] in 1/m^2 "
+                f"with 0 <= min < max, got {value!r}"
+            )
+        merged["ptrace_wetted_density_range"] = [float(v) for v in value]
 
     if "ptrace_particle_color" in merged:
         from matplotlib.colors import is_color_like

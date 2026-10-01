@@ -2623,7 +2623,10 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
         return
     n_l, n_phi = case.ptrace_wetted_bins
     result = wetted_area(hits, wall, n_l=n_l, n_phi=n_phi)
-    out = plot_wetted_area(result, hits, folder / "particle_wetted.png", **_dpi_kwargs(dpi))
+    out = plot_wetted_area(
+        result, hits, folder / "particle_wetted.png",
+        density_range=case.ptrace_wetted_density_range, **_dpi_kwargs(dpi),
+    )
     numbers = {
         **result.as_dict(),
         "n_hits": hits.n, "n_considered": hits.n_considered, "n_left_grid": hits.n_left_grid,

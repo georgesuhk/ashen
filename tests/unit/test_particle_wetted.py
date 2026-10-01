@@ -210,3 +210,39 @@ def test_wetted_bins_key(tmp_path):
     path.write_text(CASES.replace("[8, 6]", "[8, 0]"), encoding="utf-8")
     with pytest.raises(CasesError, match="ptrace_wetted_bins must be"):
         load_cases(path)
+
+
+def test_wetted_density_range_key(tmp_path):
+    from ashen.cases import CasesError, load_cases
+
+    path = tmp_path / "cases.toml"
+    path.write_text(CASES, encoding="utf-8")
+    assert load_cases(path)["run"].ptrace_wetted_density_range is None
+    path.write_text(CASES + "ptrace_wetted_density_range = [0, 2]\n", encoding="utf-8")
+    assert load_cases(path)["run"].ptrace_wetted_density_range == [0.0, 2.0]
+    for bad in ("[2, 1]", "[-1, 1]", "[1]", "3", '["a", 1]'):
+        path.write_text(CASES + f"ptrace_wetted_density_range = {bad}\n", encoding="utf-8")
+        with pytest.raises(CasesError, match="ptrace_wetted_density_range must be"):
+            load_cases(path)
+
+
+def test_density_range_sets_the_colour_scale_and_the_label_is_per_area(tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+
+    from ashen.plotting.particle_wetted import DENSITY_LABEL, plot_wetted_area
+
+    assert DENSITY_LABEL == r"(fraction of total hits) / m$^2$"
+    wall = Wall.from_points(np.array([[3.5, -0.5], [4.5, -0.5], [4.5, 0.5], [3.5, 0.5]]))
+    rng = np.random.default_rng(1)
+    hits = WallHits(rng.uniform(0, wall.length, 200), rng.uniform(0, 2 * np.pi, 200), 200, 0, 200)
+    result = wetted_area(hits, wall, n_l=6, n_phi=6, n_boot=2)
+    monkeypatch.setattr(plt, "close", lambda *args: None)
+    for density_range, expected in (((0.0, 0.001), (0.0, 0.001)), (None, None)):
+        plot_wetted_area(result, hits, tmp_path / "w.png", density_range=density_range, dpi=40)
+        fig = plt.gcf()
+        mesh = fig.axes[0].collections[0]
+        if expected is not None:
+            assert mesh.get_clim() == expected
+        assert any(ax.get_ylabel() == DENSITY_LABEL for ax in fig.axes)
+    monkeypatch.undo()
+    plt.close("all")
