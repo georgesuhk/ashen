@@ -61,8 +61,8 @@ def test_list_shows_tracing_cases(campaign, capsys):
     assert ptrace_cli.main(["--list"]) == 0
     out = capsys.readouterr().out
     assert ("run: ./exe/re_gc_current_density_initialisation from step 3000 "
-            "-- runaways from the current profile") in out
-    assert "other: ./exe/ex7_jorek from step 3200\n" in out
+            "to the last restart -- runaways from the current profile") in out
+    assert "other: ./exe/ex7_jorek from step 3200 to the last restart\n" in out
     assert "untraced" not in out
     assert "recognis" not in out
 
@@ -77,7 +77,7 @@ def test_dry_run_writes_nothing(campaign, capsys):
 
 
 def test_runs_every_tracing_case_then_reports_them_cached(campaign, capsys):
-    assert ptrace_cli.main([]) == 0
+    assert ptrace_cli.main(["--run_i"]) == 0
     out = capsys.readouterr().out
     assert ("==== run (./exe/re_gc_current_density_initialisation) ====\n"
             "  steps 3000..3400 (3 restart(s))") in out
@@ -86,13 +86,16 @@ def test_runs_every_tracing_case_then_reports_them_cached(campaign, capsys):
     assert (campaign / "run" / "ptrace" / "re_gc_current_density_initialisation" / "part_diag.h5").is_file()
     assert (campaign / "other" / "ptrace" / "ex7_jorek" / "diag.h5").is_file()
 
-    assert ptrace_cli.main([]) == 0
+    assert ptrace_cli.main(["--run_i"]) == 0
     assert capsys.readouterr().out.count("[cached]") == 2
+    # and without a launch flag, just where they stand
+    assert ptrace_cli.main([]) == 0
+    assert capsys.readouterr().out.count("[cached] steps") == 2
 
 
 def test_lost_particle_is_reported_not_failed(campaign, capsys, monkeypatch):
     monkeypatch.setenv("STUB_LOST", "1")
-    assert ptrace_cli.main(["--case", "other"]) == 0
+    assert ptrace_cli.main(["--case", "other", "--run_i"]) == 0
     assert "stopped at its first lost particle" in capsys.readouterr().out
 
 
@@ -110,7 +113,7 @@ def test_one_failing_trace_does_not_stop_the_others(campaign, capsys):
     (campaign / "cases.toml").write_text(
         CASES.replace("ptrace_start_step = 3200", "ptrace_start_step = 3100"), encoding="utf-8"
     )
-    assert ptrace_cli.main([]) == 1
+    assert ptrace_cli.main(["--run_i"]) == 1
     err = capsys.readouterr().err
     assert "other: case 'other': no restart for ptrace_start_step 3100" in err
     assert "1 of 2 trace(s) failed: other" in err
@@ -124,3 +127,96 @@ def test_invalid_trace_settings_are_reported(campaign, capsys):
     assert ptrace_cli.main(["--list"]) == 1
     assert "ptrace_start_step must be >= 0" in capsys.readouterr().err
 
+
+
+# --- launch modes ----------------------------------------------------------------
+
+
+def test_without_a_launch_flag_nothing_runs(campaign, capsys):
+    assert ptrace_cli.main(["--case", "run"]) == 0
+    out = capsys.readouterr().out
+    assert "not traced yet (steps 3000..3400 (3 restart(s))); --run_i to trace here, --run to queue it" in out
+    assert not (campaign / "run" / "ptrace").exists()
+
+
+def test_status_says_when_settings_changed(campaign, capsys):
+    assert ptrace_cli.main(["--case", "run", "--run_i"]) == 0
+    (campaign / "cases.toml").write_text(
+        CASES.replace("ptrace_n_mpi      = 2", "ptrace_n_mpi      = 3"), encoding="utf-8")
+    capsys.readouterr()
+    assert ptrace_cli.main(["--case", "run"]) == 0
+    assert "out of date or unfinished" in capsys.readouterr().out
+
+
+def test_default_steps_from_the_cli(campaign, capsys):
+    (campaign / "cases.toml").write_text(
+        CASES.replace("ptrace_start_step = 3200\n", ""), encoding="utf-8")
+    assert ptrace_cli.main(["--list"]) == 0
+    assert "other: ./exe/ex7_jorek from the first restart to the last restart" in capsys.readouterr().out
+    assert ptrace_cli.main(["--case", "other", "--run_i"]) == 0
+    assert "steps 3000..3400 (3 restart(s))" in capsys.readouterr().out
+
+
+def test_job_needs_run(campaign, capsys):
+    assert ptrace_cli.main(["-job", "23h"]) == 1
+    assert "-job chooses the jobscript for --run" in capsys.readouterr().err
+
+
+def test_run_and_run_i_exclude_each_other(campaign):
+    with pytest.raises(SystemExit):
+        ptrace_cli.main(["--run", "--run_i"])
+
+
+@pytest.fixture
+def queued_campaign(campaign, monkeypatch):
+    bin_dir = campaign / "fake_bin"
+    bin_dir.mkdir()
+    for name, text in (
+        ("sbatch", 'echo "$@" > sbatch_args.txt\necho 777\n'),
+        ("squeue", '[ -n "$FAKE_SQUEUE" ] && echo "$FAKE_SQUEUE"\nexit 0\n'),
+        ("sacct", 'echo COMPLETED\n'),
+    ):
+        (bin_dir / name).write_text("#!/bin/sh\n" + text, encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    (campaign / "jobscripts").mkdir()
+    for job in ("2h", "23h"):
+        (campaign / "jobscripts" / job).write_text(f"#!/bin/bash\n# {job}\n", encoding="utf-8")
+    return campaign
+
+
+def test_run_queues_with_the_2h_jobscript_by_default(queued_campaign, capsys):
+    assert ptrace_cli.main(["--case", "run", "--run"]) == 0
+    out = capsys.readouterr().out
+    assert "queued: job 777 (2h)" in out
+    folder = queued_campaign / "run" / "ptrace" / "re_gc_current_density_initialisation"
+    args = (folder / "sbatch_args.txt").read_text().split()
+    assert args[:2] == ["--parsable", str(queued_campaign / "jobscripts" / "2h")]
+
+
+def test_job_flag_picks_the_jobscript(queued_campaign, capsys):
+    assert ptrace_cli.main(["--case", "run", "--run", "-job", "23h"]) == 0
+    assert "queued: job 777 (23h)" in capsys.readouterr().out
+    assert ptrace_cli.main(["--case", "run", "--run", "--job", "5h"]) == 1
+    assert "no jobscript '5h'" in capsys.readouterr().err
+
+
+def test_status_follows_a_queued_trace_to_the_end(queued_campaign, capsys, monkeypatch):
+    assert ptrace_cli.main(["--case", "run", "--run"]) == 0
+    folder = queued_campaign / "run" / "ptrace" / "re_gc_current_density_initialisation"
+    monkeypatch.setenv("FAKE_SQUEUE", "RUNNING")
+    capsys.readouterr()
+    assert ptrace_cli.main(["--case", "run"]) == 0
+    assert "job 777: running" in capsys.readouterr().out
+    assert ptrace_cli.main(["--case", "run", "--run_i"]) == 1
+    assert "job 777 (RUNNING) is still queued or running" in capsys.readouterr().err
+
+    # the job ends, having written what the program writes
+    monkeypatch.delenv("FAKE_SQUEUE")
+    (folder / "part_restart.h5").write_bytes(b"out")
+    assert ptrace_cli.main(["--case", "run"]) == 0
+    assert "job 777 done" in capsys.readouterr().out
+    assert ptrace_cli.main(["--case", "run"]) == 0
+    assert "[cached] steps 3000..3400" in capsys.readouterr().out
+    assert ptrace_cli.main(["--case", "run", "--run"]) == 0
+    assert "[cached]" in capsys.readouterr().out

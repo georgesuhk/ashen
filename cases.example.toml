@@ -365,13 +365,16 @@ note  = "internal kink investigation"
 # dataset_label = "$\\rho^* = 19$"
 
 # --- particle traces (bin/ptrace) ---------------------------------------------
-# A case traces when it sets ptrace_exe and ptrace_start_step -- keys like any
-# other, so [defaults] can seed them. bin/ptrace runs ptrace_exe, a path
+# A case traces when it sets ptrace_exe -- a key like any other, so
+# [defaults] can seed it. bin/ptrace runs ptrace_exe, a path
 # relative to the run folder, unmodified against the case's restarts. When
 # its filename is one of JOREK's particle programs (re_gc_current_density_
 # initialisation, ex6_jorek, ex7_jorek), ashen applies what it knows about
 # it; anything else runs as-is. See README "Tracing particles". The program
-# sees ptrace_start_step and every later restart (up to ptrace_end_step).
+# sees ptrace_start_step and every later restart up to ptrace_end_step;
+# unset, they are the run's first and last restart. `ptrace --run_i` runs it
+# here, with ptrace_n_mpi and ptrace_omp_threads; `ptrace --run [-job 23h]`
+# queues it with a jobscript (default 2h), which sets ranks and threads.
 # ex6_jorek/ex7_jorek always start at t = 2.5 ms, whatever ptrace_start_step
 # is. ptrace_particles starts re_gc from a JOREK particle file instead of
 # sampling the current density. ptrace_particles and ptrace_inputs are paths

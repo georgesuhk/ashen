@@ -85,10 +85,16 @@ def test_trace_fields_without_an_exe(tmp_path):
         _load(tmp_path, "[cases.a]\nsteps = [1]\nptrace_start_step = 3000\n")
 
 
-def test_exe_without_a_start_step(tmp_path):
+def test_start_and_end_steps_are_optional(tmp_path):
+    """Unset, they are the run's first and last restart (ashen.ptracing)."""
     body = "\n".join(l for l in _TRACED.splitlines() if not l.startswith("ptrace_start_step"))
-    with pytest.raises(CasesError, match="no ptrace_start_step"):
-        _load(tmp_path, body)
+    case = _load(tmp_path, body)["a"]
+    assert (case.ptrace_start_step, case.ptrace_end_step) == (None, None)
+
+
+def test_end_step_alone(tmp_path):
+    body = "\n".join(l for l in _TRACED.splitlines() if not l.startswith("ptrace_start_step"))
+    assert _load(tmp_path, body + "\nptrace_end_step = 10\n")["a"].ptrace_end_step == 10
 
 
 @pytest.mark.parametrize("extra, message", [
