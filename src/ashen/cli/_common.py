@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from pathlib import Path
+from fnmatch import fnmatchcase
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Sequence
 
 from ashen.cases import Case, CasesError, load_cases
@@ -39,9 +40,11 @@ from ashen.shotfile import ShotfileError
 
 __all__ = [
     "CASE_ERRORS",
+    "CASE_HELP",
     "STEP_ERRORS",
     "error",
     "load_cases_or_exit",
+    "matching_cases",
     "print_case_list",
     "resolve_selection",
     "run_steps",
@@ -115,16 +118,62 @@ def print_case_list(cases: dict[str, Case]) -> int:
     return 0
 
 
+#: What --case takes, for every entry point's help.
+CASE_HELP = (
+    "a case name, a pattern ('qa2.1*', quoted so the shell leaves it alone) or "
+    "a folder holding cases (qa2.1_g2.3); several may follow one --case, and "
+    "--case may be repeated"
+)
+
+
+def matching_cases(selector: str, names: Iterable[str]) -> list[str]:
+    """The case names a --case value selects, in `names` order:
+
+    - the case of exactly that name, if there is one; otherwise
+    - with *, ? or [ in it, every name the pattern matches (as the shell
+      would, except that * also crosses "/": 'qa2.1*' matches
+      qa2.1_g2.3/eta1e-3_RE), or that lies in a folder it matches;
+    - every case in that folder (qa2.1_g2.3 selects qa2.1_g2.3/eta1e-3_RE)
+      -- which is also what an unquoted pattern becomes once the shell has
+      expanded it to the run folders in the current directory.
+    """
+    names = list(names)
+    selector = selector.rstrip("/")
+    if selector in names:
+        return [selector]
+    if any(char in selector for char in "*?["):
+        return [
+            name for name in names
+            if fnmatchcase(name, selector) or any(
+                fnmatchcase(parent.as_posix(), selector)
+                for parent in PurePosixPath(name).parents
+            )
+        ]
+    return [name for name in names if name.startswith(selector + "/")]
+
+
 def resolve_selection(
     selected: list[str] | None, cases: dict[str, Case]
 ) -> list[str] | None:
-    """The cases to run, or None if any name was unknown (already reported)."""
-    chosen = selected or list(cases)
-    unknown = [name for name in chosen if name not in cases]
+    """The cases to run, in cases.toml order -- every one when nothing was
+    selected, else those the --case values select (matching_cases). None if
+    a value selected nothing (already reported)."""
+    if not selected:
+        return list(cases)
+    chosen: set[str] = set()
+    unknown = []
+    for selector in selected:
+        matched = matching_cases(selector, cases)
+        if not matched:
+            unknown.append(selector)
+        chosen.update(matched)
     if unknown:
-        error(f"unknown case(s) {unknown}; --list to see defined cases")
+        error(
+            f"unknown case(s) {unknown}; --list to see defined cases "
+            "(quote a pattern, --case 'qa2.1*', so the shell leaves it alone)"
+        )
         return None
-    return chosen
+    return [name for name in cases if name in chosen]
 
 
 def run_steps(

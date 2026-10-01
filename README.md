@@ -95,6 +95,30 @@ python ~/ashen/bin/analyse --case "qa2.1_g2.3/eta1e-3_RE" --diag zerod --diag po
 `--force` re-runs even where cached output already exists (default: reuse it).
 This gathers and caches data only; `bin/plot` (below) draws figures from it.
 
+**Choosing cases.** `--case` works the same in `analyse`, `plot` and
+`ptrace`. It takes:
+
+- a case's name: `--case "qa2.1_g2.3/eta1e-3_RE"`;
+- a pattern, quoted: `--case 'qa2.1*'` is every case whose name starts
+  `qa2.1`. `*`, `?` and `[...]` work as in the shell, except that `*` also
+  crosses the `/` between folder and run;
+- a folder holding cases: `--case qa2.1_g2.3` is every case under it.
+
+Several may follow one `--case`, and `--case` may be repeated. The cases run
+in `cases.toml` order, each once. A value that selects nothing is an error,
+before anything runs.
+
+Quote patterns. Unquoted, the shell expands `qa2.1*` itself, to the run
+folders in the current directory. That usually still works, because each
+folder selects the cases under it -- but zsh refuses a pattern that matches
+no file, and a stray matching file (`qa2.1_notes.txt`) becomes an unknown
+case.
+
+```bash
+python ~/ashen/bin/analyse --diag poincare --case 'qa2.1*'
+python ~/ashen/bin/plot --diag four --case qa2.1_g2.3 qa2.1_g2.5
+```
+
 **Gather, then plot, in one command.** `-plot DIAG` (or `--plot`, repeatable)
 runs `plot --diag DIAG` afterwards, for the cases that gathered:
 
