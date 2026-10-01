@@ -14,6 +14,7 @@ import pytest
 
 from ashen.cases import load_cases
 from ashen.cli import plot as plot_cli
+from ashen.namelist import format_boundary_block, write_boundary_file
 from ashen.paths import RunPaths
 from ashen.diagnostics import poincare_cache as pc
 from ashen.diagnostics.particles import (
@@ -30,6 +31,7 @@ from ashen.plotting.particles import (
     PoincareOverlay,
     RZPanel,
     animate_rz_panels,
+    boundary_view,
     draw_particles,
     particle_caption,
     particle_panels,
@@ -544,4 +546,90 @@ def test_animation_has_no_caption(campaign, monkeypatch):
 
     monkeypatch.setattr(plot_cli, "animate_rz_panels", spy)
     assert plot_cli.main(["--case", "run", "--diag", "particles", "--animate", "--dpi", "40"]) == 0
+    assert "caption" not in seen
+
+
+# --- the view: the plasma boundary, plus a margin ------------------------------
+
+
+def test_boundary_view_grows_the_bounding_box_about_its_centre():
+    assert boundary_view(SQUARE, 0.25) == ((3.4375, 4.0625), (-0.3125, 0.3125))
+    assert boundary_view(SQUARE, 0.0) == ((3.5, 4.0), (-0.25, 0.25))
+
+
+def test_a_view_overrides_the_fit_to_everything_drawn(snapshots, tmp_path, monkeypatch):
+    """A particle far away no longer sets the limits."""
+    monkeypatch.setattr(plt, "close", lambda *args: None)
+    panels = particle_panels(list(snapshots))
+    view = ((3.4, 4.1), (-0.3, 0.3))
+    plot_rz_panels(panels, tmp_path / "p.png", view=view, dpi=40)
+    for ax in plt.gcf().axes:
+        assert ax.get_xlim() == pytest.approx(view[0])
+        assert ax.get_ylim() == pytest.approx(view[1])
+    monkeypatch.undo()
+    plt.close("all")
+
+
+def _captured_view(monkeypatch):
+    seen = {}
+
+    def fake(panels, out_path, **kwargs):
+        seen["view"] = kwargs.get("view")
+        return out_path
+
+    monkeypatch.setattr(plot_cli, "plot_rz_panels", fake)
+    return seen
+
+
+def _far_particle(campaign):
+    folder = campaign / "run" / "ptrace" / "ex7_jorek"
+    simple_file(folder / "part_restart000.00250000.h5", 2.5e-3, [3.6, 3.7])
+    simple_file(folder / "part_restart.h5", 2.6e-3, [3.62, 40.0])
+
+
+def test_view_is_the_original_boundary_plus_25_percent(campaign, capsys, monkeypatch):
+    _far_particle(campaign)
+    np.savetxt(campaign / "run" / "original_bnd.dat", SQUARE)
+    # in_bnd is the extended boundary then: not what the view is framed on
+    write_boundary_file(campaign / "run" / "in_bnd", SQUARE[:, 0] * 2, SQUARE[:, 1] * 2, [0] * 4)
+    seen = _captured_view(monkeypatch)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
+    assert seen["view"] == ((3.4375, 4.0625), (-0.3125, 0.3125))
+
+
+def test_view_without_extension_is_the_boundary_plus_10_percent(campaign, capsys, monkeypatch):
+    _far_particle(campaign)
+    write_boundary_file(campaign / "run" / "in_bnd", SQUARE[:, 0], SQUARE[:, 1], [0] * 4)
+    seen = _captured_view(monkeypatch)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
+    (x0, x1), (y0, y1) = seen["view"]
+    assert (x0, x1, y0, y1) == pytest.approx((3.475, 4.025, -0.275, 0.275))
+
+
+def test_view_falls_back_to_the_namelist_boundary(campaign, capsys, monkeypatch):
+    _far_particle(campaign)
+    lines = format_boundary_block(SQUARE[:, 0], SQUARE[:, 1], [0] * 4)
+    (campaign / "run" / "in_main").write_text(
+        "&in1\n" + "\n".join(lines) + "\n&end\n", encoding="utf-8")
+    seen = _captured_view(monkeypatch)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
+    assert seen["view"][0] == pytest.approx((3.475, 4.025))
+
+
+def test_no_boundary_fits_everything_and_says_so(campaign, capsys, monkeypatch):
+    _far_particle(campaign)
+    seen = _captured_view(monkeypatch)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
+    assert seen["view"] is None
+    assert "no plasma boundary" in capsys.readouterr().out
+
+
+def test_the_animation_uses_the_same_view(campaign, monkeypatch):
+    _far_particle(campaign)
+    np.savetxt(campaign / "run" / "original_bnd.dat", SQUARE)
+    seen = {}
+    monkeypatch.setattr(plot_cli, "animate_rz_panels",
+                        lambda panels, out, **kwargs: seen.update(kwargs) or out)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--animate", "--dpi", "40"]) == 0
+    assert seen["view"] == ((3.4375, 4.0625), (-0.3125, 0.3125))
     assert "caption" not in seen
