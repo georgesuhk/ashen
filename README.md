@@ -95,6 +95,25 @@ python ~/ashen/bin/analyse --case "qa2.1_g2.3/eta1e-3_RE" --diag zerod --diag po
 `--force` re-runs even where cached output already exists (default: reuse it).
 This gathers and caches data only; `bin/plot` (below) draws figures from it.
 
+**Gather, then plot, in one command.** `-plot DIAG` (or `--plot`, repeatable)
+runs `plot --diag DIAG` afterwards, for the cases that gathered:
+
+```bash
+python ~/ashen/bin/analyse --diag four -plot four
+python ~/ashen/bin/analyse --diag poincare -plot connection_length -plot poincare
+python ~/ashen/bin/analyse --diag four -plot four --four-linear --dpi 200
+```
+
+- `DIAG` is any of plot's diags, spelled as plot spells them
+  (`connection_length`, not `connection length`).
+- Options `analyse` doesn't know are passed on to `plot`. They are checked
+  before the gather starts, so a typo fails at once rather than after it.
+- `--cases`, `--case`, `--site` and `--n-workers` apply to both.
+- A case whose gather failed is not plotted. The exit status is non-zero
+  if either stage failed.
+- `-plot` doesn't choose what is gathered: `--diag` does. Plotting a diag
+  whose data was never gathered reports that, as `plot` alone would.
+
 `--diag poincare` also runs `zerod` even if not requested explicitly: `plot`'s
 LCTT figure reads each step's true time from the zeroD cache, so a
 poincare-only gather would otherwise leave it with nothing to read. Cache-gated

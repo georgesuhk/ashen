@@ -23,6 +23,7 @@ from functools import partial
 from pathlib import Path
 
 from ashen.cases import Case
+from ashen.cli import plot as plot_cli
 from ashen.cli._common import (
     CASE_ERRORS,
     error,
@@ -63,6 +64,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--diag", action="append", dest="diags", choices=DIAG_CHOICES,
         help="which diagnostic(s) to gather (repeatable; default: zerod)",
+    )
+    parser.add_argument(
+        "-plot", "--plot", action="append", dest="plots", choices=plot_cli.DIAG_CHOICES,
+        metavar="DIAG",
+        help="then run `plot --diag DIAG` for the same cases (repeatable; any of "
+        f"{', '.join(plot_cli.DIAG_CHOICES)}). Options analyse does not know "
+        "(--dpi, --step, --four-linear, ...) are passed on to plot",
     )
     parser.add_argument(
         "--force", action="store_true",
@@ -337,8 +345,38 @@ def _resolve_parallelism(args) -> tuple[int, int]:
     return n_workers, omp_threads
 
 
+def _plot_argv(args, plot_options: list[str], names: list[str]) -> list[str]:
+    """The `plot` command line a -plot chain runs: the same cases.toml, site
+    and worker count, the named cases, the -plot diags, then whatever
+    options analyse did not recognise."""
+    argv = ["--cases", str(args.cases)]
+    for name in names:
+        argv += ["--case", name]
+    for diag in args.plots:
+        argv += ["--diag", diag]
+    if args.site is not None:
+        argv += ["--site", str(args.site)]
+    if args.n_workers is not None:
+        argv += ["--n-workers", str(args.n_workers)]
+    return argv + plot_options
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args, plot_options = parser.parse_known_args(argv)
+    if plot_options and not args.plots:
+        parser.error(f"unrecognized arguments: {' '.join(plot_options)}")
+    if args.plots:
+        # Checked now, not after an hour of gathering: plot's own parser
+        # exits on an option it does not know either.
+        try:
+            plot_cli.build_parser().parse_args(_plot_argv(args, plot_options, []))
+        except SystemExit:
+            error(
+                "the options analyse does not know are passed on to plot (-plot), "
+                "which rejected them -- see above"
+            )
+            return 2
 
     # Before any work, and via the environment, so the per-step workers
     # run_steps fans out to inherit it (see jorek2.TOOL_OUTPUT_ENV).
@@ -382,6 +420,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if failed:
         error(f"{len(failed)} of {len(selected)} case(s) failed: {', '.join(failed)}")
-        return 1
 
-    return 0
+    plot_status = 0
+    if args.plots:
+        gathered = [name for name in selected if name not in failed]
+        if gathered:
+            print(f"==== plot: {', '.join(args.plots)} ====")
+            plot_status = plot_cli.main(_plot_argv(args, plot_options, gathered))
+        else:
+            error("nothing gathered, so nothing plotted")
+
+    return 1 if failed or plot_status else 0
