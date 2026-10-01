@@ -1410,24 +1410,25 @@ also change its results, so ashen leaves them to you:
 
 ### Plotting particle positions
 
-`plot --diag particles` draws every particle file in a case's ptrace folder
-(`part_restart*.h5`, sorted by the time stored in each) on the R-Z plane,
-one panel per snapshot, all on the same R and Z limits:
+`plot --diag particles` draws the particle files in a case's ptrace folder
+(`part_restart*.h5`, sorted by the time stored in each) on the R-Z plane.
+`particles.png` is the last snapshot: where the particles ended up.
+`--animate` adds `particles.gif`, with every snapshot as a frame, all on the
+same R and Z limits:
 
 ```bash
-python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particles            # particles.png
-python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particles --animate  # + particles.gif
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particles            # particles.png: the last snapshot
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particles --animate  # + particles.gif: all of them
 ```
 
-Each panel shows the particles at that time in red (`ptrace_particle_color`,
+Each panel or frame shows the particles at that time in red (`ptrace_particle_color`,
 any matplotlib colour) over the first
 snapshot's in light grey, so drift away from the start reads in any single
 panel; lost particles (grid element <= 0) are black crosses where they left
 the grid. Each panel's title gives the time and how many of all the
 particles have escaped so far, as `XX/XX escaped` -- lost from the grid, or (with
 `ptrace_original_boundary`) out of the plasma boundary. Particles at every
-toroidal angle are projected onto the one R-Z plane. `--n-cols` sets the
-grid width. The PNG has a caption saying what the colours mean; the GIF
+toroidal angle are projected onto the one R-Z plane. The PNG has a caption saying what the colours mean; the GIF
 doesn't. Figures are written into the ptrace folder, next to the files
 they draw.
 
@@ -1443,7 +1444,7 @@ grown about its centre:
 
 Without any of those files the plot fits everything drawn, and says so.
 
-**How many panels you get is up to the program.**
+**How many frames you get is up to the program.**
 `re_gc_current_density_initialisation` writes `part_restart<time>.h5`
 every `write_step` (1e-4 s) and `part_restart.h5` at the end -- but its
 run is only 1e-5 s, so out of the box that is two snapshots, start and

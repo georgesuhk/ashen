@@ -286,7 +286,7 @@ def test_plot_particles_from_the_trace_folder(campaign, capsys):
 
     assert plot_cli.main(["--case", "run", "--diag", "particles", "--animate", "--dpi", "40"]) == 0
     out = capsys.readouterr().out
-    assert f"particles: 2 snapshot(s) -> {folder / 'particles.png'}" in out
+    assert f"particles: the last of 2 snapshot(s) -> {folder / 'particles.png'}" in out
     assert (folder / "particles.png").is_file()
     assert (folder / "particles.gif").is_file()
 
@@ -484,7 +484,7 @@ def test_plot_particles_with_poincare_and_original_boundary(campaign, capsys, mo
         return real(snapshots, **kwargs)
 
     monkeypatch.setattr(plot_cli, "particle_panels", spy)
-    assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--animate", "--dpi", "40"]) == 0
     out = capsys.readouterr().out
     assert (folder / "particles.png").is_file()
     (kwargs,) = drawn
@@ -633,3 +633,59 @@ def test_the_animation_uses_the_same_view(campaign, monkeypatch):
     assert plot_cli.main(["--case", "run", "--diag", "particles", "--animate", "--dpi", "40"]) == 0
     assert seen["view"] == ((3.4375, 4.0625), (-0.3125, 0.3125))
     assert "caption" not in seen
+
+
+# --- the picture is the last snapshot; --animate adds the rest --------------------
+
+
+def _three_snapshots(campaign):
+    folder = campaign / "run" / "ptrace" / "ex7_jorek"
+    for k, R in enumerate(([3.6, 3.7], [3.62, 3.75], [3.64, 3.8])):
+        simple_file(folder / f"part_restart_s00{3000 + 100 * k}_t{k}.h5", 2.5e-3 + k * 1e-4, R)
+    return folder
+
+
+def test_without_animate_only_the_last_snapshot_is_drawn(campaign, capsys, monkeypatch):
+    folder = _three_snapshots(campaign)
+    seen = {}
+
+    def fake(panels, out_path, **kwargs):
+        seen["titles"] = [panel.title for panel in panels]
+        return out_path
+
+    monkeypatch.setattr(plot_cli, "plot_rz_panels", fake)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert len(seen["titles"]) == 1
+    last = read_snapshot(folder / "part_restart_s003200_t2.h5")
+    first = read_snapshot(folder / "part_restart_s003000_t0.h5")
+    assert seen["titles"][0] == snapshot_label(last, start=first.time)
+    assert "particles: the last of 3 snapshot(s) ->" in out
+    assert not (folder / "particles.gif").exists()
+
+
+def test_animate_adds_every_snapshot_as_a_frame(campaign, monkeypatch):
+    folder = _three_snapshots(campaign)
+    frames = {}
+    monkeypatch.setattr(plot_cli, "animate_rz_panels",
+                        lambda panels, out, **kwargs: frames.update(n=len(panels)) or out)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--animate", "--dpi", "40"]) == 0
+    assert frames["n"] == 3
+    assert (folder / "particles.png").is_file()
+
+
+def test_without_animate_only_the_last_snapshots_punctures_are_read(campaign, monkeypatch):
+    _three_snapshots(campaign)
+    (campaign / "cases.toml").write_text(CASES.replace(
+        "ptrace_start_step = 3000", "ptrace_start_step = 3000\nptrace_poincare = true",
+    ), encoding="utf-8")
+    asked = []
+
+    def fake_overlays(case, paths, snapshots, **kwargs):
+        asked.append(len(snapshots))
+        return [None] * len(snapshots)
+
+    monkeypatch.setattr(plot_cli, "_poincare_overlays", fake_overlays)
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
+    assert plot_cli.main(["--case", "run", "--diag", "particles", "--animate", "--dpi", "40"]) == 0
+    assert asked == [1, 3]
