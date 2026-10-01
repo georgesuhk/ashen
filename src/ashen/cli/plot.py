@@ -122,7 +122,7 @@ from ashen.quantities import (
     quantity,
 )
 from ashen.particle_programs import DIAG_FILES, find_diag_file
-from ashen.ptracing import LOG_FILE, ptrace_dir
+from ashen.ptracing import LOG_FILE, ptrace_dir, traced_start
 
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
@@ -2283,8 +2283,14 @@ def _traced_window(
     one), which the particle plots are clipped to -- a trace can run past
     ptrace_end_step (t_span, hold_last_field). From ptrace_gc's restart
     table in ptrace.log, else an existing zeroD cache; None, with a note,
-    when neither has them (not gathered: that would run JOREK's tools)."""
-    wanted = [case.ptrace_start_step]
+    when neither has them (not gathered: that would run JOREK's tools).
+    A case without ptrace_start_step starts at traced_start's step."""
+    start = traced_start(case, paths.run_dir)
+    if start is None:
+        print(f"  {diag}: the run has no restarts; not clipped to "
+              "ptrace_start_step..ptrace_end_step")
+        return None
+    wanted = [start]
     if case.ptrace_end_step is not None:
         wanted.append(case.ptrace_end_step)
     times: dict[int, float] = {}
@@ -2306,7 +2312,7 @@ def _traced_window(
         print(f"  {diag}: no time for step(s) {missing} in {LOG_FILE} or the zeroD cache; "
               "not clipped to ptrace_start_step..ptrace_end_step")
         return None
-    return times[case.ptrace_start_step], times.get(case.ptrace_end_step)
+    return times[start], times.get(case.ptrace_end_step)
 
 
 def _clip_snapshots(snapshots, window, *, diag: str):
@@ -2360,7 +2366,10 @@ def _poincare_overlays(
     else the nearest cached step by the zeroD time. Lines are picked by
     case.ptrace_poincare_psi_n and cut to ptrace_poincare_n_turns. None, with
     a note, when no traced step has a cache."""
-    start, end = case.ptrace_start_step, case.ptrace_end_step
+    start, end = traced_start(case, paths.run_dir), case.ptrace_end_step
+    if start is None:
+        print("  particles: the run has no restarts, so no Poincare cache to draw under")
+        return None
     cached = sorted(
         step for step in (
             int(match.group(1)) for match in (

@@ -35,6 +35,15 @@ under their own names, like a particle file. A case's ptrace_<setting> keys
 (ptrace_dt, ptrace_initialiser, ...) are written into ptrace_overrides.nml,
 which ptrace_gc reads after ptrace_params.nml.
 
+Which restarts: ptrace_start_step to ptrace_end_step, each defaulting to
+the run's first and last restart (traced_steps).
+
+A trace runs here (plan.job None: mpirun with the case's ptrace_n_mpi), or
+is queued with a jobscript from site.toml's jobscripts folder, which is
+then part of its fingerprint in ptrace_n_mpi's place (its srun sets the
+ranks). A queued trace keeps its restart links until poll_job finds its
+job ended and concludes it.
+
 A trace is cached like the other gathers: it reruns only if its settings,
 restarts, particle file or executable changed since it last completed, or
 under --force.
@@ -46,6 +55,8 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -68,17 +79,23 @@ from ashen.particle_programs import (
 __all__ = [
     "LOG_FILE",
     "META_FILE",
+    "QueuedJob",
     "PARTICLES_FILE",
     "PtraceError",
     "PtracePlan",
     "PtraceResult",
     "is_current",
+    "last_error",
+    "last_jobscript",
+    "poll_job",
     "run_path",
     "ptrace_dir",
     "ptrace_exe_path",
     "plan_ptrace",
     "run_ptrace",
     "stage",
+    "traced_start",
+    "traced_steps",
 ]
 
 #: Folder, under the run folder, that holds one subfolder per trace.
@@ -130,6 +147,9 @@ class PtracePlan:
     #: (name in work_dir, text): files ashen writes there itself -- the
     #: case's ptrace_<setting> keys as ptrace_overrides.nml.
     writes: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+    #: The jobscript (a file in site.toml's jobscripts folder, e.g. "2h")
+    #: the trace is queued with, or None to run it here (`ptrace --run_i`).
+    job: str | None = None
 
     @property
     def restart_links(self) -> list[str]:
@@ -149,7 +169,7 @@ class PtracePlan:
         for name, text in self.writes:
             lines += [f"write    {name}:"]
             lines += [f"           {line}" for line in text.splitlines() if not line.startswith("!")]
-        lines += ["run:"]
+        lines += ["queue:" if self.job else "run:"]
         lines += [f"           {line}" for line in self.command.splitlines()]
         return lines
 
@@ -166,10 +186,19 @@ class PtraceResult:
     #: ptrace_gc stopping at the last restart before t_span was done -- and
     #: ashen's own, e.g. that no part_restart.h5 was written.
     notes: tuple[str, ...] = ()
+    #: The SLURM job the trace was queued as (`ptrace --run`), if it was.
+    job_id: str | None = None
 
 
-def _select_steps(case: Case, available: list[int]) -> list[int]:
+def traced_steps(case: Case, available: list[int]) -> list[int]:
+    """The restart steps a case traces through, in order: from
+    ptrace_start_step to ptrace_end_step, which default to the first and
+    last of `available` (the run's restarts)."""
+    if not available:
+        raise PtraceError(f"case {case.name!r}: the run has no restarts (jorek<step>.h5)")
     start, end = case.ptrace_start_step, case.ptrace_end_step
+    if start is None:
+        start = available[0]
     if start not in available:
         nearby = [s for s in available if abs(s - start) <= 1000][:10]
         raise PtraceError(
@@ -177,6 +206,19 @@ def _select_steps(case: Case, available: list[int]) -> list[int]:
             + (f"; nearby: {nearby}" if nearby else "")
         )
     return [s for s in available if s >= start and (end is None or s <= end)]
+
+
+def traced_start(case: Case, run_dir: Path) -> int | None:
+    """The step a case's trace started at, for the plots: ptrace_start_step,
+    else the first step its last trace actually ran from (ptrace_meta.json),
+    else the run's first restart. None if the run has no restarts."""
+    if case.ptrace_start_step is not None:
+        return case.ptrace_start_step
+    steps = _read_meta(ptrace_dir(case, run_dir)).get("steps")
+    if steps:
+        return int(steps[0])
+    available = restart_steps(run_dir)
+    return available[0] if available else None
 
 
 def _file_stamp(path: Path | None) -> list[int] | None:
@@ -217,16 +259,20 @@ def ptrace_dir(case: Case, run_dir: Path) -> Path:
     return Path(run_dir) / TRACE_DIR / ptrace_exe_path(case, run_dir).name
 
 
-def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> PtracePlan:
+def plan_ptrace(
+    case: Case, run_dir: Path, site: Site, *, omp_threads: int, job: str | None = None,
+) -> PtracePlan:
     """Decide everything about a case's ptrace without touching disk.
 
     omp_threads is the fallback for a case that leaves ptrace_omp_threads at 0.
+    job names a jobscript in site.toml's jobscripts folder to queue the trace
+    with (`ptrace --run`); None runs it here, with the case's ptrace_n_mpi
+    ranks and ptrace_omp_threads threads (`ptrace --run_i`).
     """
     run_dir = Path(run_dir)
     exe = ptrace_exe_path(case, run_dir)
+    steps = traced_steps(case, restart_steps(run_dir))
     paths = RunPaths.detect(run_dir)
-
-    steps = _select_steps(case, restart_steps(run_dir))
     links = [
         (restart_name(index, width), paths.restart(step))
         for index, step in enumerate(steps)
@@ -275,34 +321,80 @@ def plan_ptrace(case: Case, run_dir: Path, site: Site, *, omp_threads: int) -> P
             )
         writes.append((OVERRIDES_FILE, overrides_namelist(case.ptrace_settings)))
 
-    threads = case.ptrace_omp_threads or omp_threads
-    mpirun = site.launch.mpirun_cmd(case.ptrace_n_mpi)
-    command = "\n".join(
-        line for line in (
-            site.launch.interactive_prelude,
-            # After the prelude, which may export its own (site.example.toml's does).
-            f"export OMP_NUM_THREADS={threads}",
-            f"{mpirun} {exe} < {namelist.name}".strip(),
-        ) if line
-    )
-
+    work_dir = ptrace_dir(case, run_dir)
     settings = {key: getattr(case, key) for key in _RESULT_FIELDS}
     settings["ptrace_particles"] = str(particles) if particles else None
     settings["ptrace_inputs"] = [str(source) for name, source in copies if name != PARTICLES_FILE]
-    fingerprint = hashlib.sha256(json.dumps(
-        {"settings": settings, "steps": steps, "exe": exe.name,
-         "exe_stamp": _file_stamp(exe),
-         "copy_stamps": [_file_stamp(source) for _, source in copies]},
-        sort_keys=True,
-    ).encode()).hexdigest()
+    fingerprint_input = {
+        "settings": settings, "steps": steps, "exe": exe.name,
+        "exe_stamp": _file_stamp(exe),
+        "copy_stamps": [_file_stamp(source) for _, source in copies],
+    }
+
+    threads = case.ptrace_omp_threads or omp_threads
+    if job is None:
+        mpirun = site.launch.mpirun_cmd(case.ptrace_n_mpi)
+        command = "\n".join(
+            line for line in (
+                site.launch.interactive_prelude,
+                # After the prelude, which may export its own (site.example.toml's does).
+                f"export OMP_NUM_THREADS={threads}",
+                f"{mpirun} {exe} < {namelist.name}".strip(),
+            ) if line
+        )
+    else:
+        jobscript = _jobscript(site, job)
+        # The jobscript's own srun decides the ranks, not ptrace_n_mpi -- and
+        # re_gc samples its particle count per rank, so which jobscript (and
+        # what is in it) is part of the result instead.
+        settings["ptrace_n_mpi"] = None
+        fingerprint_input["jobscript"] = [
+            job, hashlib.sha256(jobscript.read_bytes()).hexdigest(),
+        ]
+        # The jobscripts take <exe> <stdin file> <log> [job name] and run
+        # `srun ./"$exe" < ./"$input" | tee "$log"` in the submitting folder
+        # (#SBATCH -D ./), so the exe goes in relative to the trace folder.
+        command = "\n".join(
+            line for line in (
+                site.launch.batch_prelude,
+                " ".join(shlex.quote(word) for word in (
+                    "sbatch", "--parsable", str(jobscript),
+                    os.path.relpath(exe, work_dir), namelist.name, LOG_FILE,
+                    _job_name(case),
+                )),
+            ) if line
+        )
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_input, sort_keys=True).encode()
+    ).hexdigest()
 
     return PtracePlan(
         case=case, run_dir=run_dir,
-        work_dir=ptrace_dir(case, run_dir),
+        work_dir=work_dir,
         exe=exe, steps=steps, links=links, copies=copies, namelist=namelist.name,
         command=command, omp_threads=threads, fingerprint=fingerprint,
-        writes=writes,
+        writes=writes, job=job,
     )
+
+
+def _jobscript(site: Site, job: str) -> Path:
+    """The jobscript `ptrace --run -job <job>` queues with: a file in
+    site.toml's jobscripts folder."""
+    folder = site.jobscripts
+    path = folder / job
+    if Path(job).name != job or not path.is_file():
+        known = sorted(p.name for p in folder.iterdir() if p.is_file()) if folder.is_dir() else []
+        raise PtraceError(
+            f"no jobscript {job!r} in {folder}"
+            + (f"; there: {', '.join(known)}" if known else " (site.toml's jobscripts)")
+        )
+    return path
+
+
+def _job_name(case: Case) -> str:
+    """The SLURM job name: "pt_" and the last part of the case's name."""
+    tail = case.name.rstrip("/").rsplit("/", 1)[-1]
+    return "pt_" + re.sub(r"[^A-Za-z0-9._-]", "_", tail)
 
 
 def _read_meta(work_dir: Path) -> dict:
@@ -312,8 +404,13 @@ def _read_meta(work_dir: Path) -> dict:
         return {}
 
 
+def _save_meta(work_dir: Path, meta: dict) -> None:
+    (work_dir / META_FILE).write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+
 def _write_meta(
-    plan: PtracePlan, *, complete: bool, lost: bool = False, notes: tuple[str, ...] = ()
+    plan: PtracePlan, *, complete: bool, lost: bool = False, notes: tuple[str, ...] = (),
+    **extra,
 ) -> None:
     meta = {
         "fingerprint": plan.fingerprint,
@@ -324,10 +421,16 @@ def _write_meta(
         "steps": plan.steps,
         "exe": plan.exe.name,
         "copied": [name for name, _ in plan.copies],
+        "jobscript": plan.job,
+        **extra,
     }
-    (plan.work_dir / META_FILE).write_text(
-        json.dumps(meta, indent=2) + "\n", encoding="utf-8"
-    )
+    _save_meta(plan.work_dir, meta)
+
+
+def last_jobscript(case: Case, run_dir: Path) -> str | None:
+    """The jobscript the case's last trace was queued with (None: run here,
+    or never traced) -- the launch to compare the current settings against."""
+    return _read_meta(ptrace_dir(case, run_dir)).get("jobscript")
 
 
 def is_current(plan: PtracePlan) -> bool:
@@ -367,7 +470,7 @@ def stage(plan: PtracePlan) -> None:
         shutil.copy2(source, work_dir / name)
     for name, text in plan.writes:
         (work_dir / name).write_text(text, encoding="utf-8")
-    _write_meta(plan, complete=False)
+    _write_meta(plan, complete=False, particles_stamp=_file_stamp(work_dir / PARTICLES_FILE))
 
 
 def _log_tail(log: Path, n: int = 15) -> str:
@@ -397,18 +500,50 @@ def _launch(plan: PtracePlan) -> int:
         return proc.wait()
 
 
-def run_ptrace(plan: PtracePlan, *, force: bool = False) -> PtraceResult:
-    """Stage and run one trace, unless it is already current.
+def _remove_restart_links(work_dir: Path) -> None:
+    """The restart links are the program's input, not a result: leave the
+    folder holding only what the run produced. (Every one is named jorek*;
+    see PtracePlan.restart_links.)"""
+    for entry in work_dir.glob("jorek*"):
+        if entry.is_symlink():
+            entry.unlink()
 
-    Raises PtraceError if the executable is missing or the program exits
-    non-zero. A program that stops at its first lost particle (ex7_jorek's
-    LOST_MARKER) has done what it does, and is reported as lost; one that
-    exits 0 without writing part_restart.h5 gets a note.
+
+def _outcome(work_dir: Path) -> tuple[bool, tuple[str, ...], bool]:
+    """(lost, notes, wrote_particles) from what a finished program left:
+    its log, and a part_restart.h5 it wrote -- not one ashen copied in from
+    ptrace_particles and the program left untouched (stage records that
+    one's stamp)."""
+    log = work_dir / LOG_FILE
+    text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+    stamp = _file_stamp(work_dir / PARTICLES_FILE)
+    wrote = stamp is not None and stamp != _read_meta(work_dir).get("particles_stamp")
+    return LOST_MARKER in text, _notes(text, NOTE_MARKER), wrote
+
+
+def run_ptrace(plan: PtracePlan, *, force: bool = False) -> PtraceResult:
+    """Stage and run one trace (plan.job None), or stage and queue it with
+    plan.job's jobscript -- unless it is already current.
+
+    Raises PtraceError if the executable is missing, the program exits
+    non-zero, sbatch fails, or a job queued for this trace earlier is still
+    queued or running (restaging would pull its files from under it, so not
+    even --force does that). A program that stops at its first lost particle
+    (ex7_jorek's LOST_MARKER) has done what it does, and is reported as
+    lost; one that exits 0 without writing part_restart.h5 gets a note.
+    A queued trace is concluded later, by poll_job.
     """
+    queued = poll_job(plan.work_dir)
+    if queued is not None and queued.running:
+        raise PtraceError(
+            f"case {plan.case.name!r}: job {queued.job_id} ({queued.state}) is still queued "
+            f"or running for this trace; wait for it, or `scancel {queued.job_id}` first"
+        )
     if not force and is_current(plan):
         meta = _read_meta(plan.work_dir)
         return PtraceResult(
             ran=False, lost=meta.get("lost", False), notes=tuple(meta.get("notes", ())),
+            job_id=meta.get("job_id"),
         )
     if not plan.exe.is_file():
         raise PtraceError(
@@ -418,29 +553,149 @@ def run_ptrace(plan: PtracePlan, *, force: bool = False) -> PtraceResult:
             "MODEL as this run, and copy the binary there."
         )
     stage(plan)
+    if plan.job is not None:
+        return _submit(plan)
     try:
         status = _launch(plan)
     finally:
-        # The restart links are the program's input, not a result: leave
-        # the folder holding only what the run produced.
-        for name in plan.restart_links:
-            (plan.work_dir / name).unlink(missing_ok=True)
+        _remove_restart_links(plan.work_dir)
     log = plan.work_dir / LOG_FILE
     if status != 0:
         raise PtraceError(
             f"case {plan.case.name!r}: {plan.exe.name} exited {status}; "
             f"last lines of {log}:\n  {_log_tail(log)}"
         )
-    text = log.read_text(encoding="utf-8", errors="replace")
-    lost = LOST_MARKER in text
-    notes = _notes(text, NOTE_MARKER)
-    if not lost and not (plan.work_dir / PARTICLES_FILE).is_file():
+    lost, notes, wrote = _outcome(plan.work_dir)
+    if not lost and not wrote:
         notes += (
             f"{plan.exe.name} exited 0 without writing {PARTICLES_FILE}, which every "
             f"JOREK particle program writes at the end -- see {log}",
         )
     _write_meta(plan, complete=True, lost=lost, notes=notes)
     return PtraceResult(ran=True, lost=lost, notes=notes)
+
+
+def _submit(plan: PtracePlan) -> PtraceResult:
+    """Queue a staged trace with sbatch. The restart links stay until
+    poll_job finds the job finished: the job reads them."""
+    proc = subprocess.run(
+        plan.command, shell=True, cwd=plan.work_dir,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    # sbatch --parsable prints "<id>" or "<id>;<cluster>"; the prelude may print first.
+    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    job_id = lines[-1].split(";")[0] if lines else ""
+    if proc.returncode != 0 or not job_id.isdigit():
+        _remove_restart_links(plan.work_dir)
+        raise PtraceError(
+            f"case {plan.case.name!r}: sbatch failed (exit {proc.returncode}):\n  "
+            + "\n  ".join(lines[-15:])
+        )
+    _write_meta(
+        plan, complete=False, job_id=job_id,
+        particles_stamp=_read_meta(plan.work_dir).get("particles_stamp"),
+    )
+    return PtraceResult(ran=True, job_id=job_id)
+
+
+#: SLURM states of a job that has ended (squeue may still list one briefly).
+_ENDED = frozenset({
+    "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL",
+    "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED",
+})
+
+
+@dataclass(frozen=True)
+class QueuedJob:
+    """A trace queued with `ptrace --run`, as poll_job found it."""
+
+    job_id: str
+    #: SLURM's state for it (PENDING, RUNNING, COMPLETED, TIMEOUT, ...), or
+    #: "" once SLURM no longer knows the job.
+    state: str
+    #: Still queued or running: its folder must be left alone.
+    running: bool
+    #: Once it has ended: what it did, or why it is counted as failed.
+    result: PtraceResult | None = None
+    error: str | None = None
+
+
+def _slurm(command: list[str]) -> str:
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise PtraceError(
+            f"cannot ask SLURM about a queued trace: {command[0]} not found "
+            "(run ptrace on the machine the job was queued from)"
+        ) from None
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def _job_state(job_id: str) -> tuple[str, bool]:
+    """(state, still running). squeue lists live jobs; sacct, if the site
+    keeps accounting, says how an ended one ended."""
+    state = _slurm(["squeue", "-h", "-j", job_id, "-o", "%T"]).strip().split("\n")[0].strip()
+    if state and state not in _ENDED:
+        return state, True
+    if not state:
+        try:
+            out = _slurm(["sacct", "-n", "-X", "-P", "-j", job_id, "-o", "State"])
+        except PtraceError:
+            out = ""
+        words = out.split()
+        # "CANCELLED by 1234" -> CANCELLED
+        state = words[0] if words else ""
+    return state, False
+
+
+def poll_job(work_dir: Path) -> QueuedJob | None:
+    """The job a trace was last queued as, concluding it if it has ended:
+    restart links removed, its outcome written to ptrace_meta.json (so it
+    is cached, or reported failed, from then on). None if the folder's last
+    trace was not queued, or its job was concluded already.
+
+    A queued trace's exit status is lost -- the jobscripts pipe the program
+    through `tee` -- so it counts as done only if SLURM did not report it
+    failed *and* it wrote part_restart.h5 (every JOREK particle program
+    does, at the end) or stopped at a lost particle.
+    """
+    work_dir = Path(work_dir)
+    meta = _read_meta(work_dir)
+    job_id = meta.get("job_id")
+    if not job_id or meta.get("complete") or meta.get("job_state") is not None:
+        return None
+    state, running = _job_state(job_id)
+    if running:
+        return QueuedJob(job_id=job_id, state=state, running=True)
+
+    _remove_restart_links(work_dir)
+    lost, notes, wrote = _outcome(work_dir)
+    log = work_dir / LOG_FILE
+    error = None
+    if state and state != "COMPLETED":
+        error = f"job {job_id} ended {state}"
+        if state == "TIMEOUT":
+            error += " (out of time: a longer jobscript, e.g. -job 23h, or a shorter trace)"
+    elif not lost and not wrote:
+        error = f"job {job_id} ended without the program writing {PARTICLES_FILE}"
+    if error is not None:
+        slurm_logs = sorted(p.name for p in work_dir.glob(f"*.{job_id}.*"))
+        error += (
+            f"; see {log}" + (f" and {', '.join(slurm_logs)}" if slurm_logs else "")
+            + (f"; its last lines:\n  {_log_tail(log)}" if log.is_file() else "")
+        )
+    meta.update(
+        complete=error is None, lost=lost, notes=list(notes),
+        job_state=state or "ended", error=error,
+    )
+    _save_meta(work_dir, meta)
+    result = None if error else PtraceResult(ran=True, lost=lost, notes=notes, job_id=job_id)
+    return QueuedJob(job_id=job_id, state=state, running=False, result=result, error=error)
+
+
+def last_error(work_dir: Path) -> str | None:
+    """Why the folder's last queued trace was counted as failed, if it was."""
+    return _read_meta(Path(work_dir)).get("error")
 
 
 def _notes(log_text: str, marker: str) -> tuple[str, ...]:

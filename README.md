@@ -1143,8 +1143,8 @@ Connection lengths use `R0` extracted from the run's log
 `bin/ptrace` runs a particle-tracing executable -- normally one of JOREK's
 own `particles/examples` programs -- unmodified, against the restarts of a
 run that already exists. ashen wraps it; it does not change what it
-computes. A case traces when it sets `ptrace_exe` and `ptrace_start_step`,
-alongside its other keys in `cases.toml` (and `[defaults]` can seed any
+computes. A case traces when it sets `ptrace_exe`, alongside its other
+keys in `cases.toml` (and `[defaults]` can seed any
 `ptrace_*` key, like the rest). `ptrace_exe` is a path **relative to the run
 folder**, so a binary in the run's `exe/` is `./exe/<name>`:
 
@@ -1158,9 +1158,33 @@ ptrace_start_step = 3000
 ```bash
 python ~/ashen/bin/ptrace --list                                      # tracing cases, and the programs
 python ~/ashen/bin/ptrace --case "qa2.1_g2.3/eta1e-3_RE" --dry-run    # what it would link and run
-python ~/ashen/bin/ptrace --case "qa2.1_g2.3/eta1e-3_RE"
-python ~/ashen/bin/ptrace                                             # every case that sets ptrace_exe
+python ~/ashen/bin/ptrace --case "qa2.1_g2.3/eta1e-3_RE" --run_i      # run it here
+python ~/ashen/bin/ptrace --case "qa2.1_g2.3/eta1e-3_RE" --run        # queue it (jobscripts/2h)
+python ~/ashen/bin/ptrace --case "qa2.1_g2.3/eta1e-3_RE" --run -job 23h
+python ~/ashen/bin/ptrace                                             # where every trace stands
 ```
+
+**Launching**, as `run_jorek` launches a main run:
+
+- `--run_i` runs the program here: `site.toml`'s `interactive_prelude`, then
+  `mpirun` with the case's `ptrace_n_mpi` ranks and `ptrace_omp_threads`
+  threads.
+- `--run` queues it with `sbatch` and a jobscript from `site.toml`'s
+  `jobscripts` folder: `2h` unless `-job` names another (`-job 23h`, or any
+  file there). The job runs in the ptrace folder. The jobscript's own
+  `#SBATCH` lines and `srun` set the ranks and threads, so `ptrace_n_mpi` and
+  `ptrace_omp_threads` don't apply. The jobscript is part of the trace's
+  cache key: re_gc's particle count depends on the rank count.
+- With neither, `ptrace` runs nothing. It reports each trace's state:
+  not traced, `[cached]`, queued or running, out of date, or failed.
+
+A queued job is concluded the next time `ptrace` runs for its case (with
+or without a flag). At that point its restart links are removed and its
+result is recorded. The jobscripts pipe the program through `tee`, which
+hides its exit status. So a queued trace counts as done only if SLURM
+doesn't report it failed (`sacct`, e.g. `TIMEOUT`) *and* it wrote
+`part_restart.h5` or stopped at a lost particle. While its job is queued
+or running, a trace's folder is left alone, even with `--force`.
 
 **Any executable, under any name.** ashen never goes by the
 executable's filename: a zero exit is success, and what it does beyond
@@ -1181,8 +1205,8 @@ programs, for reference:
 Anything else -- particle positions, energies, time step, duration -- means
 editing the program in JOREK and rebuilding it; ashen only chooses which
 restarts it sees and how it is launched. Keys: `ptrace_start_step`
-(required with `ptrace_exe`), `ptrace_end_step` (last restart it sees;
-default all), `ptrace_particles` (a JOREK particle file to start from,
+(first restart it sees; default the run's first), `ptrace_end_step` (last
+restart it sees; default the run's last), `ptrace_particles` (a JOREK particle file to start from,
 *copied* in as `part_restart.h5` because the program overwrites that file
 at the end; ex6/ex7 and `ptrace_gc` ignore it), `ptrace_inputs` (files
 copied into the ptrace folder under their own names before the run -- e.g.
@@ -1305,6 +1329,18 @@ Fortran compiler -- so expect the first build to need small fixes. Build it
 like the others: copy `fortran/ptrace_gc.f90` into a JOREK checkout's
 `particles/examples/`, `make ptrace_gc` with the run's `MODEL`, and copy the
 binary to where `ptrace_exe` points. JOREK itself is never modified by ashen.
+
+**Where its time goes.** Almost all of it is spent in JOREK's RK4
+pusher: four field evaluations and element searches per marker per `dt`.
+Markers are shared round-robin between MPI ranks, and each rank's markers
+are spread dynamically over its OpenMP threads, so lost markers leave no
+thread idle. Neither split changes any marker's path. The next biggest
+cost is every `diag_step`: `ptrace_diag.h5` gathers every marker to rank 0,
+and JOREK's diagnostics writer searches the whole grid for the magnetic
+axis and X-point, each time. The two settings that make a trace cheaper
+also change its results, so ashen leaves them to you:
+- a longer `diag_step` gives coarser exit times and positions;
+- a longer `dt` gives less accurate orbits. Check convergence by halving it.
 
 ### Plotting particle positions
 

@@ -383,13 +383,17 @@ contains
 
 !> Push every marker from sim%time to target_time with fixed-step RK4.
 !> A lost marker (i_elm <= 0) is left where it left the grid.
+!> Scheduled dynamically: a lost marker costs nothing and the others vary
+!> (element searches), so a static split leaves threads idle. Each marker is
+!> pushed on its own from the same sim%time, so which thread takes it
+!> changes nothing in the result.
 subroutine push_all(sim, dt, target_time)
   type(particle_sim), intent(inout) :: sim
   real*8, intent(in)                :: dt, target_time
   integer :: i
   real*8  :: local_time, local_dt
   !$omp parallel do default(none) firstprivate(dt, target_time) &
-  !$omp private(i, local_time, local_dt) shared(sim)
+  !$omp private(i, local_time, local_dt) shared(sim) schedule(dynamic)
   do i = 1, size(sim%groups(1)%particles)
     select type (gc => sim%groups(1)%particles(i))
     type is (particle_gc_relativistic)

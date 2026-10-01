@@ -223,13 +223,14 @@ class Case:
     #: particle programs also gets what ashen knows about it
     #: (ashen.particle_programs).
     ptrace_exe: str | None = None
-    #: `bin/ptrace`: first restart step the program sees. Required with
-    #: ptrace_exe. re_gc starts at this step's own time; ex6/ex7 always
-    #: start at 2.5 ms and pick from the restarts from here on.
+    #: `bin/ptrace`: first restart step the program sees. None = the run's
+    #: first restart (ashen.ptracing.traced_steps). re_gc starts at this
+    #: step's own time; ex6/ex7 always start at 2.5 ms and pick from the
+    #: restarts from here on.
     ptrace_start_step: int | None = None
-    #: `bin/ptrace`: last restart step the program sees. None = every later
-    #: one. ptrace_gc traces up to this step's time (unless t_span says
-    #: otherwise).
+    #: `bin/ptrace`: last restart step the program sees. None = the run's
+    #: last restart. ptrace_gc traces up to this step's time (unless t_span
+    #: says otherwise).
     ptrace_end_step: int | None = None
     #: `bin/ptrace`: the restart step whose current profile ptrace_gc's
     #: current_pdf_simple initialiser samples, linked in as jorek_pdf.h5.
@@ -476,20 +477,20 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
     _collect_ptrace_settings(merged, where)
     if not isinstance(exe, str) or not exe.strip():
         raise CasesError(f"{where}: ptrace_exe must be a path, got {exe!r}")
-    if "ptrace_start_step" not in merged:
-        raise CasesError(f"{where} sets ptrace_exe but no ptrace_start_step")
 
-    start = int(merged["ptrace_start_step"])
-    if start < 0:
-        raise CasesError(f"{where}: ptrace_start_step must be >= 0, got {start}")
-    merged["ptrace_start_step"] = start
+    start = None
+    if merged.get("ptrace_start_step") is not None:
+        start = int(merged["ptrace_start_step"])
+        if start < 0:
+            raise CasesError(f"{where}: ptrace_start_step must be >= 0, got {start}")
+        merged["ptrace_start_step"] = start
     if merged.get("ptrace_pdf_step") is not None:
         pdf_step = merged["ptrace_pdf_step"]
         if isinstance(pdf_step, bool) or not isinstance(pdf_step, int) or pdf_step < 0:
             raise CasesError(f"{where}: ptrace_pdf_step must be a step >= 0, got {pdf_step!r}")
     if merged.get("ptrace_end_step") is not None:
         end = int(merged["ptrace_end_step"])
-        if end < start:
+        if start is not None and end < start:
             raise CasesError(
                 f"{where}: ptrace_end_step ({end}) is before ptrace_start_step ({start})"
             )
