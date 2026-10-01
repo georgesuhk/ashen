@@ -246,6 +246,16 @@ note  = "internal kink investigation"
 #   { start = 3400, stop = 8000, step = 200 },
 # ]
 
+# Leave out `start` and/or `stop` and the run's own restarts fill them in:
+# from its first restart, up to and including its last. The steps are then
+# picked from the restarts that exist (start, start + step, ...), so nothing
+# needs to be known about the run's length, and a run still going is picked
+# up further each time. `stop`, when given, stays exclusive.
+# steps = { step = 400 }                 # every 400 steps, first restart to last
+# steps = {}                             # every restart
+# steps = { start = 1000, step = 400 }   # from step 1000 to the last restart
+# In [defaults], each case gets its own run's range.
+
 # A case's steps can be overridden per diag: [cases.NAME.<diag>] (diag is
 # one of zerod/poincare/profiles/four/connection_length) with its own
 # `steps`, same list/range/mixed formats as above -- e.g. a long step range

@@ -412,6 +412,29 @@ touching the gathering path.
   `--list-quantities` lists the per-run scalars these accept and exits --
   works with no `cases.toml` present, for use while writing one.
 
+### Steps without knowing the run's length
+
+A `{start, stop, step}` table may leave out `start`, `stop` or both. The
+run's own restarts (`jorek<step>.h5` in the case's folder) fill them in:
+
+```toml
+steps = { step = 400 }                 # every 400 steps, first restart to last
+steps = {}                             # every restart
+steps = { start = 1000, step = 400 }   # from step 1000 to the last restart
+```
+
+- `start` defaults to the run's first restart, `stop` to its last, which is
+  included. A `stop` you give stays exclusive, as it is with both ends given.
+- The steps are picked from the restarts that exist: those at `start`,
+  `start + step`, `start + 2 step`, and so on. With restarts every 200
+  steps, `{ step = 300 }` gives every 600th.
+- They are counted from the first restart, not from 0. A run whose first
+  restart is 200 gives 200, 600, 1000, ... for `{ step = 400 }`.
+- The folder is read each time `cases.toml` is loaded, so a run still going
+  gets further each time. In `[defaults]`, each case gets its own run's range.
+- With both `start` and `stop` given, nothing changes: the range is taken as
+  written, whether or not those restarts exist yet.
+
 ### Different step ranges for different diags
 
 Steps resolve through a three-tier `default -> case -> case+diag` tree, most
