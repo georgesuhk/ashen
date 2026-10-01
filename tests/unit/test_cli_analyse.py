@@ -399,3 +399,100 @@ def test_tool_failure_on_one_step_does_not_abort_the_rest(jrun_and_paths, monkey
     assert paths.zero_d(100).is_file()
     assert not paths.zero_d(200).is_file()
     assert paths.zero_d(300).is_file()
+
+
+# --- -plot: gather, then plot --------------------------------------------------
+
+
+@pytest.fixture
+def chained(tmp_path, monkeypatch):
+    """A cases.toml with two cases; the gather and plot's main are stand-ins
+    that record what they were asked for."""
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "cases.toml").write_text(
+        "[cases.a]\nsteps = [100]\n\n[cases.b]\nsteps = [100]\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ASHEN_SITE", raising=False)
+    calls = {"gathered": [], "plot": [], "fail": set(), "plot_status": 0}
+
+    def fake_run_case(case, *, diags, **kwargs):
+        if case.name in calls["fail"]:
+            raise FileNotFoundError(f"case {case.name!r}: no such folder")
+        calls["gathered"].append((case.name, tuple(diags)))
+
+    def fake_plot_main(argv):
+        calls["plot"].append(list(argv))
+        return calls["plot_status"]
+
+    monkeypatch.setattr(analyse_cli, "_run_case", fake_run_case)
+    monkeypatch.setattr(analyse_cli.plot_cli, "main", fake_plot_main)
+    return calls
+
+
+def test_plot_runs_after_the_gather_for_the_same_cases(chained, capsys):
+    assert analyse_cli.main(["--diag", "four", "-plot", "four"]) == 0
+    assert chained["gathered"] == [("a", ("four",)), ("b", ("four",))]
+    assert chained["plot"] == [
+        ["--cases", "cases.toml", "--case", "a", "--case", "b", "--diag", "four"]
+    ]
+    assert "==== plot: four ====" in capsys.readouterr().out
+
+
+def test_several_plots_from_one_gather(chained):
+    assert analyse_cli.main(
+        ["--case", "a", "--diag", "poincare", "-plot", "connection_length", "--plot", "poincare"]
+    ) == 0
+    assert chained["gathered"] == [("a", ("poincare",))]
+    assert chained["plot"] == [[
+        "--cases", "cases.toml", "--case", "a",
+        "--diag", "connection_length", "--diag", "poincare",
+    ]]
+
+
+def test_without_plot_nothing_is_plotted(chained):
+    assert analyse_cli.main(["--diag", "four"]) == 0
+    assert chained["plot"] == []
+
+
+def test_options_analyse_does_not_know_go_to_plot(chained):
+    assert analyse_cli.main(
+        ["--diag", "four", "-plot", "four", "--four-linear", "--dpi", "80", "--n-workers", "2"]
+    ) == 0
+    assert chained["plot"][0][-5:] == ["--n-workers", "2", "--four-linear", "--dpi", "80"]
+
+
+def test_a_bad_plot_option_stops_before_the_gather(chained, capsys):
+    assert analyse_cli.main(["--diag", "four", "-plot", "four", "--no-such-flag"]) == 2
+    assert chained["gathered"] == [] and chained["plot"] == []
+    assert "passed on to plot" in capsys.readouterr().err
+
+
+def test_connection_length_needs_its_underscore(chained, capsys):
+    """`-plot connection length`: "length" is not something plot takes."""
+    assert analyse_cli.main(["--diag", "poincare", "-plot", "connection_length", "length"]) == 2
+    with pytest.raises(SystemExit):
+        analyse_cli.main(["--diag", "poincare", "-plot", "connection", "length"])
+    assert chained["gathered"] == []
+
+
+def test_unknown_options_without_plot_are_still_an_error(chained):
+    with pytest.raises(SystemExit):
+        analyse_cli.main(["--diag", "four", "--four-linear"])
+    assert chained["gathered"] == []
+
+
+def test_only_cases_that_gathered_are_plotted(chained, capsys):
+    chained["fail"] = {"a"}
+    assert analyse_cli.main(["--diag", "four", "-plot", "four"]) == 1
+    assert chained["plot"] == [["--cases", "cases.toml", "--case", "b", "--diag", "four"]]
+    chained["fail"] = {"a", "b"}
+    chained["plot"].clear()
+    assert analyse_cli.main(["--diag", "four", "-plot", "four"]) == 1
+    assert chained["plot"] == []
+    assert "nothing gathered, so nothing plotted" in capsys.readouterr().err
+
+
+def test_a_failing_plot_fails_the_run(chained):
+    chained["plot_status"] = 1
+    assert analyse_cli.main(["--diag", "four", "-plot", "four"]) == 1
