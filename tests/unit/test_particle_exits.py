@@ -356,4 +356,4 @@ def test_snapshots_after_the_end_step_are_left_out(campaign, capsys):
     assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
     out = capsys.readouterr().out
     assert "1 snapshot(s) outside ptrace_start_step..ptrace_end_step left out" in out
-    assert "particles: 2 snapshot(s) ->" in out
+    assert "particles: the last of 2 snapshot(s) ->" in out

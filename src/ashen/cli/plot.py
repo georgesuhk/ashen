@@ -276,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--n-cols", type=int, default=None,
-        help="theta_hist, particles: panels per row (default: 4 for per-case "
+        help="theta_hist: panels per row (default: 4 for per-case "
         "mode, or the comparison's own n_cols for --compare)",
     )
     parser.add_argument(
@@ -2457,11 +2457,12 @@ def _plot_particles(
     case: Case, paths: RunPaths, *, dpi: int | None, n_cols: int | None,
     animate: bool, explicit: bool, point_size: float | None = None, n_workers: int = 1,
 ) -> None:
-    """Particle positions on R-Z, one panel per particle file in the case's
-    ptrace folder (bin/ptrace), each over the first in grey -- over the
-    Poincare punctures under ptrace_poincare, and with the pre-extension
-    boundary under ptrace_original_boundary. Written next to the data, as
-    particles.png (and particles.gif under --animate)."""
+    """Particle positions on R-Z, from the particle files in the case's
+    ptrace folder (bin/ptrace): the last one as particles.png, over the
+    first in grey; under --animate also every one of them, a frame each, as
+    particles.gif. Over the Poincare punctures under ptrace_poincare, and
+    with the pre-extension boundary under ptrace_original_boundary. Written
+    next to the data."""
     if case.ptrace_exe is None:
         # A default (no --diag) run asks every case for every diag; one
         # that doesn't trace has nothing to say here.
@@ -2484,10 +2485,15 @@ def _plot_particles(
         _boundary_exits(case, folder, snapshots, boundary, window)
         if boundary is not None else None
     )
-    poincare = (
-        _poincare_overlays(case, paths, snapshots, point_size=point_size, n_workers=n_workers)
-        if case.ptrace_poincare else None
-    )
+    poincare = None
+    if case.ptrace_poincare:
+        # Only the frames that get drawn need their punctures read.
+        drawn = snapshots if animate else snapshots[-1:]
+        overlays = _poincare_overlays(
+            case, paths, drawn, point_size=point_size, n_workers=n_workers,
+        )
+        if overlays is not None:
+            poincare = [None] * (len(snapshots) - len(drawn)) + list(overlays)
     panels = particle_panels(
         snapshots, boundary=boundary, exits=exits, poincare=poincare,
         color=case.ptrace_particle_color,
@@ -2498,8 +2504,13 @@ def _plot_particles(
         snapshots, boundary=boundary is not None, poincare=poincare is not None,
         color=case.ptrace_particle_color,
     )
-    out = plot_rz_panels(panels, folder / "particles.png", n_cols=n_cols or 4, **kwargs)
-    print(f"  particles: {len(snapshots)} snapshot(s) -> {out}")
+    # The picture is where the particles ended up; how they got there is
+    # the animation. Still judged over every snapshot: a particle that left
+    # the boundary earlier is drawn where it left.
+    out = plot_rz_panels(
+        panels[-1:], folder / "particles.png", figsize_per_panel=(5.0, 5.6), **kwargs,
+    )
+    print(f"  particles: the last of {len(snapshots)} snapshot(s) -> {out}")
     if len(snapshots) == 1:
         print(
             "  particles: only one snapshot -- the program writes one every "
