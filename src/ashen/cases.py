@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ashen.padding import restart_steps
+
 __all__ = [
     "Case", "CasesError", "FOUR_QUANTITIES", "FOUR_RADIAL_QUANTITIES", "load_cases",
 ]
@@ -294,34 +296,68 @@ class Case:
         return self.diag_steps.get(diag, self.steps)
 
 
-def _steps_from_range_dict(spec: dict, *, case_name: str, source: Path) -> list[int]:
-    missing = {"start", "stop"} - set(spec)
-    if missing:
-        raise CasesError(
-            f"{source}: case {case_name!r} steps table missing {sorted(missing)}"
-        )
-    start, stop, step = spec["start"], spec["stop"], spec.get("step", 1)
-    return list(range(int(start), int(stop), int(step)))
+def _steps_from_range_dict(
+    spec: dict, *, case_name: str, source: Path, run_dir: Path,
+) -> list[int]:
+    """A `{start, stop, step}` range table. With both ends it is
+    range(start, stop, step), whether or not those restarts exist (yet).
+
+    Leave out `start` and/or `stop` and the run's own restarts
+    (`jorek<step>.h5` in run_dir) fill them in: from its first restart, up
+    to and including its last. The steps are then picked *from the restarts
+    that exist* -- those at start, start + step, start + 2 step, ... -- so
+    `{step = 400}` needs no knowledge of the run's length and `{}` is every
+    restart. A folder that is missing or has no restarts gives no steps; the
+    entry points then report that case as they would anyway.
+    """
+    where = f"{source}: case {case_name!r} steps table"
+    unknown = sorted(set(spec) - {"start", "stop", "step"})
+    if unknown:
+        raise CasesError(f"{where} has unknown key(s) {unknown}; it takes start, stop, step")
+    try:
+        start, stop = (None if spec.get(k) is None else int(spec[k]) for k in ("start", "stop"))
+        step = int(spec.get("step", 1))
+    except (TypeError, ValueError):
+        raise CasesError(f"{where}: start, stop and step must be whole numbers, got {spec!r}") from None
+    if start is not None and stop is not None:
+        return list(range(start, stop, step))
+    if step < 1:
+        raise CasesError(f"{where}: step must be >= 1 when start or stop is left to the run")
+    available = restart_steps(run_dir) if run_dir.is_dir() else []
+    if not available:
+        return []
+    if start is None:
+        start = available[0]
+    return [
+        s for s in available
+        if s >= start and (s - start) % step == 0 and (stop is None or s < stop)
+    ]
 
 
-def _steps_from_spec(spec: object, *, case_name: str, source: Path) -> list[int]:
+def _steps_from_spec(
+    spec: object, *, case_name: str, source: Path, run_dir: Path,
+) -> list[int]:
     """A plain list, a `{start, stop, step}` range table, or a mix, e.g.
     `[200, 400, {start=400, stop=2000, step=200}]`. Unioned + sorted, so
     overlapping values (e.g. 400 as both explicit and a range boundary)
-    collapse to one instead of duplicating the step.
+    collapse to one instead of duplicating the step. A table without
+    `start` or `stop` takes them from run_dir's restarts
+    (_steps_from_range_dict).
     """
     if isinstance(spec, list):
         steps: set[int] = set()
         for item in spec:
             if isinstance(item, dict):
-                steps.update(
-                    _steps_from_range_dict(item, case_name=case_name, source=source)
-                )
+                steps.update(_steps_from_range_dict(
+                    item, case_name=case_name, source=source, run_dir=run_dir,
+                ))
             else:
                 steps.add(int(item))
         return sorted(steps)
     if isinstance(spec, dict):
-        return _steps_from_range_dict(spec, case_name=case_name, source=source)
+        return _steps_from_range_dict(
+            spec, case_name=case_name, source=source, run_dir=run_dir,
+        )
     raise CasesError(
         f"{source}: case {case_name!r} steps must be a list or a "
         f"{{start, stop, step}} table, got {spec!r}"
@@ -598,11 +634,16 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
         merged["ptrace_poincare"] = True
 
 
-def load_cases(path: Path | str) -> dict[str, Case]:
+def load_cases(path: Path | str, *, run_root: Path | str | None = None) -> dict[str, Case]:
     """Parse `cases.toml`. [defaults] seeds every case, overridable per
     case (mirrors legacy `analysis.py:80-104`'s shared-global params with
-    scattered per-run overrides)."""
+    scattered per-run overrides).
+
+    run_root is where the run folders are -- `run_root / <case name>` --
+    for a steps table that leaves its start or stop to the run's restarts.
+    Default: the current directory, as every entry point resolves them."""
     path = Path(path)
+    run_root = Path(run_root) if run_root is not None else Path.cwd()
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -641,12 +682,14 @@ def load_cases(path: Path | str) -> dict[str, Case]:
                 )
             if "steps" in sub:
                 diag_steps[diag] = _steps_from_spec(
-                    sub["steps"], case_name=name, source=path
+                    sub["steps"], case_name=name, source=path, run_dir=run_root / name,
                 )
 
         if "steps" not in merged:
             raise CasesError(f"{path}: case {name!r} has no 'steps'")
-        steps = _steps_from_spec(merged.pop("steps"), case_name=name, source=path)
+        steps = _steps_from_spec(
+            merged.pop("steps"), case_name=name, source=path, run_dir=run_root / name,
+        )
 
         if "psi_n_in" in merged:
             merged["psi_n_in"] = _psi_from_spec(
