@@ -86,7 +86,7 @@ def plot_wetted_area(
         ax_map.set_xticks(_PHI_TICKS[0])
         ax_map.set_xticklabels(_PHI_TICKS[1])
         ax_map.set_xlabel(r"toroidal angle $\phi$")
-        ax_map.set_ylabel(r"wall arc length $l$ [m] (0: outboard midplane, ccw)")
+        ax_map.set_ylabel(r"poloidal arc length $l$ [m] (0: outboard midplane, ccw)")
 
         ax_tor.stairs(result.counts.sum(axis=0) / total, result.phi_edges,
                       fill=True, color="tab:blue", alpha=0.7)
