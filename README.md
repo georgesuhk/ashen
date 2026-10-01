@@ -1507,6 +1507,14 @@ using every cell rather than the single peak, so steadier with few markers.
 Areas are true wall areas, `R dl dphi`, so an outboard cell counts for more
 than an inboard one.
 
+The map's colour is a hit density in 1/m^2: the share of all hits in a
+cell, divided by the cell's area. It integrates to 1 over the wall, so it
+is not bounded by 1 -- a cell of 0.016 m^2 holding 2 % of the hits shows
+1.3 -- and even wetting would be 1 / (wall area) everywhere.
+`ptrace_wetted_density_range = [min, max]` fixes the colour scale (default:
+the data's own range), e.g. to compare cases; cells above `max` take the
+top colour.
+
 `ptrace_wetted_bins = [n_l, n_phi]` (default `[36, 36]`, or one number for
 both) sets the cells. The 2D `f_tot` needs many more hits than cells to be
 trusted -- use thousands of markers (`ptrace_initialiser = "current_pdf_simple"`)
