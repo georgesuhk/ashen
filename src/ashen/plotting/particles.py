@@ -39,6 +39,7 @@ __all__ = [
     "PoincareOverlay",
     "RZPanel",
     "animate_rz_panels",
+    "boundary_view",
     "draw_boundary",
     "draw_particles",
     "particle_caption",
@@ -183,6 +184,22 @@ def _common_limits(views) -> tuple[tuple[float, float], tuple[float, float]]:
     return (x0 - pad_x, x1 + pad_x), (y0 - pad_y, y1 + pad_y)
 
 
+#: ((R_min, R_max), (Z_min, Z_max)) every panel or frame is drawn on.
+View = tuple[tuple[float, float], tuple[float, float]]
+
+
+def boundary_view(boundary: np.ndarray, margin: float) -> View:
+    """The R and Z limits that frame an (N, 2) (R, Z) outline: its bounding
+    box, grown about its centre by `margin` (0.25 = 25 % wider and taller)."""
+    boundary = np.asarray(boundary, dtype=float)
+    lo, hi = boundary.min(axis=0), boundary.max(axis=0)
+    centre, half = (lo + hi) / 2, (hi - lo) / 2 * (1 + margin)
+    return (
+        (float(centre[0] - half[0]), float(centre[0] + half[0])),
+        (float(centre[1] - half[1]), float(centre[1] + half[1])),
+    )
+
+
 def _draw_panel(ax, panel: RZPanel) -> None:
     for layer in panel.layers:
         layer(ax)
@@ -196,11 +213,13 @@ def plot_rz_panels(
     n_cols: int = 4,
     figsize_per_panel: tuple[float, float] = (3.2, 3.6),
     caption: str | None = None,
+    view: View | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save a grid of R-Z panels, row-major in panels order, all
-    on the same R and Z limits. caption, if given, goes above the grid --
-    e.g. what each layer's colours mean."""
+    on the same R and Z limits: view's (e.g. boundary_view), else whatever
+    holds everything drawn. caption, if given, goes above the grid -- e.g.
+    what each layer's colours mean."""
     import matplotlib.pyplot as plt
 
     out_path = Path(out_path)
@@ -220,7 +239,7 @@ def plot_rz_panels(
         for ax in axes[len(panels):]:
             ax.set_visible(False)
 
-        xlim, ylim = _common_limits([(ax.get_xlim(), ax.get_ylim()) for ax in used])
+        xlim, ylim = view or _common_limits([(ax.get_xlim(), ax.get_ylim()) for ax in used])
         for idx, ax in enumerate(used):
             ax.set_xlim(*xlim)
             ax.set_ylim(*ylim)
@@ -242,10 +261,11 @@ def animate_rz_panels(
     figsize: tuple[float, float] = (5.0, 5.6),
     fps: int = 2,
     caption: str | None = None,
+    view: View | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path | None:
     """Write the panels as frames of an animated GIF, all on the same R and
-    Z limits. None (nothing written) for fewer than two frames -- a
+    Z limits (view's, else whatever holds every frame). None (nothing written) for fewer than two frames -- a
     one-frame animation isn't one. Same Pillow writer as the profile GIFs.
     """
     import matplotlib.animation as animation
@@ -266,7 +286,7 @@ def animate_rz_panels(
             ax.cla()
             _draw_panel(ax, frame)
             views.append((ax.get_xlim(), ax.get_ylim()))
-        xlim, ylim = _common_limits(views)
+        xlim, ylim = view or _common_limits(views)
 
         def _update(index):
             ax.cla()

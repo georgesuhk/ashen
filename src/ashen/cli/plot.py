@@ -43,6 +43,7 @@ from ashen.cli._common import (
     show_config,
 )
 from ashen.castor_io import load_two_col_data
+from ashen.namelist import read_boundary_points
 from ashen.comparisons import Comparison, Dataset, load_comparisons
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
@@ -98,6 +99,7 @@ from ashen.plotting.particle_wetted import plot_wetted_area, wetted_caption
 from ashen.plotting.particles import (
     PoincareOverlay,
     animate_rz_panels,
+    boundary_view,
     particle_caption,
     particle_panels,
     plot_rz_panels,
@@ -2272,6 +2274,33 @@ def _original_boundary(case: Case, paths: RunPaths, *, diag: str = "particles"):
     return load_two_col_data(path)
 
 
+#: How far past the plasma boundary's bounding box the particle plots look:
+#: further for a run whose grid was extended beyond it (extend_bnd).
+PARTICLES_MARGIN_EXTENDED = 0.25
+PARTICLES_MARGIN = 0.10
+
+
+def _particles_view(case: Case, paths: RunPaths):
+    """The R and Z limits of `--diag particles`: the plasma boundary's
+    bounding box, grown about its centre by 25 % for a run prepared with
+    extend_bnd (the boundary is original_bnd.dat; the grid reaches beyond
+    it) and by 10 % otherwise (the boundary is in_bnd's, else the
+    namelist's). So a few particles far away don't shrink the plasma to a
+    dot; they are simply off the plot. None, with a note, without a boundary
+    -- the plot then fits everything drawn."""
+    original = paths.run_dir / "original_bnd.dat"
+    if original.is_file():
+        return boundary_view(load_two_col_data(original), PARTICLES_MARGIN_EXTENDED)
+    for source in (paths.in_bnd, paths.run_dir / case.namelist):
+        if source.is_file():
+            points = read_boundary_points(source)
+            if len(points) >= 3:
+                return boundary_view(np.array(points), PARTICLES_MARGIN)
+    print("  particles: no plasma boundary (original_bnd.dat, in_bnd or the namelist's) "
+          "to frame the plot on; fitted to everything drawn")
+    return None
+
+
 #: ptrace_gc's restart table in ptrace.log: "ptrace_gc: restart step N at t = T s".
 _LOGGED_RESTART = re.compile(r"ptrace_gc: restart step (\d+) at t =\s*(\S+) s")
 
@@ -2463,6 +2492,7 @@ def _plot_particles(
         color=case.ptrace_particle_color,
     )
     kwargs = _dpi_kwargs(dpi)
+    kwargs["view"] = _particles_view(case, paths)
     kwargs["caption"] = particle_caption(
         snapshots, boundary=boundary is not None, poincare=poincare is not None,
         color=case.ptrace_particle_color,

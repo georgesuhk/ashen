@@ -33,6 +33,7 @@ __all__ = [
     "read_field",
     "set_boundary_block",
     "set_fields",
+    "read_boundary_points",
     "write_boundary_file",
 ]
 
@@ -316,6 +317,26 @@ def format_boundary_block(
             f"psi_boundary({i:3d}) = {format(p, float_fmt)}"
         )
     return lines
+
+
+_BOUNDARY_POINT = re.compile(
+    r"R_boundary\(\s*\d+\s*\)\s*=\s*([^,\s]+)\s*,\s*Z_boundary\(\s*\d+\s*\)\s*=\s*([^,\s]+)",
+    re.IGNORECASE,
+)
+
+
+def read_boundary_points(path: Path | str) -> list[tuple[float, float]]:
+    """The (R, Z) points of the boundary block in `path` -- an in_bnd file
+    or a namelist, as format_boundary_block writes them; empty if it has
+    none."""
+    def number(text: str) -> float:
+        return float(text.lower().replace("d", "e"))
+
+    return [
+        (number(r), number(z))
+        for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+        for r, z in _BOUNDARY_POINT.findall(_strip_comment(line))
+    ]
 
 
 def _is_boundary_line(line: str) -> bool:

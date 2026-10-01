@@ -1365,6 +1365,18 @@ grid width. The PNG has a caption saying what the colours mean; the GIF
 doesn't. Figures are written into the ptrace folder, next to the files
 they draw.
 
+**The view is framed on the plasma boundary**, not on the particles, so
+a few particles far away don't shrink the plasma to a dot; anything outside
+the view is simply not shown. The limits are the boundary's bounding box,
+grown about its centre:
+
+- by 25 % for a run prepared with `extend_bnd`. The boundary is then
+  `original_bnd.dat`, and the grid reaches beyond it.
+- by 10 % otherwise. The boundary is then `in_bnd`'s, or the namelist's if
+  there is no `in_bnd`.
+
+Without any of those files the plot fits everything drawn, and says so.
+
 **How many panels you get is up to the program.**
 `re_gc_current_density_initialisation` writes `part_restart<time>.h5`
 every `write_step` (1e-4 s) and `part_restart.h5` at the end -- but its
