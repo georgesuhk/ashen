@@ -24,10 +24,15 @@ def _pm(value: float, error: float) -> str:
     return f"{value:.3f} ± {error:.3f}"
 
 
-def wetted_caption(result: WettedResult, hits: WallHits) -> str:
-    """The four measures, and how many hits they rest on."""
+def wetted_caption(
+    result: WettedResult, hits: WallHits, *, duration: float | None = None,
+) -> str:
+    """The four measures, how many hits they rest on and, given duration
+    [s], how much of the trace they were collected over."""
     placed = (f", {hits.n_left_grid} left the grid first (at the nearest wall point)"
               if hits.n_left_grid else "")
+    if duration is not None:
+        placed += f", over {duration * 1e6:.4g} µs of trace"
     return (
         f"f_pol = {_pm(result.f_pol, result.f_pol_err)}   "
         f"f_tor = {_pm(result.f_tor, result.f_tor_err)}   "
@@ -48,6 +53,7 @@ def plot_wetted_area(
     *,
     figsize: tuple[float, float] = (8.0, 6.0),
     density_range: tuple[float, float] | None = None,
+    duration: float | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save the (phi, l) hit-density map -- the share of all hits
@@ -97,7 +103,7 @@ def plot_wetted_area(
         ax_pol.set_xlabel("fraction")
         ax_pol.tick_params(labelleft=False)
 
-        fig.suptitle(wetted_caption(result, hits), fontsize=9)
+        fig.suptitle(wetted_caption(result, hits, duration=duration), fontsize=9)
         fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
     return out_path

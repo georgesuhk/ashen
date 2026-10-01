@@ -2635,19 +2635,28 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
         return
     n_l, n_phi = case.ptrace_wetted_bins
     result = wetted_area(hits, wall, n_l=n_l, n_phi=n_phi)
+    # How much of the trace the hits were collected over: the diagnostics
+    # times used, i.e. within ptrace_start_step..ptrace_end_step. The
+    # fractions grow with it, so numbers from different spans don't compare.
+    t_start, t_end = float(history.time[0]), float(history.time[-1])
+    duration = t_end - t_start
     out = plot_wetted_area(
         result, hits, folder / "particle_wetted.png",
-        density_range=case.ptrace_wetted_density_range, **_dpi_kwargs(dpi),
+        density_range=case.ptrace_wetted_density_range, duration=duration,
+        **_dpi_kwargs(dpi),
     )
     numbers = {
         **result.as_dict(),
         "n_hits": hits.n, "n_considered": hits.n_considered, "n_left_grid": hits.n_left_grid,
         "wall_area": wall.area, "wall_length": wall.length, "bins": [n_l, n_phi],
+        "t_start": t_start, "t_end": t_end, "duration": duration,
+        "duration_microseconds": duration * 1e6,
     }
     (folder / WETTED_RESULTS_FILE).write_text(
         json.dumps(numbers, indent=2) + "\n", encoding="utf-8"
     )
-    print(f"  particle_wetted: {wetted_caption(result, hits).replace(chr(10), '; ')} -> {out}")
+    caption = wetted_caption(result, hits, duration=duration)
+    print(f"  particle_wetted: {caption.replace(chr(10), '; ')} -> {out}")
 
 
 def _run_comparisons(

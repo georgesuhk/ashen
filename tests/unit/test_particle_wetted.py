@@ -191,6 +191,11 @@ def test_plot_writes_the_figure_and_the_numbers(campaign, capsys):
     numbers = json.loads((folder / "particle_wetted.json").read_text(encoding="utf-8"))
     assert numbers["n_hits"] == 20 and numbers["bins"] == [8, 6]
     assert 0 < numbers["f_tot"] <= numbers["f_pol"] <= 1
+    # how much of the trace the hits were collected over: two rows, 1 µs apart
+    assert "20 of 20 particles hit the wall, over 1 µs of trace" in out
+    assert numbers["duration_microseconds"] == pytest.approx(1.0, rel=1e-5)
+    assert numbers["duration"] == pytest.approx(numbers["t_end"] - numbers["t_start"])
+    assert numbers["t_start"] == 0.0
 
 
 def test_no_original_boundary_is_skipped(campaign, capsys):

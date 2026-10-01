@@ -1590,7 +1590,17 @@ seeing the numbers barely move is a quick check. The figure,
 `particle_wetted.png`, is the hit density on (phi, l) with the toroidal and
 poloidal profiles alongside; the numbers also go to `particle_wetted.json`
 in the ptrace folder. Like the other particle plots it is clipped to
-`ptrace_start_step..ptrace_end_step`. With `diag_step` much above the RK4
+`ptrace_start_step..ptrace_end_step`.
+
+The caption, the printed line and the JSON also say how much of the trace
+the hits were collected over (`over 123 µs of trace`; in the JSON
+`duration_microseconds`, with `t_start`, `t_end` and `duration` in
+seconds). That is the span of the diagnostics times used, after the
+clipping -- so for a trace still running, or cut short, it is how far the
+data got, not how far it was meant to go. More particles reach the wall
+the longer the trace, so compare numbers taken over like spans.
+
+With `diag_step` much above the RK4
 `dt`, the exit positions are still interpolated rather than exact -- a
 10 MeV electron covers about 3 m per 10 ns, mostly toroidally.
 
