@@ -238,3 +238,64 @@ def test_a_pattern_picks_the_matching_cases_that_trace(campaign, capsys):
 def test_a_pattern_matching_only_untraced_cases(campaign, capsys):
     assert ptrace_cli.main(["--case", "untr*"]) == 1
     assert "none of the cases ['untr*'] select sets ptrace_exe" in capsys.readouterr().err
+
+
+# --- ptrace_gc settings: printed when a trace runs or is queued ---------------------
+
+GC_CASES = CASES + """
+[cases.gc]
+steps              = [3000]
+ptrace_exe         = "./exe/ptrace_gc"
+ptrace_initialiser = "current_pdf_simple"
+ptrace_n_markers   = 500
+ptrace_E_kin_eV    = 1e7
+ptrace_cos_pitch   = 0.9
+ptrace_dt          = 5e-11
+"""
+
+
+def _gc(campaign):
+    make_run(campaign, name="gc")
+    (campaign / "cases.toml").write_text(GC_CASES, encoding="utf-8")
+    return campaign / "gc" / "ptrace" / "ptrace_gc"
+
+
+def test_settings_are_printed_when_a_trace_runs_but_not_when_cached(campaign, capsys):
+    folder = _gc(campaign)
+    assert ptrace_cli.main(["--case", "gc", "--run_i"]) == 0
+    out = capsys.readouterr().out
+    assert "  settings (ptrace_settings.nml in the trace folder):" in out
+    lines = [line.strip() for line in out.splitlines()]
+    assert any(l.startswith("n_markers") and l.endswith("= 500") for l in lines)
+    assert any(l.startswith("dt") and l.endswith("= 5e-11") for l in lines)
+    assert any(l.startswith("diag_step") and l.endswith("= 1e-08   (default)") for l in lines)
+    # the record of what it ran with, in its folder
+    recorded = (folder / "ptrace_settings.nml").read_text(encoding="utf-8")
+    assert "  n_markers = 500\n" in recorded and "  diag_step = 1d-08\n" in recorded
+
+    assert ptrace_cli.main(["--case", "gc", "--run_i"]) == 0
+    out = capsys.readouterr().out
+    assert "[cached]" in out and "settings (" not in out
+    assert ptrace_cli.main(["--case", "gc", "--run_i", "--force"]) == 0
+    assert "settings (" in capsys.readouterr().out
+
+
+def test_settings_are_printed_when_a_trace_is_queued(queued_campaign, capsys):
+    _gc(queued_campaign)
+    assert ptrace_cli.main(["--case", "gc", "--run"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("settings (ptrace_settings.nml") < out.index("queued: job 777")
+    assert "initialiser" in out and "current_pdf_simple" in out
+
+
+def test_a_program_without_settings_prints_none(campaign, capsys):
+    assert ptrace_cli.main(["--case", "run", "--run_i"]) == 0
+    assert "settings (" not in capsys.readouterr().out
+
+
+def test_a_params_file_in_ptrace_inputs_is_refused(campaign, capsys):
+    _gc(campaign)
+    (campaign / "cases.toml").write_text(
+        GC_CASES + 'ptrace_inputs = ["ptrace_params.nml"]\n', encoding="utf-8")
+    assert ptrace_cli.main(["--case", "gc", "--run_i"]) == 1
+    assert "ptrace_gc no longer reads a settings file of yours" in capsys.readouterr().err

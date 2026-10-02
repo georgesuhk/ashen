@@ -358,61 +358,91 @@ def test_stale_known_outputs_are_cleared_for_any_exe(run_dir, site, monkeypatch)
 
 # --- ptrace_inputs and ptrace_gc -----------------------------------------------------
 
+#: What a current_pdf_simple trace cannot do without.
+PDF = {"initialiser": "current_pdf_simple", "n_markers": 2, "E_kin_eV": [1e7],
+       "cos_pitch": [0.9]}
+
 
 @pytest.fixture
 def params(tmp_path):
-    path = tmp_path / "inputs" / "ptrace_params.nml"
+    path = tmp_path / "inputs" / "seeds.dat"
     path.parent.mkdir()
-    path.write_text("&ptrace\n n_markers = 1\n/\n", encoding="utf-8")
+    path.write_text("1 2 3\n", encoding="utf-8")
     return path
 
 
-def test_trace_gc_runs_on_case_settings_alone(run_dir, site):
-    """ptrace_params.nml is optional: the case's ptrace_<setting> keys can
-    say everything, written as ptrace_overrides.nml."""
+def test_settings_are_written_complete_and_kept_as_the_record(run_dir, site):
+    """Every setting -- the case's keys over the defaults -- goes into
+    ptrace_settings.nml, which stays in the trace folder after the run."""
     plan = _plan(run_dir, site, program="ptrace_gc",
-                 settings={"n_markers": 2, "dt": 1e-10, "initialiser": "current_pdf_simple",
-                           "E_kin_eV": [1e7], "hold_last_field": True})
+                 settings={**PDF, "dt": 5e-11, "hold_last_field": True})
     assert plan.copies == []
     (name, text), = plan.writes
-    assert name == "ptrace_overrides.nml"
-    assert "&ptrace\n" in text and text.endswith("/\n")
-    for line in ("  hold_last_field = .true.", "  dt = 1d-10",
+    assert name == "ptrace_settings.nml"
+    lines = text.splitlines()
+    assert lines[0] == ("! case run: restart steps 3000..3400 (3), linked from index 0; "
+                        "jorek_pdf.h5 is step 3000")
+    for line in ("&ptrace", "  restart_index = 0", "  hold_last_field = .true.", "  dt = 5d-11",
                  "  initialiser = 'current_pdf_simple'", "  n_markers = 2",
-                 "  E_kin_eV = 10000000.0"):
-        assert line in text.splitlines()
+                 "  E_kin_eV = 10000000.0",
+                 # not set by the case: the defaults, spelled out
+                 "  diag_step = 1d-08", "  snapshot_step = 0.0", "  n_snapshots = 100",
+                 "  charge = -1", "  seed = 1"):
+        assert line in lines
+    assert plan.settings["diag_step"] == 1e-8
     run_ptrace(plan)
-    assert (plan.work_dir / "ptrace_overrides.nml").read_text(encoding="utf-8") == text
+    assert (plan.work_dir / "ptrace_settings.nml").read_text(encoding="utf-8") == text
 
 
-def test_case_settings_are_in_the_dry_run(run_dir, site):
-    lines = _plan(run_dir, site, program="ptrace_gc", settings={"dt": 5e-11}).describe()
-    assert "write    ptrace_overrides.nml:" in lines
-    assert "             dt = 5d-11" in lines
+def test_settings_are_in_the_dry_run_with_defaults_marked(run_dir, site):
+    lines = _plan(run_dir, site, program="ptrace_gc", settings={**PDF, "dt": 5e-11}).describe()
+    assert "write    ptrace_settings.nml:" in lines
+    shown = [line.strip() for line in lines]
+    assert any(line.startswith("dt") and line.endswith("= 5e-11") for line in shown)
+    assert any(line.startswith("diag_step") and line.endswith("= 1e-08   (default)") for line in shown)
 
 
-def test_changed_case_settings_rerun_and_dropped_ones_are_cleared(run_dir, site):
-    plan = _plan(run_dir, site, program="ptrace_gc", settings={"dt": 1e-10})
+def test_changed_settings_rerun_and_a_case_without_any_writes_no_file(run_dir, site):
+    plan = _plan(run_dir, site, program="ptrace_gc", settings={**PDF, "dt": 1e-10})
     run_ptrace(plan)
-    assert not is_current(_plan(run_dir, site, program="ptrace_gc", settings={"dt": 2e-10}))
+    assert is_current(_plan(run_dir, site, program="ptrace_gc", settings={**PDF, "dt": 1e-10}))
+    assert not is_current(_plan(run_dir, site, program="ptrace_gc", settings={**PDF, "dt": 2e-10}))
     bare = _plan(run_dir, site, program="ptrace_gc")
+    assert bare.writes == [] and bare.settings == {}
     assert not is_current(bare)
     run_ptrace(bare)
-    assert not (bare.work_dir / "ptrace_overrides.nml").exists()
+    assert not (bare.work_dir / "ptrace_settings.nml").exists()
 
 
-def test_case_settings_and_an_overrides_input_clash(run_dir, site, tmp_path):
-    mine = tmp_path / "ptrace_overrides.nml"
-    mine.write_text("&ptrace\n/\n", encoding="utf-8")
-    with pytest.raises(PtraceError, match="don't list one in ptrace_inputs"):
-        _plan(run_dir, site, program="ptrace_gc", settings={"dt": 1e-10}, inputs=[mine])
+def test_setting_a_default_explicitly_is_the_same_trace(run_dir, site):
+    """The fingerprint is over every setting the trace runs with, so naming
+    a default changes nothing -- and a default changing in ashen would."""
+    run_ptrace(_plan(run_dir, site, program="ptrace_gc", settings=dict(PDF)))
+    assert is_current(_plan(run_dir, site, program="ptrace_gc", settings={**PDF, "dt": 1e-10}))
+
+
+def test_settings_that_do_not_make_a_trace(run_dir, site):
+    with pytest.raises(PtraceError, match="case 'run': ptrace_n_markers is not set"):
+        _plan(run_dir, site, program="ptrace_gc", settings={"dt": 1e-10})
+
+
+def test_settings_files_of_the_old_scheme_are_cleared(run_dir, site):
+    """A folder traced before ptrace_settings.nml may still hold the two
+    files ptrace_gc used to read: gone on restaging, so nobody takes them
+    for what the trace ran with."""
+    plan = _plan(run_dir, site, program="ptrace_gc", settings=dict(PDF))
+    plan.work_dir.mkdir(parents=True)
+    for name in ("ptrace_params.nml", "ptrace_overrides.nml"):
+        (plan.work_dir / name).write_text("&ptrace\n/\n", encoding="utf-8")
+    run_ptrace(plan)
+    assert sorted(p.name for p in plan.work_dir.glob("ptrace_*.nml")) == ["ptrace_settings.nml"]
 
 
 def test_inputs_are_copied_in_under_their_own_names(run_dir, site, params):
     plan = _plan(run_dir, site, program="ptrace_gc", inputs=[params])
-    assert plan.copies == [("ptrace_params.nml", params)]
+    assert plan.copies == [("seeds.dat", params)]
     assert run_ptrace(plan).ran
-    staged = plan.work_dir / "ptrace_params.nml"
+    staged = plan.work_dir / "seeds.dat"
     assert not staged.is_symlink()
     assert staged.read_text(encoding="utf-8") == params.read_text(encoding="utf-8")
 
@@ -424,7 +454,7 @@ def test_missing_input_file(run_dir, site, tmp_path):
 
 def test_edited_input_reruns(run_dir, site, params):
     run_ptrace(_plan(run_dir, site, program="ptrace_gc", inputs=[params]))
-    params.write_text("&ptrace\n n_markers = 2\n/\n", encoding="utf-8")
+    params.write_text("4 5 6\n", encoding="utf-8")
     assert not is_current(_plan(run_dir, site, program="ptrace_gc", inputs=[params]))
 
 
@@ -441,20 +471,20 @@ def test_an_input_dropped_from_the_list_is_cleared(run_dir, site, params, tmp_pa
 def test_trace_paths_are_relative_to_the_run_folder(run_dir, site):
     """ptrace_inputs and ptrace_particles resolve like ptrace_exe: a bare name
     is the file in the run folder, and "../" works."""
-    (run_dir / "ptrace_params.nml").write_text("&ptrace\n/\n", encoding="utf-8")
+    (run_dir / "seeds.dat").write_text("1\n", encoding="utf-8")
     (run_dir.parent / "shared.h5").write_bytes(b"seed")
-    plan = _plan(run_dir, site, inputs=["ptrace_params.nml"], particles="../shared.h5")
+    plan = _plan(run_dir, site, inputs=["seeds.dat"], particles="../shared.h5")
     assert dict(plan.copies) == {
         "part_restart.h5": run_dir.parent / "shared.h5",
-        "ptrace_params.nml": run_dir / "ptrace_params.nml",
+        "seeds.dat": run_dir / "seeds.dat",
     }
 
 
 def test_missing_relative_input_names_where_it_looked(run_dir, site):
     with pytest.raises(PtraceError) as info:
-        _plan(run_dir, site, exe="./exe/my_tracer", inputs=["ptrace_params.nml"])
+        _plan(run_dir, site, exe="./exe/my_tracer", inputs=["seeds.dat"])
     message = str(info.value)
-    assert f"looked for {run_dir / 'ptrace_params.nml'}" in message
+    assert f"looked for {run_dir / 'seeds.dat'}" in message
     assert "relative to the run folder" in message
 
 

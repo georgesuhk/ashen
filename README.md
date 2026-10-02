@@ -1275,12 +1275,11 @@ restarts it sees and how it is launched. Keys: `ptrace_start_step`
 restart it sees; default the run's last), `ptrace_particles` (a JOREK particle file to start from,
 *copied* in as `part_restart.h5` because the program overwrites that file
 at the end; ex6/ex7 and `ptrace_gc` ignore it), `ptrace_inputs` (files
-copied into the ptrace folder under their own names before the run -- e.g.
-`ptrace_gc`'s `ptrace_params.nml`), `ptrace_n_mpi`, `ptrace_omp_threads`
+copied into the ptrace folder under their own names before the run, for a
+program that reads some), `ptrace_n_mpi`, `ptrace_omp_threads`
 (default: `site.toml`'s `[diagnostics]`). Like `ptrace_exe`, the paths in
 `ptrace_particles` and `ptrace_inputs` are **relative to the run folder**, so
-a bare `"ptrace_params.nml"` is the file in the run folder -- and
-`[defaults] ptrace_inputs = ["ptrace_params.nml"]` gives every case its own.
+a bare `"seeds.dat"` is the file in the run folder.
 
 Each trace runs in `<run>/ptrace/<executable filename>/`, with its output in
 `ptrace.log`. A completed trace is `[cached]` until its settings, restarts,
@@ -1326,34 +1325,87 @@ first linked restart's time to the last one's -- static or evolving. No
 the settings traces for that long instead; static fields with a single
 restart need it.)
 
-**Settings** come from a `&ptrace` namelist, `ptrace_params.nml` (start
-from `fortran/ptrace_params.example.nml`), and/or from the case itself: any
-setting as `ptrace_<name>` in `cases.toml`. ashen writes those into
-`ptrace_overrides.nml`, which `ptrace_gc` reads after `ptrace_params.nml`,
-so a case key wins. Either can be left out; everything in one place works:
+**Settings** are keys of the case in `cases.toml`: each one as
+`ptrace_<name>`, with a default for most. There is no settings file of your
+own to keep (`ptrace_params.nml` is gone, and listing one in `ptrace_inputs`
+is an error that says so):
 
 ```toml
 [cases."qa2.1_g2.3/eta1e-3_RE"]
 ptrace_exe        = "./exe/ptrace_gc"
 ptrace_start_step = 3000
 ptrace_end_step   = 3400
-ptrace_inputs     = ["ptrace_params.nml"]    # optional: shared settings, in the run folder
-ptrace_initialiser = "current_pdf_simple"    # these override ptrace_params.nml
+ptrace_initialiser = "current_pdf_simple"
 ptrace_n_markers   = 1000
 ptrace_E_kin_eV    = 1e7
 ptrace_cos_pitch   = 0.9
-ptrace_dt          = 1e-10
 ```
 
-The keys: `ptrace_field_mode`, `ptrace_hold_last_field`, `ptrace_t_span`,
-`ptrace_dt`, `ptrace_diag_step`, `ptrace_snapshot_step`, `ptrace_mass`,
-`ptrace_initialiser`, `ptrace_n_markers`, `ptrace_R0`, `ptrace_Z0`,
-`ptrace_phi0`, `ptrace_E_kin_eV`, `ptrace_cos_pitch`, `ptrace_charge`,
-`ptrace_pdf_n_sub`, `ptrace_seed` -- the `&ptrace` names,
-in any case. They're checked when `cases.toml` is loaded, a changed one
-reruns the trace, and `--dry-run` shows the file. Like `[defaults]` for any
-key, `[defaults] ptrace_dt = 1e-10` sets it for every case. Only `ptrace_gc`
-(under any filename) reads them; JOREK's own programs ignore the file.
+| key | default | |
+|---|---|---|
+| `ptrace_n_markers` | none: required | how many markers, up to 100000 |
+| `ptrace_E_kin_eV` | none: required | kinetic energy [eV] |
+| `ptrace_initialiser` | `"markers"` | how the markers are placed, see below |
+| `ptrace_R0`, `ptrace_Z0` | none: required for `"markers"` | where each marker starts [m] |
+| `ptrace_phi0` | 0 | its toroidal angle [rad] |
+| `ptrace_cos_pitch` | none: required | v_par / v, in -1..1 |
+| `ptrace_charge` | -1 | [e] |
+| `ptrace_mass` | 5.48579909065e-4 | [amu]: an electron |
+| `ptrace_dt` | 1e-10 | RK4 step [s] |
+| `ptrace_diag_step` | 1e-8 | between `ptrace_diag.h5` writes [s] |
+| `ptrace_n_snapshots` | 100 | about how many `part_restart_s<step>_t<time>.h5` snapshots over the trace, however long it is; 0 = only the final `part_restart.h5` |
+| `ptrace_snapshot_step` | not set | a fixed time between snapshots [s] instead; when set it is used and `n_snapshots` is not (0 = only the final one) |
+| `ptrace_t_span` | 0 | 0: trace from `ptrace_start_step` to `ptrace_end_step`; > 0: for this long [s] instead |
+| `ptrace_field_mode` | `"evolving"` | or `"static"`: the start step's field, frozen |
+| `ptrace_hold_last_field` | false | with `t_span` past the last restart: keep its field (true) or stop there (false) |
+| `ptrace_pdf_n_sub` | 4 | `current_pdf_simple`: cells per grid element side |
+| `ptrace_seed` | 1 | `current_pdf_simple`: same seed, same markers |
+
+- **Names** are the tracer's `&ptrace` names, in any case. `[defaults]`
+  seeds them like any key: `[defaults] ptrace_dt = 1e-10` is every case's.
+- **Checked when `cases.toml` is loaded**, so a trace that cannot run is
+  refused before it is staged or queued: a required key missing, a list
+  whose length is not `n_markers`, a negative step.
+- **Per-marker keys** (`R0`, `Z0`, `phi0`, `E_kin_eV`, `cos_pitch`,
+  `charge`): under `"markers"`, one value is every marker's and a list is one
+  value each. Under `current_pdf_simple` every marker shares one energy,
+  pitch and charge, and `R0`/`Z0`/`phi0` are refused -- it places the
+  markers itself.
+- **Snapshots scale with the trace.** By default the tracer writes about
+  `n_snapshots` of them: one every (traced time) / `n_snapshots`, rounded up
+  to 1, 2 or 5 x 10^k s. A 123 us trace gets one every 2 us, 62 in all; a
+  1 ms trace one every 10 us. So between 40 and 100, at round times, and
+  the animation has the same length whatever the trace's. `ptrace.log` says
+  which spacing it chose. Set `ptrace_snapshot_step` for the same physical
+  spacing across cases, e.g. to compare frames at matching times.
+- **Each trace records what it ran with.** ashen writes *every* setting,
+  defaults included, to `ptrace_settings.nml` in the trace folder
+  (`<run>/ptrace/<executable>/`). That is the only settings file `ptrace_gc`
+  reads, so it is exactly what the trace used, and it stays there with the
+  outputs.
+- **Printed when a trace runs or is queued** (`ptrace --run_i`, `--run`),
+  with the defaults marked; `--dry-run` shows the same.
+- A changed setting, or a changed default, makes the trace out of date.
+- Only `ptrace_gc` (under any filename) reads them. A case that sets none
+  gets no file, as for JOREK's own programs.
+
+```
+==== qa2.1_g2.3/eta1e-3_RE (./exe/ptrace_gc) ====
+  steps 3000..3400 (3 restart(s))
+  settings (ptrace_settings.nml in the trace folder):
+    field_mode      = evolving   (default)
+    dt              = 1e-10   (default)
+    snapshot_step   = from n_snapshots   (default)
+    n_snapshots     = about 100, at round times   (default)
+    initialiser     = current_pdf_simple
+    n_markers       = 1000
+    E_kin_eV        = 10000000.0
+    ...
+```
+
+A binary built before this change reads `ptrace_params.nml` and
+`ptrace_overrides.nml` instead and stops at once, finding neither: rebuild
+it from `fortran/ptrace_gc.f90`.
 
 **Initialisers.** `initialiser` in `&ptrace` chooses how the markers are
 placed:
@@ -1429,7 +1481,8 @@ the grid. Each panel's title gives the time and how many of all the
 particles have escaped so far, as `XX/XX escaped` -- lost from the grid, or (with
 `ptrace_original_boundary`) out of the plasma boundary. Particles at every
 toroidal angle are projected onto the one R-Z plane. The PNG has a caption saying what the colours mean; the GIF
-doesn't. Figures are written into the ptrace folder, next to the files
+doesn't, and plays in about ten seconds however many frames it has (2 to
+20 a second). Figures are written into the ptrace folder, next to the files
 they draw.
 
 **The view is framed on the plasma boundary**, not on the particles, so

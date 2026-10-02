@@ -246,8 +246,9 @@ class Case:
     #: folder, like ptrace_exe.
     ptrace_particles: str | None = None
     #: `bin/ptrace`: files copied into the trace folder under their own names
-    #: before the program runs -- e.g. ptrace_gc's ptrace_params.nml. Relative
-    #: to the run folder, like ptrace_exe.
+    #: before the program runs, for a program that reads some. Relative to
+    #: the run folder, like ptrace_exe. (Not ptrace_gc's settings: those are
+    #: the ptrace_<setting> keys.)
     ptrace_inputs: list[str] = field(default_factory=list)
     #: `bin/ptrace`: MPI ranks. re_gc samples its particle count per rank.
     ptrace_n_mpi: int = 1
@@ -255,8 +256,9 @@ class Case:
     ptrace_omp_threads: int = 0
     #: `bin/ptrace`: ptrace_gc's &ptrace settings, from the case's
     #: ptrace_<setting> keys (ptrace_dt, ptrace_initialiser, ...; see
-    #: particle_programs.PTRACE_SETTINGS). Written to ptrace_overrides.nml,
-    #: which ptrace_gc reads after ptrace_params.nml, so these win.
+    #: particle_programs.PTRACE_SETTINGS) -- those the case sets; the rest
+    #: are PTRACE_DEFAULTS. All of them are written to ptrace_settings.nml
+    #: in the trace folder, the only settings ptrace_gc reads.
     ptrace_settings: dict = field(default_factory=dict)
     #: `plot --diag particles`: draw the Poincare punctures `analyse --diag
     #: poincare` cached, under each snapshot, from the traced restart nearest
@@ -503,6 +505,12 @@ def _collect_ptrace_settings(merged: dict, where: str) -> None:
             raise CasesError(f"{where} sets ptrace_{name} twice (names ignore case)")
         settings[name] = _ptrace_setting(name, PTRACE_SETTINGS[name], merged.pop(key), where)
     if settings:
+        from ashen.particle_programs import PtraceSettingsError, resolve_settings
+
+        try:
+            resolve_settings(settings)
+        except PtraceSettingsError as exc:
+            raise CasesError(f"{where}: {exc}") from None
         merged["ptrace_settings"] = settings
 
 
@@ -559,6 +567,16 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
             raise CasesError(
                 f"{where}: part_restart.h5 in ptrace_inputs -- starting particles "
                 "go in ptrace_particles"
+            )
+        from ashen.particle_programs import RETIRED_SETTINGS_FILES, SETTINGS_FILE
+
+        settings_files = sorted(set(names) & {SETTINGS_FILE, *RETIRED_SETTINGS_FILES})
+        if settings_files:
+            raise CasesError(
+                f"{where}: {settings_files} in ptrace_inputs -- ptrace_gc no longer reads "
+                "a settings file of yours. Set each setting as a ptrace_<name> key "
+                "(ptrace_dt, ptrace_n_markers, ...; in [defaults] to share them); ashen "
+                f"writes them all to {SETTINGS_FILE} in the trace folder"
             )
         merged["ptrace_inputs"] = list(spec)
 

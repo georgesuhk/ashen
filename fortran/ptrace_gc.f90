@@ -3,13 +3,13 @@
 !> A configurable version of ex7_jorek, for ashen's `ptrace` (a case's
 !> ptrace_exe pointing at the built binary). Built only on the HPC -- ashen
 !> is developed without a Fortran compiler. Everything ex7_jorek hard-codes
-!> is read from the &ptrace namelist, in two files, both optional:
-!>
-!>   ptrace_params.nml     -- yours, via the case's ptrace_inputs (example:
-!>                            ashen's fortran/ptrace_params.example.nml)
-!>   ptrace_overrides.nml  -- written by ashen from the case's ptrace_<name>
-!>                            keys in cases.toml (ptrace_dt, ptrace_initialiser,
-!>                            ...); read second, so a value there wins
+!> is read from the &ptrace namelist in ptrace_settings.nml, next to the
+!> binary's working folder. ashen writes that file into the trace folder
+!> from the case's ptrace_<name> keys in cases.toml (ptrace_dt,
+!> ptrace_initialiser, ...) over its defaults -- every setting, so it is also
+!> the record of what the trace ran with. (Run by hand: write one yourself.)
+!> The values below are this program's own defaults, the same as ashen's
+!> (ashen.particle_programs.PTRACE_DEFAULTS):
 !>
 !>   &ptrace
 !>     field_mode    = 'evolving'  ! 'static': jorek_restart.h5 only, frozen
@@ -24,14 +24,19 @@
 !>                                 !   i.e. ptrace_end_step under ashen
 !>     dt            = 1.d-10      ! [s] RK4 step
 !>     diag_step     = 1.d-8       ! [s] between diagnostics writes
-!>     snapshot_step = 1.d-6       ! [s] between part_restart_s<step>_t<time>.h5
-!>                                 !   files; 0 = only the final part_restart.h5
+!>     n_snapshots   = 100         ! about how many part_restart_s<step>_t<time>.h5
+!>                                 !   files over the trace: one every (traced
+!>                                 !   time)/n_snapshots, rounded up to 1, 2 or
+!>                                 !   5 x 10^k s, so 40 to 100 of them at round
+!>                                 !   times. 0 = only the final part_restart.h5
+!>     snapshot_step = 0.d0        ! [s] between them, if > 0: used instead of
+!>                                 !   n_snapshots
 !>     mass          = 5.48579909065d-4  ! [amu]
 !>     initialiser   = 'markers'   ! how the markers are placed, see below
-!>     n_markers     = 1
-!>     R0 = 3.68  Z0 = 0.  phi0 = 0.     ! [m], [m], [rad]
-!>     E_kin_eV = 1.d7                   ! kinetic energy [eV]
-!>     cos_pitch = 0.                    ! v_par/v
+!>     n_markers     =             ! no default: how many markers
+!>     R0 =   Z0 =   phi0 = 0.           ! [m], [m], [rad]; R0, Z0: no default
+!>     E_kin_eV =                        ! kinetic energy [eV]; no default
+!>     cos_pitch =                       ! v_par/v, in -1..1; no default
 !>     charge = -1                       ! [e]
 !>   /
 !>
@@ -81,7 +86,7 @@
 !>
 !> Outputs: ptrace_diag.h5 (write_particle_diagnostics: energy, mu, psi_n,
 !> p_phi, lost, theta, phi, R, Z per diag_step -- what `plot --diag
-!> particle_exits` reads); every snapshot_step from the start,
+!> particle_exits` reads); every snapshot_step (see n_snapshots) from the start,
 !> part_restart_s<step>_t<time>.h5 -- <step> the JOREK step (index_now) of
 !> the restart closest in time, <time> the simulation time in seconds, e.g.
 !> part_restart_s003200_t2.500000E-03.h5; and part_restart.h5 at the end.
@@ -91,8 +96,7 @@
 !> it into a JOREK checkout's particles/examples/ -- the Makefile picks up
 !> any program there by filename -- then `make ptrace_gc` with the same MODEL
 !> as the run being traced.
-!> Run with `mpirun -n N ./ptrace_gc < in_main`, next to ptrace_params.nml
-!> and/or ptrace_overrides.nml.
+!> Run with `mpirun -n N ./ptrace_gc < in_main`, next to ptrace_settings.nml.
 
 program ptrace_gc
 
@@ -113,24 +117,26 @@ use mpi
 implicit none
 
 integer, parameter :: MAX_MARKERS = 100000
-!> Read in this order; a later file overrides what an earlier one set.
-character(len=*), parameter :: PARAMS_FILES(2) = ['ptrace_params.nml   ', 'ptrace_overrides.nml']
+!> The one file the &ptrace namelist is read from.
+character(len=*), parameter :: SETTINGS_FILE = 'ptrace_settings.nml'
 
 ! --- &ptrace namelist ---
 character(len=16) :: field_mode = 'evolving'
 integer           :: restart_index = 0
 logical           :: hold_last_field = .false.
 real*8            :: t_span = 0.d0, dt = 1.d-10, diag_step = 1.d-8, snapshot_step = 0.d0
+integer           :: n_snapshots = 100
 real*8            :: mass = 5.48579909065d-4
 integer           :: n_markers = 0
 real*8            :: R0(MAX_MARKERS) = 0.d0, Z0(MAX_MARKERS) = 0.d0, phi0(MAX_MARKERS) = 0.d0
-real*8            :: E_kin_eV(MAX_MARKERS) = 0.d0, cos_pitch(MAX_MARKERS) = 0.d0
+! cos_pitch has no default: 2 is outside -1..1, so leaving it unset is caught below.
+real*8            :: E_kin_eV(MAX_MARKERS) = 0.d0, cos_pitch(MAX_MARKERS) = 2.d0
 integer           :: charge(MAX_MARKERS) = -1
 character(len=32) :: initialiser = 'markers'
 integer           :: pdf_n_sub = 4, pdf_n_phi = 16, seed = 1  ! pdf_n_phi: ignored, kept readable
 namelist /ptrace/ field_mode, restart_index, hold_last_field, t_span, dt, diag_step, &
                  snapshot_step, mass, n_markers, R0, Z0, phi0, E_kin_eV, cos_pitch, charge, &
-                 initialiser, pdf_n_sub, pdf_n_phi, seed
+                 initialiser, pdf_n_sub, pdf_n_phi, seed, n_snapshots
 
 !> Two times closer than this [s] are the same time (mod_event's TICK).
 real*8, parameter :: SNAP_TICK = 1.d-12
@@ -141,7 +147,7 @@ type(write_particle_diagnostics) :: diag
 type(particle_gc_relativistic)   :: marker
 real*8                           :: t_start, t_stop, target_time, rest_energy_eV, t_snap
 integer                          :: u, io, ierr, k, j, n_local, ifail, n_lost, n_snap
-integer                          :: my_rank, n_ranks, n_read
+integer                          :: my_rank, n_ranks
 logical                          :: exists
 ! The restarts this run reads: their JOREK step (index_now) and time [s]
 integer                          :: n_rst
@@ -155,25 +161,22 @@ call MPI_COMM_SIZE(MPI_COMM_WORLD, n_ranks, ierr)
 
 ! --- parameters: read on rank 0, broadcast ---
 if (my_rank .eq. 0) then
-  n_read = 0
-  do k = 1, size(PARAMS_FILES)
-    inquire(file=trim(PARAMS_FILES(k)), exist=exists)
-    if (.not. exists) cycle
-    open(newunit=u, file=trim(PARAMS_FILES(k)), status='old', action='read', iostat=io)
-    if (io .eq. 0) read(u, nml=ptrace, iostat=io)
-    close(u)
-    if (io .ne. 0) then
-      write(*,*) 'ERROR: ptrace_gc: cannot read the &ptrace namelist in ', trim(PARAMS_FILES(k))
-      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
-    end if
-    write(*,*) 'ptrace_gc: settings from ', trim(PARAMS_FILES(k))
-    n_read = n_read + 1
-  end do
-  if (n_read .eq. 0) then
-    write(*,*) 'ERROR: ptrace_gc: found neither ', trim(PARAMS_FILES(1)), ' nor ', &
-      trim(PARAMS_FILES(2)), ' -- nothing says how many markers or where'
+  inquire(file=SETTINGS_FILE, exist=exists)
+  if (.not. exists) then
+    write(*,*) 'ERROR: ptrace_gc: no ', SETTINGS_FILE, ' here -- nothing says how many ', &
+      'markers or where. ashen writes it from the case''s ptrace_<name> keys in ', &
+      'cases.toml (ptrace_n_markers, ptrace_E_kin_eV, ...); ptrace_params.nml and ', &
+      'ptrace_overrides.nml are no longer read'
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
   end if
+  open(newunit=u, file=SETTINGS_FILE, status='old', action='read', iostat=io)
+  if (io .eq. 0) read(u, nml=ptrace, iostat=io)
+  close(u)
+  if (io .ne. 0) then
+    write(*,*) 'ERROR: ptrace_gc: cannot read the &ptrace namelist in ', SETTINGS_FILE
+    call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+  end if
+  write(*,*) 'ptrace_gc: settings from ', SETTINGS_FILE
   if (t_span .lt. 0.d0) then
     write(*,*) 'ERROR: ptrace_gc: t_span must be >= 0 (0 = until the last restart), got ', t_span
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
@@ -184,6 +187,10 @@ if (my_rank .eq. 0) then
   end if
   if (snapshot_step .lt. 0.d0) then
     write(*,*) 'ERROR: ptrace_gc: snapshot_step must be >= 0, got ', snapshot_step
+    call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+  end if
+  if (n_snapshots .lt. 0) then
+    write(*,*) 'ERROR: ptrace_gc: n_snapshots must be >= 0, got ', n_snapshots
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
   end if
   if (trim(field_mode) .ne. 'static' .and. trim(field_mode) .ne. 'evolving') then
@@ -214,6 +221,7 @@ call MPI_Bcast(t_span, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(dt, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(diag_step, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(snapshot_step, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+call MPI_Bcast(n_snapshots, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(mass, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(n_markers, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(R0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
@@ -298,6 +306,15 @@ if (t_span .gt. 0.d0 .and. trim(field_mode) .eq. 'evolving' .and. .not. hold_las
   end if
 end if
 
+! --- how often to write a snapshot, if not given: from the traced time ---
+! t_start and t_stop are the same on every rank, so this is too.
+if (snapshot_step .le. 0.d0 .and. n_snapshots .gt. 0 .and. t_stop .gt. t_start + SNAP_TICK) then
+  snapshot_step = tidy_step((t_stop - t_start) / n_snapshots)
+  if (my_rank .eq. 0) write(*,'(A,ES10.3,A,I0,A,I0,A)') 'ptrace_gc: a snapshot every ', &
+    snapshot_step, ' s: ', int((t_stop - t_start) / snapshot_step * (1.d0 + 1.d-9)) + 1, &
+    ' over the trace (n_snapshots = ', n_snapshots, ')'
+end if
+
 ! --- markers, round-robin over ranks ---
 sim%groups(1)%mass = mass
 n_local = 0
@@ -325,7 +342,8 @@ do k = 1, n_markers
       cycle
     end if
     if (abs(cos_pitch(k)) .gt. 1.d0) then
-      write(*,'(A,I0,A,ES12.4)') 'ERROR: ptrace_gc: marker ', k, ' has |cos_pitch| > 1: ', cos_pitch(k)
+      write(*,'(A,I0,A,ES12.4,A)') 'ERROR: ptrace_gc: marker ', k, ' has |cos_pitch| > 1: ', cos_pitch(k), &
+        ' (cos_pitch has no default: set it)'
       call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
     end if
     marker = p
@@ -579,6 +597,25 @@ subroutine read_restart_table(first_index, n, steps, times)
   steps = all_steps(1:n)
   times = all_times(1:n)
 end subroutine read_restart_table
+
+!> raw rounded up to 1, 2 or 5 times a power of ten: a snapshot spacing
+!> that puts the snapshots at round times. raw > 0.
+pure function tidy_step(raw) result(step)
+  real*8, intent(in) :: raw
+  real*8 :: step, base, mantissa
+  real*8, parameter :: SLACK = 1.d0 + 1.d-9   ! 2.0000000001 is still 2
+  base     = 10.d0**floor(log10(raw))
+  mantissa = raw / base                       ! in [1, 10)
+  if (mantissa .le. 1.d0 * SLACK) then
+    step = base
+  else if (mantissa .le. 2.d0 * SLACK) then
+    step = 2.d0 * base
+  else if (mantissa .le. 5.d0 * SLACK) then
+    step = 5.d0 * base
+  else
+    step = 10.d0 * base
+  end if
+end function tidy_step
 
 !> One restart's step (index_now) and time (t_now, converted to seconds).
 subroutine read_restart_stamp(filename, t_norm, step, time)
