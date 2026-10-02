@@ -275,3 +275,186 @@ def test_energies_are_printed_with_their_unit_and_written_in_eV():
     assert line.endswith("= 500 keV, 10 MeV, 2.5 MeV")
     # the file keeps plain eV: it is what ptrace_gc reads
     assert "  E_kin_eV = 500000.0, 10000000.0, 2500000.0\n" in settings_namelist(resolved)
+
+
+# --- stopping a trace early ---------------------------------------------------------
+
+
+def test_stall_rule_is_off_and_hidden_by_default():
+    resolved = resolve_settings(PDF)
+    assert resolved["stop_when_stalled"] is False
+    assert (resolved["stall_rate_fraction"], resolved["stall_min_lost"],
+            resolved["stall_min_time"], resolved["stall_window"]) == (0.05, 0.10, 0.5, 0.0)
+    shown = "\n".join(describe_settings(resolved, PDF))
+    assert "stop_when_stalled" in shown and "stall_" not in shown.replace("stop_when_stalled", "")
+    # the file still records every one of them
+    text = settings_namelist(resolved)
+    for line in ("  stop_when_stalled = .false.", "  stall_rate_fraction = 0.05",
+                 "  stall_min_lost = 0.1", "  stall_min_time = 0.5", "  stall_window = 0.0"):
+        assert line in text.splitlines()
+
+
+def test_stall_rule_on_is_printed_with_its_settings():
+    given = {**PDF, "stop_when_stalled": True, "stall_rate_fraction": 0.1}
+    lines = {l.split("=")[0].strip(): l.split("=", 1)[1].strip()
+             for l in describe_settings(resolve_settings(given), given)}
+    assert lines["stop_when_stalled"] == "true"
+    assert lines["stall_rate_fraction"] == "0.1"
+    assert lines["stall_min_lost"] == "0.1   (default)"
+    assert lines["stall_min_time"] == "0.5   (default)"
+    assert lines["stall_window"] == "a tenth of the trace   (default)"
+    given["stall_window"] = 2e-5
+    assert "2e-05" in "\n".join(describe_settings(resolve_settings(given), given))
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"stall_rate_fraction": 0.0}, "ptrace_stall_rate_fraction must be between 0 and 1"),
+    ({"stall_rate_fraction": 1.0}, "ptrace_stall_rate_fraction must be between 0 and 1"),
+    ({"stall_min_lost": 1.5}, "ptrace_stall_min_lost is a fraction, 0 to 1"),
+    ({"stall_min_time": -0.1}, "ptrace_stall_min_time is a fraction, 0 to 1"),
+    ({"stall_window": -1e-6}, "ptrace_stall_window must be >= 0"),
+])
+def test_invalid_stall_settings(change, message):
+    with pytest.raises(PtraceSettingsError, match=message):
+        resolve_settings({**PDF, **change})
+
+
+def test_boundary_file_is_what_the_fortran_reads():
+    """A line with n, then n lines of R Z -- read_boundary's list-directed reads."""
+    from ashen.particle_programs import BOUNDARY_FILE, boundary_file_text
+
+    text = boundary_file_text([(3.5, -0.25), (4.0, -0.25), (4.0, 0.25)])
+    assert text == "3\n3.5 -0.25\n4.0 -0.25\n4.0 0.25\n"
+    fortran = FORTRAN.read_text(encoding="utf-8")
+    assert f"BOUNDARY_FILE = '{BOUNDARY_FILE}'" in fortran
+    body = fortran[fortran.index("subroutine read_boundary"):fortran.index("end subroutine read_boundary")]
+    assert "read(unit, *, iostat=io) n" in body and "read(unit, *, iostat=io) R(i), Z(i)" in body
+
+
+def test_fortran_point_in_polygon_is_the_plots_one():
+    """Both sides must agree on who has left: the same even-odd ray cast."""
+    fortran = FORTRAN.read_text(encoding="utf-8")
+    body = fortran[fortran.index("logical function inside_boundary"):
+                   fortran.index("end function inside_boundary")]
+    assert "if ((bnd_Z(i) .gt. Z) .neqv. (bnd_Z(j) .gt. Z)) then" in body
+    assert ("if (R .lt. bnd_R(i) + (Z - bnd_Z(i)) * (bnd_R(j) - bnd_R(i)) / "
+            "(bnd_Z(j) - bnd_Z(i)))") in body
+
+
+def _stall_stop(times, n_left, n_markers, *, rate_fraction=0.05, min_lost=0.10, min_time=0.5,
+                window=None, samples_per_window=4):
+    """ptrace_gc's check_stop stall rule, transcribed: the time it stops the
+    trace at, or None. times are where the push loop stops (every
+    diag_step); n_left the markers gone by each. Kept in step with the
+    Fortran by test_stall_rule_is_the_fortran_one."""
+    tick = 1e-12
+    t_start, t_stop = times[0], times[-1]
+    window = window or (t_stop - t_start) / 10
+    sample_t, sample_n = [], []
+    t_check, max_rate = t_start, 0.0
+    for t, n in zip(times, n_left):
+        if t < t_check - tick:
+            continue
+        sample_t.append(t)
+        sample_n.append(n)
+        t_check = t + window / samples_per_window
+        back = next((i for i in range(len(sample_t) - 2, -1, -1)
+                     if sample_t[i] <= t - window + tick), None)
+        if back is None:
+            continue
+        rate = (sample_n[-1] - sample_n[back]) / (sample_t[-1] - sample_t[back])
+        max_rate = max(max_rate, rate)
+        if max_rate <= 0:
+            continue
+        if n < min_lost * n_markers and t - t_start < min_time * (t_stop - t_start):
+            continue
+        if rate > rate_fraction * max_rate:
+            continue
+        return t
+    return None
+
+
+def test_stall_rule_is_the_fortran_one():
+    fortran = FORTRAN.read_text(encoding="utf-8")
+    body = fortran[fortran.index("subroutine check_stop"):fortran.index("end subroutine check_stop")]
+    for line in (
+        "if (sim%time .lt. t_check - SNAP_TICK) return",
+        "t_check = sim%time + stall_window / SAMPLES_PER_WINDOW",
+        "if (sample_t(i) .le. sim%time - stall_window + SNAP_TICK) then",
+        "loss_rate = (sample_n(n_samples) - sample_n(j)) / (sample_t(n_samples) - sample_t(j))",
+        "max_loss_rate = max(max_loss_rate, loss_rate)",
+        "if (max_loss_rate .le. 0.d0) return",
+        "if (n_left .lt. stall_min_lost * n_markers .and. &",
+        "sim%time - t_start .lt. stall_min_time * (t_stop - t_start)) return",
+        "if (loss_rate .gt. stall_rate_fraction * max_loss_rate) return",
+    ):
+        assert line in body, line
+    assert "SAMPLES_PER_WINDOW = 4" in fortran
+    assert "if (stall_window .le. 0.d0) stall_window = (t_stop - t_start) / 10.d0" in fortran
+
+
+def _loss_curve(n_markers, pieces, n_times=1201, length=120e-6):
+    """Markers gone over a trace: `pieces` are (start, end, count) -- count
+    markers leaving evenly between those fractions of the trace."""
+    import numpy as np
+
+    times = np.linspace(0.0, length, n_times)
+    frac = times / length
+    gone = np.zeros(n_times)
+    for start, end, count in pieces:
+        gone += count * np.clip((frac - start) / (end - start), 0.0, 1.0)
+    return times, np.floor(gone + 1e-9).astype(int), n_markers
+
+
+def test_stalled_after_the_losses_saturate():
+    """Losses from 20 % to 50 % of the trace, then nothing: stopped soon
+    after -- a window (a tenth of the trace) of no loss is what shows it."""
+    times, gone, n = _loss_curve(1000, [(0.2, 0.5, 600)])
+    stopped = _stall_stop(times, gone, n)
+    assert 0.55 <= stopped / times[-1] <= 0.65
+
+
+def test_never_stopped_while_the_losses_go_on():
+    times, gone, n = _loss_curve(1000, [(0.1, 1.0, 800)])
+    assert _stall_stop(times, gone, n) is None
+
+
+def test_never_stopped_when_nothing_has_left():
+    """No loss at all is a trace whose losses have not begun, not one whose
+    losses are over -- even past the half-time gate."""
+    times, gone, n = _loss_curve(1000, [])
+    assert _stall_stop(times, gone, n) is None
+
+
+def test_a_tail_of_slow_loss_keeps_it_going_until_under_the_fraction():
+    """A fast loss, then a tail at a tenth of that rate: 10 % of the peak is
+    above the 5 % mark, so it runs on; with the mark at 20 % it stops."""
+    times, gone, n = _loss_curve(10000, [(0.1, 0.3, 4000), (0.3, 1.0, 1400)])
+    assert _stall_stop(times, gone, n) is None
+    assert _stall_stop(times, gone, n, rate_fraction=0.2) is not None
+
+
+def test_few_losses_stop_only_after_half_the_trace():
+    """3 % lost early, then quiet: under the 10 % gate, so not looked at
+    until half the trace has passed -- and stopped then."""
+    times, gone, n = _loss_curve(1000, [(0.05, 0.15, 30)])
+    stopped = _stall_stop(times, gone, n)
+    assert 0.5 <= stopped / times[-1] <= 0.55
+
+
+def test_the_half_time_gate_can_cut_off_a_late_main_loss():
+    """The known hazard: a little early loss, a quiet gap, and the main loss
+    after half-time. The rule cannot see the field; at half-time it finds
+    the losses stalled and stops, missing the main loss. Raising
+    stall_min_time past where the main loss starts keeps the trace going
+    through it (here, to the end)."""
+    times, gone, n = _loss_curve(1000, [(0.05, 0.15, 30), (0.7, 0.9, 600)])
+    assert 0.5 <= _stall_stop(times, gone, n) / times[-1] <= 0.55
+    assert _stall_stop(times, gone, n, min_time=1.0) / times[-1] >= 0.95
+
+
+def test_the_ten_percent_gate_opens_it_before_half_time():
+    """Losses done by 30 % of the trace with far more than a tenth gone:
+    stopped well before half-time."""
+    times, gone, n = _loss_curve(1000, [(0.1, 0.3, 500)])
+    assert 0.35 <= _stall_stop(times, gone, n) / times[-1] <= 0.45

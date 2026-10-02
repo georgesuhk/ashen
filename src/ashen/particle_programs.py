@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 __all__ = [
+    "BOUNDARY_FILE",
     "DIAG_FILES",
     "LOST_MARKER",
     "NOTE_MARKER",
@@ -32,6 +33,7 @@ __all__ = [
     "PtraceSettingsError",
     "RETIRED_SETTINGS_FILES",
     "SETTINGS_FILE",
+    "boundary_file_text",
     "describe_settings",
     "energy_text",
     "find_diag_file",
@@ -82,6 +84,11 @@ PTRACE_SETTINGS = {
     "charge": "ints",
     "pdf_n_sub": "int",
     "seed": "int",
+    "stop_when_stalled": "bool",
+    "stall_rate_fraction": "real",
+    "stall_min_lost": "real",
+    "stall_min_time": "real",
+    "stall_window": "real",
 }
 
 #: Allowed values of the "str" settings that have a fixed set.
@@ -109,7 +116,28 @@ PTRACE_DEFAULTS = {
     "charge": [-1],
     "pdf_n_sub": 4,
     "seed": 1,
+    # Stop before the end once the loss rate, over stall_window, has fallen
+    # to stall_rate_fraction of its peak -- looked at only once
+    # stall_min_lost of the markers has left or stall_min_time of the trace
+    # has passed. Off unless the case asks. stall_window 0: a tenth of the trace.
+    "stop_when_stalled": False,
+    "stall_rate_fraction": 0.05,
+    "stall_min_lost": 0.10,
+    "stall_min_time": 0.5,
+    "stall_window": 0.0,
 }
+
+#: The outline ptrace_gc's stop_when_stalled counts a marker as having left
+#: the plasma by crossing: written into the trace folder from the run's
+#: original_bnd.dat (the boundary before extend_bnd), as a line with n, then
+#: n lines of R Z. Without it, a marker has left once it is off the grid.
+BOUNDARY_FILE = "ptrace_boundary.dat"
+
+
+def boundary_file_text(points) -> str:
+    """BOUNDARY_FILE's text for an (N, 2) outline of (R, Z) [m]."""
+    return f"{len(points)}\n" + "".join(f"{float(r)!r} {float(z)!r}\n" for r, z in points)
+
 
 #: ptrace_gc's MAX_MARKERS: the length of its marker arrays.
 MAX_MARKERS = 100000
@@ -171,6 +199,14 @@ def resolve_settings(settings: dict) -> dict:
     # says the same thing to ptrace_gc, whose own default is 100.
     if "snapshot_step" in settings:
         merged["n_snapshots"] = 0
+    if not 0 < merged["stall_rate_fraction"] < 1:
+        raise bad("ptrace_stall_rate_fraction must be between 0 and 1 (0.05: stop once the "
+                  f"loss rate is 5 % of its peak), got {merged['stall_rate_fraction']}")
+    for name in ("stall_min_lost", "stall_min_time"):
+        if not 0 <= merged[name] <= 1:
+            raise bad(f"ptrace_{name} is a fraction, 0 to 1; got {merged[name]}")
+    if merged["stall_window"] < 0:
+        raise bad(f"ptrace_stall_window must be >= 0 [s], got {merged['stall_window']}")
     if merged["pdf_n_sub"] < 1:
         raise bad(f"ptrace_pdf_n_sub must be >= 1, got {merged['pdf_n_sub']}")
 
@@ -291,6 +327,10 @@ def describe_settings(resolved: dict, given: dict) -> list[str]:
             text, note = "not used", "   (snapshot_step is set)"
         elif name == "n_snapshots" and value:
             text = f"about {value}, at round times"
+        elif name.startswith("stall_") and not resolved["stop_when_stalled"]:
+            continue  # the rule is off: its settings say nothing about this trace
+        elif name == "stall_window" and not value:
+            text = "a tenth of the trace"
         lines.append(f"{name:<{width}} = {text}{note}")
     return lines
 

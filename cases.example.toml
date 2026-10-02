@@ -411,6 +411,10 @@ note  = "internal kink investigation"
 # ptrace_cos_pitch   = 0.9
 # ptrace_dt          = 1e-10             # default
 # ptrace_n_snapshots = 100               # default: about this many snapshots over the trace (0: final only)
+# ptrace_stop_when_stalled = true        # stop early once the markers have all but stopped leaving:
+# ptrace_stall_rate_fraction = 0.05      #   loss rate under this fraction of its peak (default)
+# ptrace_stall_min_lost = 0.10           #   ...once this fraction has left (default),
+# ptrace_stall_min_time = 0.5            #   or this fraction of the trace has passed (default)
 # ptrace_snapshot_step = 1e-6            # or a fixed time between them [s]; used instead when set
 #
 # Or markers at given points -- one value is every marker's, a list one each:

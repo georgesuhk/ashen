@@ -72,13 +72,16 @@ from ashen.config import Site
 from ashen.jorek2 import tool_output_enabled
 from ashen.padding import JOREK_PAD_WIDTHS, restart_name, restart_steps
 from ashen.paths import RunPaths
+from ashen.castor_io import load_two_col_data
 from ashen.particle_programs import (
+    BOUNDARY_FILE,
     LOST_MARKER,
     NOTE_MARKER,
     OUTPUT_FILES,
     RETIRED_SETTINGS_FILES,
     SETTINGS_FILE,
     PtraceSettingsError,
+    boundary_file_text,
     describe_settings,
     resolve_settings,
     settings_namelist,
@@ -191,9 +194,13 @@ class PtracePlan:
             lines += [f"write    {name}:"]
             # The settings as a person reads them; the file spells out
             # every marker of a per-marker list.
-            shown = self.describe_settings() if name == SETTINGS_FILE else [
-                line for line in text.splitlines() if not line.startswith("!")
-            ]
+            if name == SETTINGS_FILE:
+                shown = self.describe_settings()
+            elif name == BOUNDARY_FILE:
+                shown = [f"{text.splitlines()[0]} points of original_bnd.dat: the outline "
+                         "a marker has left the plasma by crossing"]
+            else:
+                shown = [line for line in text.splitlines() if not line.startswith("!")]
             lines += [f"           {line}" for line in shown]
         lines += ["queue:" if self.job else "run:"]
         lines += [f"           {line}" for line in self.command.splitlines()]
@@ -385,6 +392,14 @@ def plan_ptrace(
             f"({len(steps)}), linked from index 0; jorek_pdf.h5 is step {pdf_step}",
         ))))
 
+    # stop_when_stalled counts a marker as gone once it is outside the
+    # plasma boundary, where the run has one inside its grid (extend_bnd).
+    original_boundary = run_dir / "original_bnd.dat"
+    stall_boundary = None
+    if resolved.get("stop_when_stalled") and original_boundary.is_file():
+        stall_boundary = original_boundary
+        writes.append((BOUNDARY_FILE, boundary_file_text(load_two_col_data(original_boundary))))
+
     work_dir = ptrace_dir(case, run_dir)
     settings = {key: getattr(case, key) for key in _RESULT_FIELDS}
     # Every setting, defaults included: a default that changes in ashen
@@ -397,6 +412,11 @@ def plan_ptrace(
         "exe_stamp": _file_stamp(exe),
         "copy_stamps": [_file_stamp(source) for _, source in copies],
     }
+    if stall_boundary is not None:
+        # Where the trace stops depends on the outline: a changed one retraces.
+        fingerprint_input["stall_boundary"] = hashlib.sha256(
+            stall_boundary.read_bytes()
+        ).hexdigest()
 
     threads = case.ptrace_omp_threads or omp_threads
     if job is None:
@@ -512,7 +532,8 @@ def _is_managed(entry: Path, plan: PtracePlan, previously_copied: list[str]) -> 
     return (
         entry.is_symlink()
         or entry.name in (
-            META_FILE, LOG_FILE, SETTINGS_FILE, *RETIRED_SETTINGS_FILES, *OUTPUT_FILES,
+            META_FILE, LOG_FILE, SETTINGS_FILE, BOUNDARY_FILE, *RETIRED_SETTINGS_FILES,
+            *OUTPUT_FILES,
         )
         or entry.name in previously_copied
         or entry.name in dict(plan.copies)

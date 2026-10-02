@@ -2325,6 +2325,12 @@ def _logged_restart_times(folder: Path) -> dict[int, float]:
     return times
 
 
+#: ptrace_gc's log lines when it ends a trace itself, and what to call each.
+_EARLY_STOPS = (
+    ("ptrace_gc: NOTE: losses stalled -- stopped", "losses stalled"),
+    ("ptrace_gc: NOTE: every marker is off the grid -- stopped", "every marker off the grid"),
+)
+
 #: t_span as ashen wrote it into a trace's settings file.
 _WRITTEN_T_SPAN = re.compile(r"^\s*t_span\s*=\s*([^\s,!]+)", re.MULTILINE)
 
@@ -2364,9 +2370,19 @@ def _unfinished_trace(case: Case, folder: Path, window, history, *, diag: str):
     if not t_max > t_min or t_max - last <= spacing * 1.01 + abs(t_max) * 1e-6:
         return None, None
     fraction = (last - t_min) / (t_max - t_min)
-    note = f"trace unfinished: {100 * fraction:.3g} % of the way to {to}"
-    print(f"  {diag}: the trace stops at t = {last * 1e3:.6g} ms, {100 * fraction:.3g} % of the "
-          f"way to {to} (t = {t_max * 1e3:.6g} ms) -- plotting what was traced")
+    # ptrace_gc stopping itself (its early-stop rules) is a trace that is
+    # done, not one that broke off: say which.
+    log = folder / LOG_FILE
+    text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+    why = next((reason for marker, reason in _EARLY_STOPS if marker in text), None)
+    if why is not None:
+        note = f"stopped early, {why}: {100 * fraction:.3g} % of the way to {to}"
+        print(f"  {diag}: the tracer stopped itself at t = {last * 1e3:.6g} ms, "
+              f"{100 * fraction:.3g} % of the way to {to} (t = {t_max * 1e3:.6g} ms): {why}")
+    else:
+        note = f"trace unfinished: {100 * fraction:.3g} % of the way to {to}"
+        print(f"  {diag}: the trace stops at t = {last * 1e3:.6g} ms, {100 * fraction:.3g} % of "
+              f"the way to {to} (t = {t_max * 1e3:.6g} ms) -- plotting what was traced")
     return note, fraction
 
 
