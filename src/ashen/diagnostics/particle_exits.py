@@ -37,9 +37,11 @@ from ashen.diagnostics.particles import BoundaryExits, ParticleFileError, inside
 
 __all__ = [
     "ExitResult",
+    "LossMap",
     "ParticleHistory",
     "exit_angles",
     "exits_from_history",
+    "loss_map",
     "read_particle_diag",
 ]
 
@@ -243,49 +245,131 @@ def exit_angles(
             f"{history.path}: no theta in the file, and no magnetic axis given to "
             "compute it from R and Z"
         )
-    on_grid = ~history.lost
-    crossed = on_grid & (history.psi_n > psi_n)
     theta_all = history.theta
     if theta_all is None:
         theta_all = np.arctan2(history.Z - axis[1], history.R - axis[0])
 
+    rows, kinds = _exit_rows(history, psi_n=psi_n, boundary=boundary)
+    cols = np.flatnonzero(rows >= 0)
+    theta = np.mod(theta_all[rows[cols], cols].astype(float), 2 * np.pi)
+    theta[theta > np.pi] -= 2 * np.pi
+    return ExitResult(
+        theta=theta,
+        phi=np.mod(history.phi[rows[cols], cols].astype(float), 2 * np.pi),
+        time=history.time[rows[cols]].astype(float),
+        n_crossed=int(np.count_nonzero(kinds == _CROSSED)),
+        n_outside_boundary=int(np.count_nonzero(kinds == _OUTSIDE)),
+        n_left_grid=int(np.count_nonzero(kinds == _LEFT_GRID)),
+        n_considered=int(np.count_nonzero(kinds != _NOT_CONSIDERED)),
+    )
+
+
+#: How a particle's trace ended, per _exit_rows.
+_NOT_CONSIDERED, _STAYED, _CROSSED, _OUTSIDE, _LEFT_GRID = range(5)
+
+
+def _exit_rows(
+    history: ParticleHistory, *, psi_n: float, boundary: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per particle, the diagnostics row at which it left and how:
+
+    - _CROSSED: first row with its psi_n past the threshold, on the grid;
+    - _OUTSIDE: first row outside boundary (if given), on the grid, when
+      that is no later than crossing;
+    - _LEFT_GRID: lost from the grid before either -- the row is its last
+      one on the grid;
+    - _STAYED (row -1): none of these within the history;
+    - _NOT_CONSIDERED (row -1): off the grid at the first row already.
+    """
     n_times = history.time.size
-    first_cross = _first(crossed)
+    rows = np.full(history.n, -1, dtype=int)
+    kinds = np.full(history.n, _NOT_CONSIDERED, dtype=int)
+    if n_times == 0:
+        return rows, kinds
+    on_grid = ~history.lost
+    first_cross = _first(on_grid & (history.psi_n > psi_n))
     first_out = (
         _first(_outside(history, boundary)) if boundary is not None
         else np.full(history.n, n_times)
     )
     first_lost = _first(~on_grid)
-
-    thetas, phis, times = [], [], []
-    n_crossed = n_out = n_left = n_considered = 0
     for p in range(history.n):
-        if n_times == 0 or not on_grid[0, p]:
+        if not on_grid[0, p]:
             continue
-        n_considered += 1
+        kinds[p] = _STAYED
         on_grid_exit = min(first_cross[p], first_out[p])
         if on_grid_exit <= first_lost[p] and on_grid_exit < n_times:
-            k = int(on_grid_exit)
-            if first_out[p] <= first_cross[p]:
-                n_out += 1
-            else:
-                n_crossed += 1
+            rows[p] = int(on_grid_exit)
+            kinds[p] = _OUTSIDE if first_out[p] <= first_cross[p] else _CROSSED
         elif first_lost[p] < n_times:
-            k = int(first_lost[p]) - 1  # its last position on the grid; >= 0 as on_grid[0, p]
-            n_left += 1
-        else:
-            continue
-        thetas.append(theta_all[k, p])
-        phis.append(history.phi[k, p])
-        times.append(history.time[k])
+            rows[p] = int(first_lost[p]) - 1  # its last row on the grid; >= 0 as on_grid[0, p]
+            kinds[p] = _LEFT_GRID
+    return rows, kinds
 
-    theta = np.asarray(thetas, dtype=float)
-    theta = np.mod(theta, 2 * np.pi)
-    theta[theta > np.pi] -= 2 * np.pi
-    return ExitResult(
-        theta=theta,
-        phi=np.mod(np.asarray(phis, dtype=float), 2 * np.pi),
-        time=np.asarray(times, dtype=float),
-        n_crossed=n_crossed, n_outside_boundary=n_out, n_left_grid=n_left,
-        n_considered=n_considered,
+
+@dataclass(frozen=True)
+class LossMap:
+    """What fraction of the particles that started at each psi_n have left
+    by each time."""
+
+    #: Times [s], (n_times,).
+    time: np.ndarray
+    #: Edges of the bins in starting psi_n, (n_psi + 1,).
+    psi_edges: np.ndarray
+    #: (n_psi, n_times): of the particles that started in the bin, the
+    #: fraction that had left by the time. nan where none started.
+    fraction: np.ndarray
+    #: (n_psi,): how many particles started in each bin.
+    counts: np.ndarray
+    #: How many of all the counted particles had left by the last time.
+    n_lost: int
+
+    @property
+    def n_considered(self) -> int:
+        return int(self.counts.sum())
+
+
+def loss_map(
+    history: ParticleHistory,
+    *,
+    psi_n: float,
+    boundary: np.ndarray | None = None,
+    n_psi: int = 40,
+    psi_range: tuple[float, float] | None = None,
+    max_times: int = 400,
+) -> LossMap:
+    """Bin the particles by the psi_n they started at and, for each bin,
+    follow the fraction that has left -- by exit_angles' rule: past psi_n,
+    outside boundary, or off the grid. A particle off the grid from the
+    start is not counted, nor one that started outside psi_range (default:
+    0 to the largest starting psi_n). The times are the diagnostics',
+    thinned evenly to at most max_times.
+    """
+    rows, kinds = _exit_rows(history, psi_n=psi_n, boundary=boundary)
+    counted = kinds != _NOT_CONSIDERED
+    start = history.psi_n[0] if history.time.size else np.array([])
+    if psi_range is None:
+        top = float(np.nanmax(start[counted])) if counted.any() else 1.0
+        psi_range = (0.0, top if top > 0 else 1.0)
+    edges = np.linspace(psi_range[0], psi_range[1], n_psi + 1)
+    # np.digitize puts the top edge in bin n_psi: fold it into the last bin.
+    bins = np.clip(np.digitize(start, edges) - 1, None, n_psi - 1) if start.size else start
+    counted &= (start >= edges[0]) & (start <= edges[-1])
+
+    n_times = history.time.size
+    picked = np.unique(np.linspace(0, n_times - 1, min(n_times, max_times)).round().astype(int)) \
+        if n_times else np.array([], dtype=int)
+    counts = np.zeros(n_psi, dtype=int)
+    fraction = np.full((n_psi, picked.size), np.nan)
+    for b in range(n_psi):
+        members = counted & (bins == b)
+        counts[b] = int(np.count_nonzero(members))
+        if counts[b]:
+            left = rows[members]
+            left = left[left >= 0]
+            # left by row r: its exit row is r or earlier
+            fraction[b] = np.searchsorted(np.sort(left), picked, side="right") / counts[b]
+    return LossMap(
+        time=history.time[picked], psi_edges=edges, fraction=fraction, counts=counts,
+        n_lost=int(np.count_nonzero(counted & (rows >= 0))),
     )

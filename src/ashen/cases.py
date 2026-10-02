@@ -47,7 +47,7 @@ _CASE_KEYS = (
     "ptrace_poincare", "ptrace_poincare_psi_n", "ptrace_poincare_n_turns",
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
     "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins", "ptrace_pdf_step",
-    "ptrace_wetted_density_range", "ptrace_initial_psi_n_range",
+    "ptrace_wetted_density_range", "ptrace_initial_psi_n_range", "ptrace_loss_bins",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -280,7 +280,10 @@ class Case:
     ptrace_exit_psi_n: float = 1.0
     #: `plot --diag particle_exits`: bins over each of theta and phi.
     ptrace_exit_bins: int = 72
-    #: `plot --diag particle_exits` and `particle_wetted`: count only the
+    #: `plot --diag particle_loss`: bins in starting psi_n. Each needs
+    #: enough particles for its lost fraction to mean something.
+    ptrace_loss_bins: int = 40
+    #: `plot --diag particle_exits`, `particle_wetted` and `particle_loss`: count only the
     #: markers that *started* with psi_n in [min, max] -- psi_n as in
     #: ptrace_exit_psi_n, at the first diagnostics time. None = all of them.
     #: The figures and numbers are then written under names carrying the
@@ -612,6 +615,10 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
                 f"with 0 <= min < max, got {value!r}"
             )
         merged["ptrace_initial_psi_n_range"] = [float(v) for v in value]
+    if "ptrace_loss_bins" in merged:
+        value = merged["ptrace_loss_bins"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise CasesError(f"{where}: ptrace_loss_bins must be a whole number >= 1, got {value!r}")
     if "ptrace_exit_bins" in merged:
         value = merged["ptrace_exit_bins"]
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
