@@ -31,6 +31,14 @@
 !>                                 !   times. 0 = only the final part_restart.h5
 !>     snapshot_step = 0.d0        ! [s] between them, if > 0: used instead of
 !>                                 !   n_snapshots
+!>     stop_when_stalled = .false. ! stop before the end once the markers have
+!>                                 !   all but stopped leaving, see below
+!>     stall_rate_fraction = 5.d-2 ! ...: the loss rate, as a fraction of its peak
+!>     stall_min_lost = 1.d-1      ! ...: not before this fraction of the markers
+!>                                 !   has left,
+!>     stall_min_time = 5.d-1      ! ...or this fraction of the trace has passed
+!>     stall_window  = 0.d0        ! [s] the loss rate is measured over; 0 = a
+!>                                 !   tenth of the trace
 !>     mass          = 5.48579909065d-4  ! [amu]
 !>     initialiser   = 'markers'   ! how the markers are placed, see below
 !>     n_markers     =             ! no default: how many markers
@@ -60,6 +68,24 @@
 !>     its area; within a cell a marker is uniform in (s, t), and phi is
 !>     uniform in [0, 2 pi). Sampling is from that table, so it cannot hang
 !>     the way re_gc's rejection sampling can.
+!>
+!> Stopping early. Two rules end the trace before its end time, with every
+!> output written as at the end and a 'ptrace_gc: NOTE:' line saying why:
+!>   - every marker is off the grid: nothing is left to push. Always on.
+!>   - stop_when_stalled: the markers have all but stopped leaving. The loss
+!>     rate -- markers that left per second, over the last stall_window --
+!>     has fallen to stall_rate_fraction of the highest it has been. Only
+!>     looked at once stall_min_lost of the markers has left or
+!>     stall_min_time of the trace has passed, whichever comes first, and
+!>     never while no marker has left at all. A marker has left when it is
+!>     off the grid or, if ptrace_boundary.dat is there (ashen writes the
+!>     plasma boundary before extend_bnd into it: a line with n, then n lines
+!>     of R Z), has been outside that outline -- once out, it counts as left
+!>     for good. This rule cannot tell a field that has saturated from one
+!>     that has not started moving yet: the two gates are what keeps it from
+!>     stopping a trace before its losses begin, so set them for the case.
+!> Both are looked at only where the trace stops anyway (every diag_step
+!> and snapshot), so switching them on changes no marker's path.
 !>
 !> Under ashen, keep restart_index = 0: ashen links the chosen restarts in
 !> as a consecutive sequence from index 0 (the reader looks only i+1..i+20
@@ -126,6 +152,9 @@ integer           :: restart_index = 0
 logical           :: hold_last_field = .false.
 real*8            :: t_span = 0.d0, dt = 1.d-10, diag_step = 1.d-8, snapshot_step = 0.d0
 integer           :: n_snapshots = 100
+logical           :: stop_when_stalled = .false.
+real*8            :: stall_rate_fraction = 5.d-2, stall_min_lost = 1.d-1, stall_min_time = 5.d-1
+real*8            :: stall_window = 0.d0
 real*8            :: mass = 5.48579909065d-4
 integer           :: n_markers = 0
 real*8            :: R0(MAX_MARKERS) = 0.d0, Z0(MAX_MARKERS) = 0.d0, phi0(MAX_MARKERS) = 0.d0
@@ -136,10 +165,16 @@ character(len=32) :: initialiser = 'markers'
 integer           :: pdf_n_sub = 4, pdf_n_phi = 16, seed = 1  ! pdf_n_phi: ignored, kept readable
 namelist /ptrace/ field_mode, restart_index, hold_last_field, t_span, dt, diag_step, &
                  snapshot_step, mass, n_markers, R0, Z0, phi0, E_kin_eV, cos_pitch, charge, &
-                 initialiser, pdf_n_sub, pdf_n_phi, seed, n_snapshots
+                 initialiser, pdf_n_sub, pdf_n_phi, seed, n_snapshots, &
+                 stop_when_stalled, stall_rate_fraction, stall_min_lost, stall_min_time, &
+                 stall_window
 
 !> Two times closer than this [s] are the same time (mod_event's TICK).
 real*8, parameter :: SNAP_TICK = 1.d-12
+!> The outline a marker has left the plasma by crossing, if this file is there.
+character(len=*), parameter :: BOUNDARY_FILE = 'ptrace_boundary.dat'
+!> The loss rate is sampled this many times per stall_window.
+integer, parameter :: SAMPLES_PER_WINDOW = 4
 
 ! sim and events come from particle_tracer
 type(event)                      :: field_reader
@@ -149,6 +184,13 @@ real*8                           :: t_start, t_stop, target_time, rest_energy_eV
 integer                          :: u, io, ierr, k, j, n_local, ifail, n_lost, n_snap
 integer                          :: my_rank, n_ranks
 logical                          :: exists
+! Stopping early: the boundary outline, which local markers have left, and
+! the count of those that have at each sample time
+integer                          :: n_bnd, n_left, n_samples
+real*8,  allocatable             :: bnd_R(:), bnd_Z(:), sample_t(:)
+integer, allocatable             :: sample_n(:)
+logical, allocatable             :: has_left(:)
+real*8                           :: t_check, max_loss_rate
 ! The restarts this run reads: their JOREK step (index_now) and time [s]
 integer                          :: n_rst
 integer, allocatable             :: rst_steps(:)
@@ -193,6 +235,14 @@ if (my_rank .eq. 0) then
     write(*,*) 'ERROR: ptrace_gc: n_snapshots must be >= 0, got ', n_snapshots
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
   end if
+  if (stall_rate_fraction .le. 0.d0 .or. stall_rate_fraction .ge. 1.d0 .or. &
+      stall_min_lost .lt. 0.d0 .or. stall_min_lost .gt. 1.d0 .or. &
+      stall_min_time .lt. 0.d0 .or. stall_min_time .gt. 1.d0 .or. stall_window .lt. 0.d0) then
+    write(*,*) 'ERROR: ptrace_gc: stall_rate_fraction must be in (0, 1), stall_min_lost and ', &
+      'stall_min_time in [0, 1] and stall_window >= 0; got ', stall_rate_fraction, &
+      stall_min_lost, stall_min_time, stall_window
+    call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+  end if
   if (trim(field_mode) .ne. 'static' .and. trim(field_mode) .ne. 'evolving') then
     write(*,*) "ERROR: ptrace_gc: field_mode must be 'static' or 'evolving', got ", trim(field_mode)
     call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
@@ -222,6 +272,11 @@ call MPI_Bcast(dt, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(diag_step, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(snapshot_step, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(n_snapshots, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+call MPI_Bcast(stop_when_stalled, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
+call MPI_Bcast(stall_rate_fraction, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+call MPI_Bcast(stall_min_lost, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+call MPI_Bcast(stall_min_time, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+call MPI_Bcast(stall_window, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(mass, 1, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(n_markers, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
 call MPI_Bcast(R0, n_markers, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
@@ -361,6 +416,42 @@ events = [field_reader, &
           event(stop_action(), start=t_stop)]
 call with(sim, events, at=sim%time)
 
+! --- stopping early: what there is to watch, and the count at the start ---
+allocate(has_left(n_local))
+has_left = .false.
+n_bnd = 0
+n_samples = 0
+max_loss_rate = 0.d0
+t_check = t_start
+! (A trace of no length has nothing to stall in.)
+if (t_stop .le. t_start + SNAP_TICK) stop_when_stalled = .false.
+if (stop_when_stalled) then
+  if (stall_window .le. 0.d0) stall_window = (t_stop - t_start) / 10.d0
+  if (my_rank .eq. 0) call read_boundary(BOUNDARY_FILE, n_bnd, bnd_R, bnd_Z)
+  call MPI_Bcast(n_bnd, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+  if (my_rank .ne. 0) allocate(bnd_R(n_bnd), bnd_Z(n_bnd))
+  if (n_bnd .gt. 0) then
+    call MPI_Bcast(bnd_R, n_bnd, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+    call MPI_Bcast(bnd_Z, n_bnd, MPI_REAL8, 0, MPI_COMM_WORLD, ierr)
+  end if
+  k = int(SAMPLES_PER_WINDOW * (t_stop - t_start) / stall_window) + 8
+  allocate(sample_t(k), sample_n(k))
+  if (my_rank .eq. 0) then
+    write(*,'(A,ES10.3,A,F6.2,A,F6.2,A,F6.2,A)') &
+      'ptrace_gc: stop_when_stalled: the loss rate over ', stall_window, ' s, against ', &
+      100.d0 * stall_rate_fraction, ' % of its peak, once ', 100.d0 * stall_min_lost, &
+      ' % of the markers has left or ', 100.d0 * stall_min_time, ' % of the trace has passed'
+    if (n_bnd .gt. 0) then
+      write(*,'(A,I0,A,A)') 'ptrace_gc: stop_when_stalled: a marker has left once outside the ', &
+        n_bnd, '-point outline in ', BOUNDARY_FILE
+    else
+      write(*,'(A,A,A)') 'ptrace_gc: stop_when_stalled: no ', BOUNDARY_FILE, &
+        ', so a marker has left once it is off the grid'
+    end if
+  end if
+end if
+call check_stop()
+
 ! Snapshots are scheduled here rather than as an event: their filename
 ! carries the closest restart's step, which an io_action cannot build.
 n_snap = 0
@@ -383,6 +474,7 @@ do while (.not. sim%stop_now)
     n_snap = n_snap + 1
     t_snap = t_start + n_snap * snapshot_step  ! from t_start, so steps don't accumulate round-off
   end if
+  call check_stop()
 end do
 
 n_lost = 0
@@ -597,6 +689,129 @@ subroutine read_restart_table(first_index, n, steps, times)
   steps = all_steps(1:n)
   times = all_times(1:n)
 end subroutine read_restart_table
+
+!> End the trace early when there is nothing more to learn from it (see
+!> "Stopping early" at the top). Called wherever the push loop has stopped
+!> anyway, so it adds no stopping time of its own. Collective: every rank
+!> calls it at the same times and reaches the same answer, the counts being
+!> summed over all ranks.
+subroutine check_stop()
+  integer :: i, j, counts(2)
+  real*8  :: loss_rate
+  if (sim%stop_now) return
+
+  ! counts(1): markers that have left, by the stall rule's meaning;
+  ! counts(2): markers off the grid, which nothing pushes any more
+  counts = 0
+  select type (particles => sim%groups(1)%particles)
+  type is (particle_gc_relativistic)
+    do i = 1, size(particles)
+      if (particles(i)%i_elm .le. 0) then
+        counts(2) = counts(2) + 1
+        has_left(i) = .true.
+      else if (n_bnd .gt. 0 .and. .not. has_left(i)) then
+        has_left(i) = .not. inside_boundary(particles(i)%x(1), particles(i)%x(2))
+      end if
+    end do
+  end select
+  counts(1) = count(has_left)
+  call MPI_Allreduce(MPI_IN_PLACE, counts, 2, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr)
+  n_left = counts(1)
+
+  if (counts(2) .ge. n_markers) then
+    sim%stop_now = .true.
+    if (my_rank .eq. 0) write(*,'(A,ES12.5,A,F6.2,A)') &
+      'ptrace_gc: NOTE: every marker is off the grid -- stopped at t = ', sim%time, ' s, ', &
+      100.d0 * (sim%time - t_start) / max(t_stop - t_start, SNAP_TICK), &
+      ' % of the way through the trace'
+    return
+  end if
+
+  if (.not. stop_when_stalled) return
+  if (sim%time .lt. t_check - SNAP_TICK) return
+  if (n_samples .ge. size(sample_t)) return
+  n_samples = n_samples + 1
+  sample_t(n_samples) = sim%time
+  sample_n(n_samples) = n_left
+  t_check = sim%time + stall_window / SAMPLES_PER_WINDOW
+
+  ! the loss rate over the last stall_window: against the newest sample at
+  ! least that far back -- none until a whole window has been traced
+  j = 0
+  do i = n_samples - 1, 1, -1
+    if (sample_t(i) .le. sim%time - stall_window + SNAP_TICK) then
+      j = i
+      exit
+    end if
+  end do
+  if (j .eq. 0) return
+  loss_rate = (sample_n(n_samples) - sample_n(j)) / (sample_t(n_samples) - sample_t(j))
+  max_loss_rate = max(max_loss_rate, loss_rate)
+
+  ! Never while no marker has left in any window: that is a trace whose
+  ! losses have not begun, not one whose losses are over.
+  if (max_loss_rate .le. 0.d0) return
+  ! Not before either gate: enough markers gone, or enough of the trace done.
+  if (n_left .lt. stall_min_lost * n_markers .and. &
+      sim%time - t_start .lt. stall_min_time * (t_stop - t_start)) return
+  if (loss_rate .gt. stall_rate_fraction * max_loss_rate) return
+
+  sim%stop_now = .true.
+  if (my_rank .eq. 0) write(*,'(A,ES12.5,A,F6.2,A,F6.2,A,I0,A,I0,A)') &
+    'ptrace_gc: NOTE: losses stalled -- stopped at t = ', sim%time, ' s, ', &
+    100.d0 * (sim%time - t_start) / (t_stop - t_start), &
+    ' % of the way through the trace: the loss rate is ', &
+    100.d0 * loss_rate / max_loss_rate, ' % of its peak, with ', n_left, ' of ', n_markers, &
+    ' markers gone'
+end subroutine check_stop
+
+!> Whether (R, Z) is inside the outline bnd_R, bnd_Z (closed, the last
+!> point joined to the first): even-odd ray casting, the same test ashen's
+!> plots use (ashen.diagnostics.particles.inside_polygon).
+logical function inside_boundary(R, Z)
+  real*8, intent(in) :: R, Z
+  integer :: i, j
+  inside_boundary = .false.
+  j = n_bnd
+  do i = 1, n_bnd
+    if ((bnd_Z(i) .gt. Z) .neqv. (bnd_Z(j) .gt. Z)) then
+      if (R .lt. bnd_R(i) + (Z - bnd_Z(i)) * (bnd_R(j) - bnd_R(i)) / (bnd_Z(j) - bnd_Z(i))) &
+        inside_boundary = .not. inside_boundary
+    end if
+    j = i
+  end do
+end function inside_boundary
+
+!> The outline in filename -- a line with n, then n lines of R Z [m] -- or
+!> n = 0 if there is no such file.
+subroutine read_boundary(filename, n, R, Z)
+  character(len=*), intent(in)      :: filename
+  integer, intent(out)              :: n
+  real*8, allocatable, intent(out)  :: R(:), Z(:)
+  logical :: exists
+  integer :: unit, io, i
+  n = 0
+  inquire(file=filename, exist=exists)
+  if (exists) then
+    open(newunit=unit, file=filename, status='old', action='read', iostat=io)
+    if (io .eq. 0) read(unit, *, iostat=io) n
+    if (io .ne. 0 .or. n .lt. 3) then
+      write(*,*) 'ERROR: ptrace_gc: ', filename, ' must start with its number of points (>= 3)'
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    end if
+    allocate(R(n), Z(n))
+    do i = 1, n
+      read(unit, *, iostat=io) R(i), Z(i)
+      if (io .ne. 0) then
+        write(*,*) 'ERROR: ptrace_gc: ', filename, ': cannot read R Z of point ', i
+        call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+      end if
+    end do
+    close(unit)
+  else
+    allocate(R(0), Z(0))
+  end if
+end subroutine read_boundary
 
 !> raw rounded up to 1, 2 or 5 times a power of ten: a snapshot spacing
 !> that puts the snapshots at round times. raw > 0.

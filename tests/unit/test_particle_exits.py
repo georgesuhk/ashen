@@ -548,3 +548,20 @@ def test_the_loss_map_of_an_unfinished_trace(campaign, capsys):
     assert plot_cli.main(["--case", "run", "--diag", "particle_loss", "--dpi", "40"]) == 0
     assert "trace unfinished: 20 % of the way" in capsys.readouterr().out
     assert (folder / "particle_loss.png").is_file()
+
+
+@pytest.mark.parametrize("line, why", [
+    ("ptrace_gc: NOTE: losses stalled -- stopped at t =  2.00000E-06 s,  20.00 % of the way "
+     "through the trace: the loss rate is   3.10 % of its peak, with 3 of 4 markers gone",
+     "losses stalled"),
+    ("ptrace_gc: NOTE: every marker is off the grid -- stopped at t =  2.00000E-06 s,  20.00 % "
+     "of the way through the trace", "every marker off the grid"),
+])
+def test_a_trace_the_tracer_ended_itself_is_called_that(campaign, capsys, line, why):
+    folder = _unfinished(campaign)
+    (folder / "ptrace.log").write_text(LONG_LOG + " " + line + "\n", encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert f"stopped early, {why}: 20 % of the way to the last restart, step 3200" in out
+    assert f"the tracer stopped itself at t = 0.002 ms" in out
+    assert "trace unfinished" not in out

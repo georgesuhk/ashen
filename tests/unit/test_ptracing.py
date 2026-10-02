@@ -554,3 +554,38 @@ def test_pdf_step_chooses_the_current_profile_restart(run_dir, site):
 def test_missing_pdf_step(run_dir, site):
     with pytest.raises(PtraceError, match="no restart for ptrace_pdf_step 3100"):
         _plan(run_dir, site, pdf_step=3100)
+
+
+# --- stop_when_stalled: the plasma boundary goes into the trace folder -----------------
+
+
+def test_stall_rule_gets_the_original_boundary(run_dir, site):
+    np = pytest.importorskip("numpy")
+    square = np.array([[3.5, -0.25], [4.0, -0.25], [4.0, 0.25], [3.5, 0.25]])
+    np.savetxt(run_dir / "original_bnd.dat", square)
+    stalled = {**PDF, "stop_when_stalled": True}
+    plan = _plan(run_dir, site, program="ptrace_gc", settings=stalled)
+    written = dict(plan.writes)
+    assert written["ptrace_boundary.dat"].splitlines() == [
+        "4", "3.5 -0.25", "4.0 -0.25", "4.0 0.25", "3.5 0.25"]
+    assert "  stop_when_stalled = .true." in written["ptrace_settings.nml"].splitlines()
+    assert any("4 points of original_bnd.dat" in line for line in plan.describe())
+    run_ptrace(plan)
+    assert (plan.work_dir / "ptrace_boundary.dat").is_file()
+    assert is_current(_plan(run_dir, site, program="ptrace_gc", settings=stalled))
+
+    # a changed outline changes where the trace stops: retrace
+    np.savetxt(run_dir / "original_bnd.dat", square * 1.1)
+    assert not is_current(_plan(run_dir, site, program="ptrace_gc", settings=stalled))
+
+    # the rule switched off: no outline written, and the old one cleared
+    off = _plan(run_dir, site, program="ptrace_gc", settings=dict(PDF))
+    assert "ptrace_boundary.dat" not in dict(off.writes)
+    run_ptrace(off)
+    assert not (off.work_dir / "ptrace_boundary.dat").exists()
+
+
+def test_stall_rule_without_an_extended_boundary_writes_no_outline(run_dir, site):
+    """Then ptrace_gc counts a marker as gone once it is off the grid."""
+    plan = _plan(run_dir, site, program="ptrace_gc", settings={**PDF, "stop_when_stalled": True})
+    assert [name for name, _ in plan.writes] == ["ptrace_settings.nml"]

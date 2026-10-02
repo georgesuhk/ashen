@@ -1359,6 +1359,11 @@ ptrace_cos_pitch   = 0.9
 | `ptrace_t_span` | 0 | 0: trace from `ptrace_start_step` to `ptrace_end_step`; > 0: for this long [s] instead |
 | `ptrace_field_mode` | `"evolving"` | or `"static"`: the start step's field, frozen |
 | `ptrace_hold_last_field` | false | with `t_span` past the last restart: keep its field (true) or stop there (false) |
+| `ptrace_stop_when_stalled` | false | stop the trace early once the markers have all but stopped leaving, see below |
+| `ptrace_stall_rate_fraction` | 0.05 | ...when the loss rate has fallen to this fraction of its peak |
+| `ptrace_stall_min_lost` | 0.10 | ...but not before this fraction of the markers has left, |
+| `ptrace_stall_min_time` | 0.5 | ...or this fraction of the trace has passed, whichever is first |
+| `ptrace_stall_window` | 0 | the time the loss rate is measured over [s]; 0 = a tenth of the trace |
 | `ptrace_pdf_n_sub` | 4 | `current_pdf_simple`: cells per grid element side |
 | `ptrace_seed` | 1 | `current_pdf_simple`: same seed, same markers |
 
@@ -1413,6 +1418,40 @@ ptrace_cos_pitch   = 0.9
     E_kin_eV        = 10 MeV
     ...
 ```
+
+**Stopping a trace early.** Once the field perturbation has saturated and
+the markers have stopped leaving, tracing on costs time and disk for
+nothing. Two rules end a trace before its end step, with every output
+written as usual and a `note:` from `ptrace` saying why:
+
+- **Every marker is off the grid.** Nothing is left to push. Always on.
+- **`ptrace_stop_when_stalled = true`**: the loss rate -- markers leaving
+  per second, over the last `ptrace_stall_window` -- has fallen to
+  `ptrace_stall_rate_fraction` (5 %) of the highest it has been.
+
+The stall rule is only looked at once `ptrace_stall_min_lost` (10 %) of
+the markers has left **or** `ptrace_stall_min_time` (50 %) of the trace
+has passed, whichever comes first, and never while no marker has left at
+all.
+
+- **What "left" means.** Off the grid -- or, in a run prepared with
+  `extend_bnd`, outside the plasma boundary (`original_bnd.dat`, which
+  ashen writes into the trace folder as `ptrace_boundary.dat`). That is
+  what the plots call escaped. Once out, a marker counts as gone for good.
+- **It cannot see the field.** It cannot tell losses that are over from
+  losses that have paused. A little early loss, a quiet gap, and the main
+  loss after half-time: at half-time it finds the rate stalled and stops,
+  missing the main loss. If a case's losses come late, raise
+  `ptrace_stall_min_time` past where they start (1 = no time gate), or
+  leave the rule off for that case.
+- **A slow tail keeps it going.** A loss that carries on at a tenth of its
+  peak is above the 5 % mark; the trace runs on until it drops below.
+- **Off by default.** The rule changes how much of start..end a trace
+  covers, so it is per case, like any key (`[defaults]` to share it).
+- **It changes no marker's path.** The rules are looked at only where the
+  trace stops anyway, every `diag_step` and snapshot.
+- **The plots** label such a trace `stopped early, losses stalled: 62 % of
+  the way to ptrace_end_step 3400` rather than unfinished.
 
 A binary built before this change reads `ptrace_params.nml` and
 `ptrace_overrides.nml` instead and stops at once, finding neither: rebuild
