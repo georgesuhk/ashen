@@ -125,7 +125,7 @@ from ashen.quantities import (
     quantity,
 )
 from ashen.particle_programs import DIAG_FILES, find_diag_file
-from ashen.ptracing import LOG_FILE, ptrace_dir, traced_start
+from ashen.ptracing import LOG_FILE, other_traces, ptrace_dir, ptrace_label, traced_start
 
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
@@ -2453,6 +2453,20 @@ def _poincare_overlays(
     return [by_step[step] for step in chosen]
 
 
+def _note_other_traces(case: Case, paths: RunPaths, *, diag: str) -> None:
+    """When the case's current settings have no trace yet, say what is
+    there instead: its traces at another energy or marker count, and one
+    from before traces were kept apart, loose in the folder above."""
+    folder = ptrace_dir(case, paths.run_dir)
+    others = other_traces(case, paths.run_dir)
+    if others:
+        print(f"  {diag}: this case has traces for {', '.join(others)}; the plots read the "
+              "one matching its ptrace_E_kin_eV and ptrace_n_markers")
+    if ptrace_label(case) is not None and find_diag_file(folder.parent) is not None:
+        print(f"  {diag}: {folder.parent} holds a trace from before they were kept per "
+              f"energy and marker count; to plot it, move its files into {folder.name}/")
+
+
 def _plot_particles(
     case: Case, paths: RunPaths, *, dpi: int | None, n_cols: int | None,
     animate: bool, explicit: bool, point_size: float | None = None, n_workers: int = 1,
@@ -2473,6 +2487,7 @@ def _plot_particles(
     snapshots = find_snapshots(folder) if folder.is_dir() else []
     if not snapshots:
         print(f"  particles: no part_restart*.h5 in {folder} (run bin/ptrace first), skipped")
+        _note_other_traces(case, paths, diag="particles")
         return
     window = _traced_window(case, paths, folder, diag="particles")
     snapshots = _clip_snapshots(snapshots, window, diag="particles")
@@ -2556,6 +2571,7 @@ def _plot_particle_exits(
     if diag is None:
         print(f"  particle_exits: no particle diagnostics file ({', '.join(DIAG_FILES)}) "
               f"in {folder} (run bin/ptrace first), skipped")
+        _note_other_traces(case, paths, diag="particle_exits")
         return
 
     threshold = case.ptrace_exit_psi_n if psi_n is None else psi_n
@@ -2618,6 +2634,7 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
     if diag is None:
         print(f"  particle_wetted: no particle diagnostics file ({', '.join(DIAG_FILES)}) "
               f"in {folder} (run bin/ptrace first), skipped")
+        _note_other_traces(case, paths, diag="particle_wetted")
         return
     boundary = _original_boundary(case, paths, diag="particle_wetted")
     if boundary is None:

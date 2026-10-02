@@ -3,7 +3,10 @@ unmodified, against that case's restarts, as its ptrace_* fields configure
 it (ashen.cases). Whatever it is called: ashen goes by what it writes --
 its files and log lines (ashen.particle_programs) -- not by its name.
 
-Each ptrace runs in its own folder, ``<run>/ptrace/<executable name>/``.
+Each ptrace runs in its own folder, ``<run>/ptrace/<executable name>/``
+-- for a trace with ptrace_gc settings, a folder under that named by its
+energy and marker count (ptrace_dir), so one trace does not overwrite
+another.
 Restarts, the namelist and profile files are symlinked in, relative to the
 folder, so the run can still be moved or renamed; the restart links are
 removed again once the program exits, leaving only what it produced. A particle file for a program that
@@ -90,6 +93,8 @@ __all__ = [
     "PtracePlan",
     "PtraceResult",
     "is_current",
+    "other_traces",
+    "ptrace_label",
     "last_error",
     "last_jobscript",
     "poll_job",
@@ -274,10 +279,45 @@ def ptrace_exe_path(case: Case, run_dir: Path) -> Path:
     return run_path(run_dir, case.ptrace_exe)
 
 
+def ptrace_label(case: Case) -> str | None:
+    """What tells one ptrace_gc trace of a case from another, as a folder
+    name: its kinetic energy, in whole eV, and marker count, e.g.
+    ``E10000000eV_n1000`` (markers of several energies: the range,
+    ``E1000000-10000000eV``). Always plain integers, so the names sort and
+    match however a number was written in cases.toml. None for a case that
+    sets no ptrace_<setting> keys -- a program that takes none."""
+    settings = case.ptrace_settings
+    parts = []
+    energies = settings.get("E_kin_eV")
+    if energies:
+        low, high = round(min(energies)), round(max(energies))
+        parts.append(f"E{low}eV" if low == high else f"E{low}-{high}eV")
+    if "n_markers" in settings:
+        parts.append(f"n{settings['n_markers']}")
+    return "_".join(parts) or None
+
+
 def ptrace_dir(case: Case, run_dir: Path) -> Path:
     """The folder a case's ptrace runs in, and where its outputs land:
-    ``<run>/ptrace/<executable filename>/``."""
-    return Path(run_dir) / TRACE_DIR / ptrace_exe_path(case, run_dir).name
+    ``<run>/ptrace/<executable filename>/``, and under that -- for a trace
+    with ptrace_gc settings -- ``<ptrace_label>/``, so traces at another
+    energy or marker count are kept side by side rather than overwritten.
+    The plots read the folder of the case's current settings."""
+    folder = Path(run_dir) / TRACE_DIR / ptrace_exe_path(case, run_dir).name
+    label = ptrace_label(case)
+    return folder / label if label else folder
+
+
+def other_traces(case: Case, run_dir: Path) -> list[str]:
+    """The labels of the case's other traces with the same executable: the
+    sibling folders of ptrace_dir that hold a trace (its ptrace_meta.json)."""
+    here = ptrace_dir(case, run_dir)
+    if ptrace_label(case) is None or not here.parent.is_dir():
+        return []
+    return sorted(
+        entry.name for entry in here.parent.iterdir()
+        if entry.is_dir() and entry != here and (entry / META_FILE).is_file()
+    )
 
 
 def plan_ptrace(

@@ -14,6 +14,7 @@ from ashen.particle_programs import (
     PTRACE_SETTINGS,
     PtraceSettingsError,
     describe_settings,
+    energy_text,
     resolve_settings,
     settings_namelist,
 )
@@ -244,7 +245,7 @@ def test_describe_marks_the_defaults():
     lines = describe_settings(resolve_settings(PDF), PDF)
     by_name = {line.split("=")[0].strip(): line for line in lines}
     assert by_name["n_markers"].endswith("= 1000")
-    assert by_name["E_kin_eV"].endswith("= 10000000.0")
+    assert by_name["E_kin_eV"].endswith("= 10 MeV")
     assert by_name["dt"].endswith("= 1e-10   (default)")
     assert by_name["hold_last_field"].endswith("= false   (default)")
     assert len({line.index("=") for line in lines}) == 1
@@ -256,4 +257,21 @@ def test_describe_keeps_long_lists_short():
     by_name = {line.split("=")[0].strip(): line
                for line in describe_settings(resolve_settings(settings), settings)}
     assert by_name["R0"].endswith("... (50 values)")
-    assert by_name["Z0"].endswith("= 50 x 0.0") and by_name["E_kin_eV"].endswith("= 50 x 10000000.0")
+    assert by_name["Z0"].endswith("= 50 x 0.0") and by_name["E_kin_eV"].endswith("= 50 x 10 MeV")
+
+
+@pytest.mark.parametrize("energy, text", [
+    (1e7, "10 MeV"), (2.5e6, "2.5 MeV"), (1e6, "1 MeV"), (5e5, "500 keV"), (1e3, "1 keV"),
+    (999.0, "999 eV"), (30.0, "30 eV"), (1.2e9, "1.2 GeV"), (2e7, "20 MeV"), (1.234567e7, "12.3457 MeV"),
+])
+def test_energy_text(energy, text):
+    assert energy_text(energy) == text
+
+
+def test_energies_are_printed_with_their_unit_and_written_in_eV():
+    given = {**MARKERS, "E_kin_eV": [5e5, 1e7, 2.5e6]}
+    resolved = resolve_settings(given)
+    line = next(l for l in describe_settings(resolved, given) if l.startswith("E_kin_eV"))
+    assert line.endswith("= 500 keV, 10 MeV, 2.5 MeV")
+    # the file keeps plain eV: it is what ptrace_gc reads
+    assert "  E_kin_eV = 500000.0, 10000000.0, 2500000.0\n" in settings_namelist(resolved)
