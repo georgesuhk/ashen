@@ -251,3 +251,64 @@ def test_density_range_sets_the_colour_scale_and_the_label_is_per_area(tmp_path,
         assert any(ax.get_ylabel() == DENSITY_LABEL for ax in fig.axes)
     monkeypatch.undo()
     plt.close("all")
+
+
+# --- only the markers that started in a psi_n range -------------------------------
+
+
+def _two_shells(campaign, span=None):
+    """20 markers starting at psi_n 0.3 and 20 at 0.7; only the outer 20
+    reach the wall."""
+    np.savetxt(campaign / "run" / "original_bnd.dat", circle(200))
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    angles = np.linspace(0, 2 * np.pi, 20, endpoint=False)
+    inner = R0 + 0.2 * np.cos(angles), 0.2 * np.sin(angles)
+    outer0 = R0 + 0.3 * np.cos(angles), 0.3 * np.sin(angles)
+    outer1 = R0 + 0.7 * np.cos(angles), 0.7 * np.sin(angles)
+    R = [np.concatenate([inner[0], outer0[0]]), np.concatenate([inner[0], outer1[0]])]
+    Z = [np.concatenate([inner[1], outer0[1]]), np.concatenate([inner[1], outer1[1]])]
+    phi = [np.concatenate([angles, angles])] * 2
+    write_diag(folder / "ptrace_diag.h5", R, Z, phi, np.zeros((2, 40), int))
+    with h5py.File(folder / "ptrace_diag.h5", "a") as f:
+        f["groups/001/psi_n"][...] = np.tile(np.r_[np.full(20, 0.3), np.full(20, 0.7)], (2, 1))
+    if span is not None:
+        (campaign / "cases.toml").write_text(
+            CASES + f"ptrace_initial_psi_n_range = {span}\n", encoding="utf-8")
+    return folder
+
+
+def test_wetted_by_the_markers_that_started_in_a_psi_range(campaign, capsys):
+    folder = _two_shells(campaign, "[0.6, 0.8]")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "20 of 20 particles hit the wall" in out
+    assert "markers starting at psi_n 0.6 to 0.8: 20 of 40" in out
+    # its own files, beside the all-marker ones rather than over them
+    assert (folder / "particle_wetted_psi0.6-0.8.png").is_file()
+    assert not (folder / "particle_wetted.png").exists()
+    numbers = json.loads((folder / "particle_wetted_psi0.6-0.8.json").read_text(encoding="utf-8"))
+    assert numbers["initial_psi_n_range"] == [0.6, 0.8]
+    assert (numbers["n_markers"], numbers["n_selected"], numbers["n_hits"]) == (40, 20, 20)
+
+
+def test_wetted_without_a_range_counts_every_marker(campaign, capsys):
+    folder = _two_shells(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "20 of 40 particles hit the wall" in out and "markers starting" not in out
+    numbers = json.loads((folder / "particle_wetted.json").read_text(encoding="utf-8"))
+    assert numbers["initial_psi_n_range"] is None
+    assert (numbers["n_markers"], numbers["n_selected"]) == (40, 40)
+
+
+def test_wetted_range_whose_markers_never_reach_the_wall(campaign, capsys):
+    _two_shells(campaign, "[0.2, 0.4]")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert ("none of 20 particles hit the wall (markers starting at psi_n 0.2 to 0.4: "
+            "20 of 40), skipped") in capsys.readouterr().out
+
+
+def test_wetted_range_no_marker_started_in(campaign, capsys):
+    _two_shells(campaign, "[0.9, 0.95]")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert "none of 40 markers start with psi_n in 0.9..0.95" in capsys.readouterr().out

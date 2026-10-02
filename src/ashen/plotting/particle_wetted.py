@@ -26,9 +26,11 @@ def _pm(value: float, error: float) -> str:
 
 def wetted_caption(
     result: WettedResult, hits: WallHits, *, duration: float | None = None,
+    note: str | None = None,
 ) -> str:
     """The four measures, how many hits they rest on and, given duration
-    [s], how much of the trace they were collected over."""
+    [s], how much of the trace they were collected over. note, e.g. which
+    markers were counted, goes on a line of its own."""
     placed = (f", {hits.n_left_grid} left the grid first (at the nearest wall point)"
               if hits.n_left_grid else "")
     if duration is not None:
@@ -39,7 +41,7 @@ def wetted_caption(
         f"f_tot = {_pm(result.f_tot, result.f_tot_err)} ({result.area:.3g} m²)   "
         f"s = {_pm(result.s, result.s_err)}\n"
         f"{hits.n} of {hits.n_considered} particles hit the wall{placed}"
-    )
+    ) + (f"\n{note}" if note else "")
 
 
 #: The map's colour scale: a density, so not bounded by 1.
@@ -54,6 +56,7 @@ def plot_wetted_area(
     figsize: tuple[float, float] = (8.0, 6.0),
     density_range: tuple[float, float] | None = None,
     duration: float | None = None,
+    note: str | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save the (phi, l) hit-density map -- the share of all hits
@@ -103,7 +106,7 @@ def plot_wetted_area(
         ax_pol.set_xlabel("fraction")
         ax_pol.tick_params(labelleft=False)
 
-        fig.suptitle(wetted_caption(result, hits, duration=duration), fontsize=9)
+        fig.suptitle(wetted_caption(result, hits, duration=duration, note=note), fontsize=9)
         fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
     return out_path

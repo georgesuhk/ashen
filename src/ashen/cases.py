@@ -47,7 +47,7 @@ _CASE_KEYS = (
     "ptrace_poincare", "ptrace_poincare_psi_n", "ptrace_poincare_n_turns",
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
     "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins", "ptrace_pdf_step",
-    "ptrace_wetted_density_range",
+    "ptrace_wetted_density_range", "ptrace_initial_psi_n_range",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -280,6 +280,12 @@ class Case:
     ptrace_exit_psi_n: float = 1.0
     #: `plot --diag particle_exits`: bins over each of theta and phi.
     ptrace_exit_bins: int = 72
+    #: `plot --diag particle_exits` and `particle_wetted`: count only the
+    #: markers that *started* with psi_n in [min, max] -- psi_n as in
+    #: ptrace_exit_psi_n, at the first diagnostics time. None = all of them.
+    #: The figures and numbers are then written under names carrying the
+    #: range, beside the all-marker ones.
+    ptrace_initial_psi_n_range: list[float] | None = None
     #: `plot --diag particle_wetted`: [n_l, n_phi] bins along the wall and
     #: around the torus (a single number: both). The 2D map needs many more
     #: hits than cells to mean much; the 1D profiles far fewer.
@@ -594,6 +600,18 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
             raise CasesError(f"{where}: ptrace_exit_psi_n must be a number > 0, got {value!r}")
         merged["ptrace_exit_psi_n"] = float(value)
+    if merged.get("ptrace_initial_psi_n_range") is not None:
+        value = merged["ptrace_initial_psi_n_range"]
+        if not (
+            isinstance(value, list) and len(value) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value)
+            and 0 <= value[0] < value[1]
+        ):
+            raise CasesError(
+                f"{where}: ptrace_initial_psi_n_range must be [min, max] in psi_n "
+                f"with 0 <= min < max, got {value!r}"
+            )
+        merged["ptrace_initial_psi_n_range"] = [float(v) for v in value]
     if "ptrace_exit_bins" in merged:
         value = merged["ptrace_exit_bins"]
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:

@@ -357,3 +357,73 @@ def test_snapshots_after_the_end_step_are_left_out(campaign, capsys):
     out = capsys.readouterr().out
     assert "1 snapshot(s) outside ptrace_start_step..ptrace_end_step left out" in out
     assert "particles: the last of 2 snapshot(s) ->" in out
+
+
+# --- only the markers that started in a psi_n range -------------------------------
+
+
+def test_starting_within_keeps_markers_by_their_first_psi_n(tmp_path):
+    path = write_diag(tmp_path / "d.h5", t=T, psi_n=PSI, R=R, Z=Z, phi=PHI, lost=LOST, theta=THETA)
+    history = read_particle_diag(path)
+    chosen = history.starting_within(0.4, 0.9)       # 0.5 and 0.8; not 0.3, 0.0
+    assert chosen.n == 2
+    np.testing.assert_allclose(chosen.psi_n[0], [0.5, 0.8])
+    np.testing.assert_allclose(chosen.psi_n[:, 0], [0.5, 1.2, 1.5])   # the whole history of each
+    assert chosen.time is history.time
+    assert history.starting_within(0.0, 2.0).n == 4
+    assert history.starting_within(0.3, 0.3).n == 1                   # the ends count
+    assert history.starting_within(1.0, 2.0).n == 0
+
+
+def _ranged(campaign, span):
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    write_diag(folder / "ptrace_diag.h5", t=T, psi_n=PSI, R=R, Z=Z, phi=PHI,
+               lost=LOST, theta=THETA)
+    (campaign / "cases.toml").write_text(
+        CASES.replace("ptrace_exit_psi_n = 1.3",
+                      f"ptrace_exit_psi_n = 1.3\nptrace_initial_psi_n_range = {span}"),
+        encoding="utf-8",
+    )
+    return folder
+
+
+def test_exits_of_the_markers_that_started_in_a_psi_range(campaign, capsys):
+    folder = _ranged(campaign, "[0.4, 0.9]")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--animate", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "; markers starting at psi_n 0.4 to 0.9: 2 of 4 -> " in out
+    # its own files, beside the all-marker ones rather than over them
+    assert (folder / "particle_exits_psi0.4-0.9.png").is_file()
+    assert (folder / "particle_exits_psi0.4-0.9.gif").is_file()
+    assert not (folder / "particle_exits.png").exists()
+    assert f"-> {folder / 'particle_exits_psi0.4-0.9.png'}" in out
+
+
+def test_the_selection_changes_who_is_counted(campaign, capsys):
+    """Marker 0 (psi_n 0.5 -> 1.5) crosses 1.3; marker 1 (0.3 -> 0.5) never
+    does. Each range sees only its own."""
+    _ranged(campaign, "[0.45, 0.55]")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    assert ("particle_exits: 1 of 1 particles exit past psi_n = 1.3; "
+            "markers starting at psi_n 0.45 to 0.55: 1 of 4") in capsys.readouterr().out
+    _ranged(campaign, "[0.25, 0.35]")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert ("particle_exits: 0 of 1 particles exit past psi_n = 1.3; "
+            "markers starting at psi_n 0.25 to 0.35: 1 of 4") in out
+
+
+def test_a_range_no_marker_started_in_is_skipped_with_where_they_are(campaign, capsys):
+    folder = _ranged(campaign, "[0.91, 0.99]")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert ("none of 4 markers start with psi_n in 0.91..0.99 (ptrace_initial_psi_n_range); "
+            "they start at psi_n 0 to 0.8, skipped") in out
+    assert not list(folder.glob("particle_exits*"))
+
+
+@pytest.mark.parametrize("value", ["[0.5, 0.2]", "[-0.1, 0.5]", "0.5", "[0.2]", '["a", 1]'])
+def test_invalid_initial_psi_range(campaign, value, capsys):
+    _ranged(campaign, value)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits"]) == 1
+    assert "ptrace_initial_psi_n_range must be [min, max]" in capsys.readouterr().err
