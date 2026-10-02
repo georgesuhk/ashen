@@ -257,7 +257,7 @@ ptrace_dt          = 5e-11
 def _gc(campaign):
     make_run(campaign, name="gc")
     (campaign / "cases.toml").write_text(GC_CASES, encoding="utf-8")
-    return campaign / "gc" / "ptrace" / "ptrace_gc"
+    return campaign / "gc" / "ptrace" / "ptrace_gc" / "E10000000eV_n500"
 
 
 def test_settings_are_printed_when_a_trace_runs_but_not_when_cached(campaign, capsys):
@@ -299,3 +299,36 @@ def test_a_params_file_in_ptrace_inputs_is_refused(campaign, capsys):
         GC_CASES + 'ptrace_inputs = ["ptrace_params.nml"]\n', encoding="utf-8")
     assert ptrace_cli.main(["--case", "gc", "--run_i"]) == 1
     assert "ptrace_gc no longer reads a settings file of yours" in capsys.readouterr().err
+
+
+# --- traces at another energy or marker count are kept side by side ------------------
+
+
+def test_each_energy_and_marker_count_gets_its_own_folder(campaign, capsys):
+    first = _gc(campaign)
+    assert ptrace_cli.main(["--case", "gc", "--run_i"]) == 0
+    (campaign / "cases.toml").write_text(
+        GC_CASES.replace("ptrace_E_kin_eV    = 1e7", "ptrace_E_kin_eV    = 2.5e6")
+        .replace("ptrace_n_markers   = 500", "ptrace_n_markers   = 2000"), encoding="utf-8")
+    assert ptrace_cli.main(["--case", "gc", "--run_i"]) == 0
+    second = first.parent / "E2500000eV_n2000"
+    for folder in (first, second):
+        assert (folder / "ptrace_diag.h5").is_file() and (folder / "ptrace_settings.nml").is_file()
+    assert "  n_markers = 500\n" in (first / "ptrace_settings.nml").read_text()
+    assert "  n_markers = 2000\n" in (second / "ptrace_settings.nml").read_text()
+
+    capsys.readouterr()
+    assert ptrace_cli.main(["--case", "gc"]) == 0
+    out = capsys.readouterr().out
+    assert "this trace is E2500000eV_n2000; also there: E10000000eV_n500" in out
+    assert "[cached]" in out
+
+    # back to the first settings: still there, nothing to rerun
+    (campaign / "cases.toml").write_text(GC_CASES, encoding="utf-8")
+    assert ptrace_cli.main(["--case", "gc", "--run_i"]) == 0
+    assert "[cached]" in capsys.readouterr().out
+
+
+def test_a_program_without_settings_keeps_its_folder(campaign):
+    assert ptrace_cli.main(["--case", "other", "--run_i"]) == 0
+    assert (campaign / "other" / "ptrace" / "ex7_jorek" / "diag.h5").is_file()

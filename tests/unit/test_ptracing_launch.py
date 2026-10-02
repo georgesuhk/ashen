@@ -254,3 +254,40 @@ def test_squeue_missing_is_an_error_not_a_guess(run_dir, slurm, monkeypatch):
 def test_relative_paths_in_queued_plan(run_dir, slurm):
     plan = plan_ptrace(_case(), run_dir, slurm, omp_threads=4, job="2h")
     assert Path(plan.work_dir, os.path.relpath(plan.exe, plan.work_dir)).resolve() == plan.exe.resolve()
+
+
+# --- the trace folder's label ------------------------------------------------------
+
+
+@pytest.mark.parametrize("settings, label", [
+    ({"E_kin_eV": [1e7], "n_markers": 1000}, "E10000000eV_n1000"),
+    ({"E_kin_eV": [2.5e6], "n_markers": 50}, "E2500000eV_n50"),
+    ({"E_kin_eV": [500000.0], "n_markers": 1}, "E500000eV_n1"),
+    ({"E_kin_eV": [2e7] * 3, "n_markers": 3}, "E20000000eV_n3"),
+    # markers of several energies: the range
+    ({"E_kin_eV": [1e6, 5e6, 1e7], "n_markers": 3}, "E1000000-10000000eV_n3"),
+    # whole eV, however the number was written
+    ({"E_kin_eV": [1234567.4], "n_markers": 2}, "E1234567eV_n2"),
+    ({"E_kin_eV": [30.0], "n_markers": 2}, "E30eV_n2"),
+])
+def test_ptrace_label(settings, label):
+    from ashen.ptracing import ptrace_label
+
+    assert ptrace_label(_case(settings=settings)) == label
+
+
+def test_no_settings_no_label(run_dir, site):  # noqa: F811
+    from ashen.ptracing import ptrace_dir, ptrace_label
+
+    assert ptrace_label(_case()) is None
+    assert ptrace_dir(_case(), run_dir) == run_dir / "ptrace" / RE_GC
+
+
+def test_a_queued_trace_in_a_labelled_folder_reaches_its_exe(run_dir, slurm):
+    """One folder deeper, so one more "../" for the jobscript's ./"$exe"."""
+    settings = {"initialiser": "current_pdf_simple", "n_markers": 10, "E_kin_eV": [1e7],
+                "cos_pitch": [0.9]}
+    plan = plan_ptrace(_case(program="ptrace_gc", settings=settings), run_dir, slurm,
+                       omp_threads=4, job="2h")
+    assert plan.work_dir == run_dir / "ptrace" / "ptrace_gc" / "E10000000eV_n10"
+    assert " ../../../exe/ptrace_gc in_main ptrace.log " in plan.command

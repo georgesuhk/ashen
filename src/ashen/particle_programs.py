@@ -33,6 +33,7 @@ __all__ = [
     "RETIRED_SETTINGS_FILES",
     "SETTINGS_FILE",
     "describe_settings",
+    "energy_text",
     "find_diag_file",
     "resolve_settings",
     "settings_namelist",
@@ -249,18 +250,28 @@ def settings_namelist(resolved: dict, *, header: tuple[str, ...] = ()) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _brief(value) -> str:
+def energy_text(energy_eV: float) -> str:
+    """An energy in eV as a person writes it: 10 MeV, 500 keV, 2.5 MeV,
+    1.2 GeV, 30 eV. For what `ptrace` prints; files and folder names keep
+    plain eV."""
+    for scale, unit in ((1e9, "GeV"), (1e6, "MeV"), (1e3, "keV")):
+        if abs(energy_eV) >= scale:
+            return f"{energy_eV / scale:.6g} {unit}"
+    return f"{energy_eV:.6g} eV"
+
+
+def _brief(value, text=str) -> str:
     """A setting's value for a person: a per-marker list that is one value
-    repeated as "N x value", a long one cut short."""
+    repeated as "N x value", a long one cut short. text writes one value."""
     if not isinstance(value, list):
-        return str(value).lower() if isinstance(value, bool) else str(value)
+        return str(value).lower() if isinstance(value, bool) else text(value)
     if len(value) == 1:
-        return str(value[0])
+        return text(value[0])
     if all(v == value[0] for v in value):
-        return f"{len(value)} x {value[0]}"
+        return f"{len(value)} x {text(value[0])}"
     if len(value) <= 6:
-        return ", ".join(str(v) for v in value)
-    return ", ".join(str(v) for v in value[:3]) + f", ... ({len(value)} values)"
+        return ", ".join(text(v) for v in value)
+    return ", ".join(text(v) for v in value[:3]) + f", ... ({len(value)} values)"
 
 
 def describe_settings(resolved: dict, given: dict) -> list[str]:
@@ -271,7 +282,8 @@ def describe_settings(resolved: dict, given: dict) -> list[str]:
     spaced_by_step = "snapshot_step" in given
     lines = []
     for name, value in resolved.items():
-        text, note = _brief(value), "" if name in given else "   (default)"
+        text = _brief(value, energy_text) if name == "E_kin_eV" else _brief(value)
+        note = "" if name in given else "   (default)"
         # The two snapshot settings are one choice: say which one is in force.
         if name == "snapshot_step" and not spaced_by_step:
             text = "from n_snapshots" if resolved["n_snapshots"] else "0.0: only the final snapshot"

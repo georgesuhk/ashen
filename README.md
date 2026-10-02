@@ -1281,7 +1281,8 @@ program that reads some), `ptrace_n_mpi`, `ptrace_omp_threads`
 `ptrace_particles` and `ptrace_inputs` are **relative to the run folder**, so
 a bare `"seeds.dat"` is the file in the run folder.
 
-Each trace runs in `<run>/ptrace/<executable filename>/`, with its output in
+Each trace runs in `<run>/ptrace/<executable filename>/` (for `ptrace_gc`, a
+folder under that per energy and marker count, see below), with its output in
 `ptrace.log`. A completed trace is `[cached]` until its settings, restarts,
 particle file or executable change; `--force` reruns it. `--tool-output`
 echoes the program live. ex7 stopping at a lost particle is reported as
@@ -1380,11 +1381,21 @@ ptrace_cos_pitch   = 0.9
   spacing across cases, e.g. to compare frames at matching times.
 - **Each trace records what it ran with.** ashen writes *every* setting,
   defaults included, to `ptrace_settings.nml` in the trace folder
-  (`<run>/ptrace/<executable>/`). That is the only settings file `ptrace_gc`
+  (below). That is the only settings file `ptrace_gc`
   reads, so it is exactly what the trace used, and it stays there with the
   outputs.
+- **Traces at another energy or marker count are kept side by side.** A
+  trace's folder is `<run>/ptrace/<executable>/E<energy in eV>eV_n<markers>/`,
+  e.g. `ptrace/ptrace_gc/E10000000eV_n1000/`, so changing `ptrace_E_kin_eV`
+  or `ptrace_n_markers` starts a new folder instead of overwriting, and
+  changing back finds the old trace still cached. The energy is always in
+  whole eV; markers of several energies give the range
+  (`E1000000-10000000eV`). The plots read the folder that matches the case's
+  current two keys, and `ptrace` with no flag lists the others. Any other
+  setting (`cos_pitch`, the steps, ...) still retraces in the same folder.
 - **Printed when a trace runs or is queued** (`ptrace --run_i`, `--run`),
-  with the defaults marked; `--dry-run` shows the same.
+  with the defaults marked and energies in MeV or keV (the file keeps eV);
+  `--dry-run` shows the same.
 - A changed setting, or a changed default, makes the trace out of date.
 - Only `ptrace_gc` (under any filename) reads them. A case that sets none
   gets no file, as for JOREK's own programs.
@@ -1399,7 +1410,7 @@ ptrace_cos_pitch   = 0.9
     n_snapshots     = about 100, at round times   (default)
     initialiser     = current_pdf_simple
     n_markers       = 1000
-    E_kin_eV        = 10000000.0
+    E_kin_eV        = 10 MeV
     ...
 ```
 

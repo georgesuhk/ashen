@@ -34,6 +34,7 @@ from ashen.ptracing import (
     META_FILE,
     PtraceError,
     is_current,
+    other_traces,
     last_error,
     last_jobscript,
     plan_ptrace,
@@ -232,6 +233,9 @@ def _report(case, run_dir: Path, site, omp_threads: int) -> None:
         case, run_dir, site, omp_threads=omp_threads, job=last_jobscript(case, run_dir),
     )
     span = f"steps {plan.steps[0]}..{plan.steps[-1]} ({len(plan.steps)} restart(s))"
+    others = other_traces(case, run_dir)
+    if others:
+        print(f"  this trace is {work_dir.name}; also there: {', '.join(others)}")
     if is_current(plan):
         print(f"  [cached] {span}: {work_dir}")
     elif not (work_dir / META_FILE).is_file():
