@@ -84,6 +84,24 @@ class ParticleHistory:
         )
 
 
+    def select(self, particles: np.ndarray) -> "ParticleHistory":
+        """Only the particles where the boolean mask `particles` is True."""
+        return replace(
+            self, psi_n=self.psi_n[:, particles], R=self.R[:, particles],
+            Z=self.Z[:, particles], phi=self.phi[:, particles], lost=self.lost[:, particles],
+            theta=None if self.theta is None else self.theta[:, particles],
+        )
+
+    def starting_within(self, psi_n_min: float, psi_n_max: float) -> "ParticleHistory":
+        """Only the particles whose psi_n at the first diagnostics time is
+        in [psi_n_min, psi_n_max] -- where they started, whatever they did
+        afterwards."""
+        if not self.time.size:
+            return self
+        start = self.psi_n[0]
+        return self.select((start >= psi_n_min) & (start <= psi_n_max))
+
+
 @dataclass(frozen=True)
 class ExitResult:
     """Each exiting particle's angles, and what happened to the rest."""

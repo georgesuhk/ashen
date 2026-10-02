@@ -1571,6 +1571,29 @@ ptrace_exit_psi_n = 1.0    # the psi_n that counts as leaving (default 1)
 ptrace_exit_bins  = 72     # bins over each of theta and phi
 ```
 
+**Only the markers that started in a psi_n range.**
+`ptrace_initial_psi_n_range = [min, max]` restricts both this plot and
+`particle_wetted` to the markers whose psi_n at the first diagnostics time
+was inside the range (ends included) -- where they started, whatever they
+did afterwards. For example, to see where the markers from the edge go:
+
+```toml
+ptrace_initial_psi_n_range = [0.8, 1.0]
+```
+
+- psi_n is the tracer's own, as for `ptrace_exit_psi_n`: JOREK's
+  (psi - psi_axis)/(psi_limit - psi_axis), not scaled by `real_psi_edge`.
+  In a run with an extended boundary, psi_n = 1 is the edge of the extended
+  grid, not the original plasma boundary.
+- The caption, the printed line and the wetted JSON say how many markers
+  the range kept (`markers starting at psi_n 0.8 to 1: 312 of 999`).
+- A range's results are written beside the all-marker ones, under names
+  that carry it: `particle_exits_psi0.8-1.png`, `particle_wetted_psi0.8-1.png`
+  and `.json`. So several ranges can be kept and compared.
+- A range no marker started in is skipped, with the psi_n the markers do
+  start at.
+- Unset, every marker counts, as before.
+
 ```bash
 python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits
 python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits --exit-psi-n 0.95

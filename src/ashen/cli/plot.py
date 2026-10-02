@@ -2554,6 +2554,29 @@ def _log_axis(paths: RunPaths) -> tuple[float, float] | None:
         return None
 
 
+def _initial_psi_selection(case: Case, history, *, diag: str):
+    """The history cut to the markers that started inside the case's
+    ptrace_initial_psi_n_range, with a note for the captions and a suffix
+    for the file names -- so a range's figures sit beside the all-marker
+    ones instead of replacing them. (history, None, "") without a range;
+    None, with a message, when no marker started inside it."""
+    span = case.ptrace_initial_psi_n_range
+    if span is None:
+        return history, None, ""
+    low, high = span
+    chosen = history.starting_within(low, high)
+    if chosen.n == 0:
+        start = history.psi_n[0] if history.time.size else np.array([])
+        have = (f"; they start at psi_n {float(np.nanmin(start)):.3g} to "
+                f"{float(np.nanmax(start)):.3g}" if start.size else "")
+        print(f"  {diag}: none of {history.n} markers start with psi_n in "
+              f"{low:g}..{high:g} (ptrace_initial_psi_n_range){have}, skipped")
+        return None
+    note = (f"markers starting at psi_n {low:g} to {high:g}: "
+            f"{chosen.n} of {history.n}")
+    return chosen, note, f"_psi{low:g}-{high:g}"
+
+
 def _plot_particle_exits(
     case: Case, paths: RunPaths, *, dpi: int | None, psi_n: float | None, explicit: bool,
     animate: bool = False,
@@ -2583,6 +2606,10 @@ def _plot_particle_exits(
         if history.time.size < n_times:
             print(f"  particle_exits: {n_times - history.time.size} diagnostics time(s) outside "
                   "ptrace_start_step..ptrace_end_step left out")
+    selection = _initial_psi_selection(case, history, diag="particle_exits")
+    if selection is None:
+        return
+    history, selected, suffix = selection
     axis = None
     if history.theta is None:
         axis = _log_axis(paths)
@@ -2598,14 +2625,16 @@ def _plot_particle_exits(
     )
     result = exit_angles(history, psi_n=threshold, axis=axis, boundary=boundary)
     caption = exit_caption(result, psi_n=threshold, boundary=boundary is not None)
+    if selected:
+        caption += f"\n{selected}"
     out = plot_exit_histograms(
-        result, folder / "particle_exits.png", bins=case.ptrace_exit_bins,
+        result, folder / f"particle_exits{suffix}.png", bins=case.ptrace_exit_bins,
         caption=caption, **_dpi_kwargs(dpi),
     )
-    print(f"  particle_exits: {caption} -> {out}")
+    print(f"  particle_exits: {caption.replace(chr(10), '; ')} -> {out}")
     if animate:
         gif = animate_exit_histograms(
-            result, folder / "particle_exits.gif", bins=case.ptrace_exit_bins,
+            result, folder / f"particle_exits{suffix}.gif", bins=case.ptrace_exit_bins,
             t_range=(float(history.time[0]), float(history.time[-1])) if history.time.size
             else (0.0, 0.0),
             caption=caption, **_dpi_kwargs(dpi),
@@ -2645,10 +2674,16 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
     window = _traced_window(case, paths, folder, diag="particle_wetted")
     if window is not None:
         history = history.within(*window)
+    selection = _initial_psi_selection(case, history, diag="particle_wetted")
+    if selection is None:
+        return
+    n_markers = history.n
+    history, selected, suffix = selection
     wall = Wall.from_points(boundary)
     hits = wall_hits(history, wall)
     if hits.n == 0:
-        print(f"  particle_wetted: none of {hits.n_considered} particles hit the wall, skipped")
+        print(f"  particle_wetted: none of {hits.n_considered} particles hit the wall"
+              + (f" ({selected})" if selected else "") + ", skipped")
         return
     n_l, n_phi = case.ptrace_wetted_bins
     result = wetted_area(hits, wall, n_l=n_l, n_phi=n_phi)
@@ -2658,9 +2693,9 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
     t_start, t_end = float(history.time[0]), float(history.time[-1])
     duration = t_end - t_start
     out = plot_wetted_area(
-        result, hits, folder / "particle_wetted.png",
+        result, hits, folder / f"particle_wetted{suffix}.png",
         density_range=case.ptrace_wetted_density_range, duration=duration,
-        **_dpi_kwargs(dpi),
+        note=selected, **_dpi_kwargs(dpi),
     )
     numbers = {
         **result.as_dict(),
@@ -2668,11 +2703,16 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
         "wall_area": wall.area, "wall_length": wall.length, "bins": [n_l, n_phi],
         "t_start": t_start, "t_end": t_end, "duration": duration,
         "duration_microseconds": duration * 1e6,
+        # Which markers were counted: all of them (null), or those that
+        # started inside this psi_n range.
+        "initial_psi_n_range": case.ptrace_initial_psi_n_range,
+        "n_markers": n_markers, "n_selected": history.n,
     }
-    (folder / WETTED_RESULTS_FILE).write_text(
+    results_file = Path(WETTED_RESULTS_FILE)
+    (folder / f"{results_file.stem}{suffix}{results_file.suffix}").write_text(
         json.dumps(numbers, indent=2) + "\n", encoding="utf-8"
     )
-    caption = wetted_caption(result, hits, duration=duration)
+    caption = wetted_caption(result, hits, duration=duration, note=selected)
     print(f"  particle_wetted: {caption.replace(chr(10), '; ')} -> {out}")
 
 
