@@ -39,6 +39,7 @@ __all__ = [
     "PoincareOverlay",
     "RZPanel",
     "animate_rz_panels",
+    "animation_fps",
     "boundary_view",
     "draw_boundary",
     "draw_particles",
@@ -254,19 +255,34 @@ def plot_rz_panels(
     return out_path
 
 
+#: An animation plays in about this long [s], at a frame rate within
+#: these bounds: 2 a second for a handful of frames, as it always was, and
+#: no faster than a GIF is reliably shown at.
+ANIMATION_SECONDS = 10.0
+ANIMATION_FPS = (2, 20)
+
+
+def animation_fps(n_frames: int) -> int:
+    """Frames a second for an animation of n_frames."""
+    low, high = ANIMATION_FPS
+    return int(min(high, max(low, math.ceil(n_frames / ANIMATION_SECONDS))))
+
+
 def animate_rz_panels(
     frames: Sequence[RZPanel],
     out_path: Path | str,
     *,
     figsize: tuple[float, float] = (5.0, 5.6),
-    fps: int = 2,
+    fps: int | None = None,
     caption: str | None = None,
     view: View | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path | None:
     """Write the panels as frames of an animated GIF, all on the same R and
-    Z limits (view's, else whatever holds every frame). None (nothing written) for fewer than two frames -- a
-    one-frame animation isn't one. Same Pillow writer as the profile GIFs.
+    Z limits (view's, else whatever holds every frame), at fps frames a
+    second (default: animation_fps, so it plays in about ten seconds).
+    None (nothing written) for fewer than two frames -- a one-frame
+    animation isn't one. Same Pillow writer as the profile GIFs.
     """
     import matplotlib.animation as animation
     import matplotlib.pyplot as plt
@@ -296,7 +312,7 @@ def animate_rz_panels(
             return []
 
         anim = animation.FuncAnimation(fig, _update, frames=len(frames), blit=False)
-        anim.save(out_path, writer="pillow", fps=fps, dpi=dpi)
+        anim.save(out_path, writer="pillow", fps=fps or animation_fps(len(frames)), dpi=dpi)
     plt.close(fig)
     return out_path
 

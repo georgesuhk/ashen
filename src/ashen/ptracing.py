@@ -30,10 +30,11 @@ confuse ``last_file_before_time``: a 6-digit ``jorek0000NM.h5`` greps to
 bisects over stay in ascending order. The start restart is also linked as
 ``jorek_restart.h5``, the name the reader uses for a frozen field (``i=-1``).
 
-A case's ptrace_inputs (e.g. ptrace_gc's ptrace_params.nml) are copied in
-under their own names, like a particle file. A case's ptrace_<setting> keys
-(ptrace_dt, ptrace_initialiser, ...) are written into ptrace_overrides.nml,
-which ptrace_gc reads after ptrace_params.nml.
+A case's ptrace_inputs are copied in under their own names, like a
+particle file. A case's ptrace_<setting> keys (ptrace_dt, ptrace_initialiser,
+...), over ashen's defaults for the rest, are written into
+ptrace_settings.nml -- the one settings file ptrace_gc reads, and so the
+record, kept in the trace folder, of what that trace ran with.
 
 Which restarts: ptrace_start_step to ptrace_end_step, each defaulting to
 the run's first and last restart (traced_steps).
@@ -72,8 +73,12 @@ from ashen.particle_programs import (
     LOST_MARKER,
     NOTE_MARKER,
     OUTPUT_FILES,
-    OVERRIDES_FILE,
-    overrides_namelist,
+    RETIRED_SETTINGS_FILES,
+    SETTINGS_FILE,
+    PtraceSettingsError,
+    describe_settings,
+    resolve_settings,
+    settings_namelist,
 )
 
 __all__ = [
@@ -145,8 +150,12 @@ class PtracePlan:
     #: Changes whenever anything that affects the result changes.
     fingerprint: str
     #: (name in work_dir, text): files ashen writes there itself -- the
-    #: case's ptrace_<setting> keys as ptrace_overrides.nml.
+    #: trace's settings as ptrace_settings.nml.
     writes: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+    #: Every ptrace_gc setting the trace runs with (resolve_settings): the
+    #: case's ptrace_<setting> keys over the defaults. Empty for a case that
+    #: sets none -- a program that reads no settings file.
+    settings: dict = dataclasses.field(default_factory=dict)
     #: The jobscript (a file in site.toml's jobscripts folder, e.g. "2h")
     #: the trace is queued with, or None to run it here (`ptrace --run_i`).
     job: str | None = None
@@ -156,6 +165,13 @@ class PtracePlan:
         """The links to JOREK restarts -- only needed while the program
         runs, so removed again afterwards (see run_ptrace)."""
         return [name for name, _ in self.links if name.startswith("jorek")]
+
+    def describe_settings(self) -> list[str]:
+        """The trace's settings, one "name = value" line each, defaults
+        marked -- what `ptrace` prints when it runs or queues the trace."""
+        if not self.settings:
+            return []
+        return describe_settings(self.settings, self.case.ptrace_settings)
 
     def describe(self) -> list[str]:
         """Human-readable plan, for --dry-run."""
@@ -168,7 +184,12 @@ class PtracePlan:
         lines += [f"copy     {name} <- {source}" for name, source in self.copies]
         for name, text in self.writes:
             lines += [f"write    {name}:"]
-            lines += [f"           {line}" for line in text.splitlines() if not line.startswith("!")]
+            # The settings as a person reads them; the file spells out
+            # every marker of a per-marker list.
+            shown = self.describe_settings() if name == SETTINGS_FILE else [
+                line for line in text.splitlines() if not line.startswith("!")
+            ]
+            lines += [f"           {line}" for line in shown]
         lines += ["queue:" if self.job else "run:"]
         lines += [f"           {line}" for line in self.command.splitlines()]
         return lines
@@ -313,16 +334,22 @@ def plan_ptrace(
             )
         copies.append((source.name, source))
     writes = []
+    resolved: dict = {}
     if case.ptrace_settings:
-        if OVERRIDES_FILE in dict(copies):
-            raise PtraceError(
-                f"case {case.name!r}: ashen writes {OVERRIDES_FILE} from the case's "
-                f"ptrace_<setting> keys; don't list one in ptrace_inputs as well"
-            )
-        writes.append((OVERRIDES_FILE, overrides_namelist(case.ptrace_settings)))
+        try:
+            resolved = resolve_settings(case.ptrace_settings)
+        except PtraceSettingsError as exc:
+            raise PtraceError(f"case {case.name!r}: {exc}") from None
+        writes.append((SETTINGS_FILE, settings_namelist(resolved, header=(
+            f"case {case.name}: restart steps {steps[0]}..{steps[-1]} "
+            f"({len(steps)}), linked from index 0; jorek_pdf.h5 is step {pdf_step}",
+        ))))
 
     work_dir = ptrace_dir(case, run_dir)
     settings = {key: getattr(case, key) for key in _RESULT_FIELDS}
+    # Every setting, defaults included: a default that changes in ashen
+    # changes the result as much as a key the case sets.
+    settings["ptrace_settings"] = resolved
     settings["ptrace_particles"] = str(particles) if particles else None
     settings["ptrace_inputs"] = [str(source) for name, source in copies if name != PARTICLES_FILE]
     fingerprint_input = {
@@ -373,7 +400,7 @@ def plan_ptrace(
         work_dir=work_dir,
         exe=exe, steps=steps, links=links, copies=copies, namelist=namelist.name,
         command=command, omp_threads=threads, fingerprint=fingerprint,
-        writes=writes, job=job,
+        writes=writes, job=job, settings=resolved,
     )
 
 
@@ -444,7 +471,9 @@ def _is_managed(entry: Path, plan: PtracePlan, previously_copied: list[str]) -> 
     these are cleared on restaging; anything else is left alone."""
     return (
         entry.is_symlink()
-        or entry.name in (META_FILE, LOG_FILE, OVERRIDES_FILE, *OUTPUT_FILES)
+        or entry.name in (
+            META_FILE, LOG_FILE, SETTINGS_FILE, *RETIRED_SETTINGS_FILES, *OUTPUT_FILES,
+        )
         or entry.name in previously_copied
         or entry.name in dict(plan.copies)
         or entry.match("part_restart*.h5")

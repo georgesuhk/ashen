@@ -8,8 +8,12 @@ ashen reacts to is what the program writes -- the files in its folder
 (:data:`NOTE_MARKER`, :data:`LOST_MARKER`). So a program built under any
 name, e.g. ptrace_gc per model, is handled the same.
 
-ptrace_gc (fortran/ptrace_gc.f90) reads its settings from a &ptrace
-namelist, which a case can also set key by key (:data:`PTRACE_SETTINGS`).
+ptrace_gc (fortran/ptrace_gc.f90) reads its settings from one &ptrace
+namelist, :data:`SETTINGS_FILE`, which ashen writes into the trace folder
+from the case's ptrace_<name> keys (:data:`PTRACE_SETTINGS`) over
+:data:`PTRACE_DEFAULTS` -- every setting, so the file is also the record of
+what that trace ran with (:func:`resolve_settings`,
+:func:`settings_namelist`).
 """
 
 from __future__ import annotations
@@ -20,12 +24,18 @@ __all__ = [
     "DIAG_FILES",
     "LOST_MARKER",
     "NOTE_MARKER",
+    "MAX_MARKERS",
     "OUTPUT_FILES",
-    "OVERRIDES_FILE",
+    "PTRACE_DEFAULTS",
     "PTRACE_SETTINGS",
     "PTRACE_SETTING_CHOICES",
+    "PtraceSettingsError",
+    "RETIRED_SETTINGS_FILES",
+    "SETTINGS_FILE",
+    "describe_settings",
     "find_diag_file",
-    "overrides_namelist",
+    "resolve_settings",
+    "settings_namelist",
 ]
 
 #: write_particle_diagnostics files, in the order find_diag_file prefers
@@ -50,8 +60,8 @@ LOST_MARKER = "PARTICLE IS LOST, STOPPING"
 #: ptrace_gc's &ptrace settings a case can set as ptrace_<name> in cases.toml,
 #: and what each takes: "str", "bool", "int", "real", or "ints"/"reals" -- a
 #: list, one value per marker (a single value is a list of one). ashen writes
-#: them to OVERRIDES_FILE, which ptrace_gc reads after ptrace_params.nml.
-#: restart_index is left out: ashen links the restarts from index 0.
+#: them, over PTRACE_DEFAULTS, to SETTINGS_FILE. restart_index is not one of
+#: them: ashen links the restarts from index 0, and writes it as 0.
 PTRACE_SETTINGS = {
     "field_mode": "str",
     "hold_last_field": "bool",
@@ -59,6 +69,7 @@ PTRACE_SETTINGS = {
     "dt": "real",
     "diag_step": "real",
     "snapshot_step": "real",
+    "n_snapshots": "int",
     "mass": "real",
     "initialiser": "str",
     "n_markers": "int",
@@ -78,8 +89,124 @@ PTRACE_SETTING_CHOICES = {
     "initialiser": ("markers", "current_pdf_simple"),
 }
 
-#: The file ashen writes a case's PTRACE_SETTINGS into, as a &ptrace namelist.
-OVERRIDES_FILE = "ptrace_overrides.nml"
+#: What a setting is when the case does not set it -- the same values
+#: ptrace_gc.f90 declares (tests/unit/test_particle_programs.py holds the
+#: two together). Not here, so required: n_markers, E_kin_eV and cos_pitch,
+#: and R0 and Z0 for the 'markers' initialiser.
+PTRACE_DEFAULTS = {
+    "field_mode": "evolving",
+    "hold_last_field": False,
+    "t_span": 0.0,
+    "dt": 1e-10,
+    "diag_step": 1e-8,
+    # 0: ptrace_gc spaces the snapshots itself, about n_snapshots of them.
+    "snapshot_step": 0.0,
+    "n_snapshots": 100,
+    "mass": 5.48579909065e-4,
+    "initialiser": "markers",
+    "phi0": [0.0],
+    "charge": [-1],
+    "pdf_n_sub": 4,
+    "seed": 1,
+}
+
+#: ptrace_gc's MAX_MARKERS: the length of its marker arrays.
+MAX_MARKERS = 100000
+
+#: The settings that are one value per marker.
+_PER_MARKER = ("R0", "Z0", "phi0", "E_kin_eV", "cos_pitch", "charge")
+#: Of those, where each marker starts -- only the 'markers' initialiser's.
+_POSITIONS = ("R0", "Z0", "phi0")
+
+#: The file ashen writes a trace's settings into, as a &ptrace namelist --
+#: all of them, so it is also the record of what the trace ran with.
+SETTINGS_FILE = "ptrace_settings.nml"
+
+#: Files earlier versions read settings from. ptrace_gc no longer reads
+#: them, so one in a case's ptrace_inputs would be silently ignored.
+RETIRED_SETTINGS_FILES = ("ptrace_params.nml", "ptrace_overrides.nml")
+
+
+class PtraceSettingsError(ValueError):
+    """A case's ptrace_<setting> keys that do not make a valid trace."""
+
+
+def resolve_settings(settings: dict) -> dict:
+    """Every ptrace_gc setting a trace runs with, in PTRACE_SETTINGS order:
+    the case's own (checked and normalised, as ashen.cases leaves them)
+    over PTRACE_DEFAULTS.
+
+    Snapshots: a snapshot_step the case sets is used as it is, and
+    n_snapshots becomes 0; otherwise snapshot_step stays 0 and ptrace_gc
+    spaces about n_snapshots of them over the trace.
+
+    Per-marker settings: under 'markers' a single value stands for every
+    marker and a list must have n_markers values (ptrace_gc itself would
+    leave the markers past a short list at energy 0); under
+    'current_pdf_simple' every marker shares one energy, pitch and charge,
+    and R0/Z0/phi0 -- which it would ignore -- are refused.
+    Raises PtraceSettingsError, naming the ptrace_<name> key at fault.
+    """
+    def bad(message: str) -> PtraceSettingsError:
+        return PtraceSettingsError(message)
+
+    merged = {**PTRACE_DEFAULTS, **settings}
+    for name in ("n_markers", "E_kin_eV", "cos_pitch"):
+        if name not in merged:
+            raise bad(f"ptrace_{name} is not set, and has no default")
+    n = merged["n_markers"]
+    if not 1 <= n <= MAX_MARKERS:
+        raise bad(f"ptrace_n_markers must be in 1..{MAX_MARKERS}, got {n}")
+    for name, low in (("dt", 0.0), ("diag_step", 0.0), ("mass", 0.0)):
+        if not merged[name] > low:
+            raise bad(f"ptrace_{name} must be > 0, got {merged[name]}")
+    for name in ("t_span", "snapshot_step"):
+        if merged[name] < 0:
+            raise bad(f"ptrace_{name} must be >= 0, got {merged[name]}")
+    if merged["n_snapshots"] < 0:
+        raise bad(f"ptrace_n_snapshots must be >= 0, got {merged['n_snapshots']}")
+    # A snapshot_step the case sets is the spacing, whatever n_snapshots says
+    # (0: only the final snapshot). Written as n_snapshots = 0, so the file
+    # says the same thing to ptrace_gc, whose own default is 100.
+    if "snapshot_step" in settings:
+        merged["n_snapshots"] = 0
+    if merged["pdf_n_sub"] < 1:
+        raise bad(f"ptrace_pdf_n_sub must be >= 1, got {merged['pdf_n_sub']}")
+
+    by_position = merged["initialiser"] == "markers"
+    if by_position:
+        for name in ("R0", "Z0"):
+            if name not in merged:
+                raise bad(f"ptrace_{name} is not set: the 'markers' initialiser "
+                          "places each marker at its R0, Z0, phi0")
+    else:
+        given = [f"ptrace_{name}" for name in _POSITIONS if name in settings]
+        if given:
+            raise bad(f"{', '.join(given)} set, but initialiser "
+                      f"{merged['initialiser']!r} places the markers itself and "
+                      "would ignore it; remove it, or use initialiser 'markers'")
+    for name in _PER_MARKER:
+        if name not in merged:
+            continue
+        values = list(merged[name])
+        if by_position:
+            if len(values) == 1:
+                values = values * n
+            elif len(values) != n:
+                raise bad(f"ptrace_{name} has {len(values)} values for ptrace_n_markers = "
+                          f"{n}; give one value for all markers, or one each")
+        elif name in _POSITIONS:
+            del merged[name]
+            continue
+        elif len(values) != 1:
+            raise bad(f"ptrace_{name} has {len(values)} values, but initialiser "
+                      f"{merged['initialiser']!r} gives every marker the same one")
+        merged[name] = values
+    if not all(e > 0 for e in merged["E_kin_eV"]):
+        raise bad(f"ptrace_E_kin_eV must be > 0 [eV], got {_brief(merged['E_kin_eV'])}")
+    if not all(abs(c) <= 1 for c in merged["cos_pitch"]):
+        raise bad(f"ptrace_cos_pitch must be within -1..1, got {_brief(merged['cos_pitch'])}")
+    return {name: merged[name] for name in PTRACE_SETTINGS if name in merged}
 
 
 def _fortran_value(value) -> str:
@@ -94,19 +221,66 @@ def _fortran_value(value) -> str:
     return str(value)
 
 
-def overrides_namelist(settings: dict) -> str:
-    """The &ptrace namelist for OVERRIDES_FILE, settings in PTRACE_SETTINGS order."""
-    lines = ["! Written by ashen from the case's ptrace_<setting> keys in cases.toml.",
-             "! ptrace_gc reads it after ptrace_params.nml, so these values win.",
-             "&ptrace"]
-    for name in PTRACE_SETTINGS:
-        if name not in settings:
-            continue
-        value = settings[name]
-        values = value if isinstance(value, list) else [value]
-        lines.append(f"  {name} = " + ", ".join(_fortran_value(v) for v in values))
+#: Values per line of a long per-marker list in SETTINGS_FILE.
+_PER_LINE = 6
+
+
+def settings_namelist(resolved: dict, *, header: tuple[str, ...] = ()) -> str:
+    """SETTINGS_FILE's text: the &ptrace namelist of resolve_settings'
+    result, after `header` as comment lines. A per-marker list that is one
+    value repeated is written with a repeat count (1000*1.0d7); a longer
+    one is wrapped."""
+    lines = [f"! {line}" for line in (
+        *header,
+        "Written by ashen from the case's ptrace_<name> keys in cases.toml, over its",
+        "defaults: every setting this trace ran with. Rewritten each time it is staged.",
+    )]
+    lines += ["&ptrace", "  restart_index = 0"]
+    for name, value in resolved.items():
+        if not isinstance(value, list):
+            lines.append(f"  {name} = {_fortran_value(value)}")
+        elif len(value) > 1 and all(v == value[0] for v in value):
+            lines.append(f"  {name} = {len(value)}*{_fortran_value(value[0])}")
+        else:
+            texts = [_fortran_value(v) for v in value]
+            rows = [", ".join(texts[i:i + _PER_LINE]) for i in range(0, len(texts), _PER_LINE)]
+            lines.append(f"  {name} = " + (",\n" + " " * (len(name) + 5)).join(rows))
     lines.append("/")
     return "\n".join(lines) + "\n"
+
+
+def _brief(value) -> str:
+    """A setting's value for a person: a per-marker list that is one value
+    repeated as "N x value", a long one cut short."""
+    if not isinstance(value, list):
+        return str(value).lower() if isinstance(value, bool) else str(value)
+    if len(value) == 1:
+        return str(value[0])
+    if all(v == value[0] for v in value):
+        return f"{len(value)} x {value[0]}"
+    if len(value) <= 6:
+        return ", ".join(str(v) for v in value)
+    return ", ".join(str(v) for v in value[:3]) + f", ... ({len(value)} values)"
+
+
+def describe_settings(resolved: dict, given: dict) -> list[str]:
+    """One line per setting of resolve_settings' result, for `ptrace` to
+    print: "name = value", marked where it is the default rather than one
+    of the case's own keys (`given`)."""
+    width = max(len(name) for name in resolved)
+    spaced_by_step = "snapshot_step" in given
+    lines = []
+    for name, value in resolved.items():
+        text, note = _brief(value), "" if name in given else "   (default)"
+        # The two snapshot settings are one choice: say which one is in force.
+        if name == "snapshot_step" and not spaced_by_step:
+            text = "from n_snapshots" if resolved["n_snapshots"] else "0.0: only the final snapshot"
+        elif name == "n_snapshots" and spaced_by_step:
+            text, note = "not used", "   (snapshot_step is set)"
+        elif name == "n_snapshots" and value:
+            text = f"about {value}, at round times"
+        lines.append(f"{name:<{width}} = {text}{note}")
+    return lines
 
 
 def find_diag_file(folder: Path | str) -> Path | None:

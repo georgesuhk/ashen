@@ -398,18 +398,28 @@ note  = "internal kink investigation"
 # ptrace_particles  = "seeds/part_restart.h5"
 #
 # ashen's own tracer, fortran/ptrace_gc.f90 (see README): traces from
-# ptrace_start_step to ptrace_end_step. Markers, energies and snapshots come
-# from a ptrace_params.nml listed in ptrace_inputs (start from
-# fortran/ptrace_params.example.nml) and/or from ptrace_<setting> keys here,
-# which win: any &ptrace name, e.g.
+# ptrace_start_step to ptrace_end_step. Its settings are ptrace_<name> keys
+# here -- any &ptrace name, with a default for most (README "Tracing
+# particles" lists them). ashen writes them all, defaults included, to
+# ptrace_settings.nml in the trace folder: the record of what that trace ran
+# with, and printed when it runs or is queued. There is no ptrace_params.nml.
 # ptrace_exe         = "./exe/ptrace_gc"
-# ptrace_inputs      = ["ptrace_params.nml"]   # optional; the file in the run folder
 # ptrace_initialiser = "current_pdf_simple"
 # ptrace_pdf_step    = 2800              # whose current profile it samples (default: start step)
 # ptrace_n_markers   = 1000
 # ptrace_E_kin_eV    = 1e7
 # ptrace_cos_pitch   = 0.9
-# ptrace_dt          = 1e-10
+# ptrace_dt          = 1e-10             # default
+# ptrace_n_snapshots = 100               # default: about this many snapshots over the trace (0: final only)
+# ptrace_snapshot_step = 1e-6            # or a fixed time between them [s]; used instead when set
+#
+# Or markers at given points -- one value is every marker's, a list one each:
+# ptrace_initialiser = "markers"         # default
+# ptrace_n_markers   = 5
+# ptrace_R0          = [1.4, 1.5, 1.6, 1.7, 1.8]
+# ptrace_Z0          = 0.0
+# ptrace_E_kin_eV    = 1e7
+# ptrace_cos_pitch   = 0.9               # required, like n_markers and E_kin_eV
 #
 # plot --diag particles: draw the Poincare punctures `analyse --diag poincare`
 # cached under each snapshot (from the traced restart closest in time), and/or

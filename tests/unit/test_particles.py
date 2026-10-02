@@ -31,6 +31,7 @@ from ashen.plotting.particles import (
     PoincareOverlay,
     RZPanel,
     animate_rz_panels,
+    animation_fps,
     boundary_view,
     draw_particles,
     particle_caption,
@@ -689,3 +690,9 @@ def test_without_animate_only_the_last_snapshots_punctures_are_read(campaign, mo
     assert plot_cli.main(["--case", "run", "--diag", "particles", "--dpi", "40"]) == 0
     assert plot_cli.main(["--case", "run", "--diag", "particles", "--animate", "--dpi", "40"]) == 0
     assert asked == [1, 3]
+
+
+def test_animation_frame_rate_scales_with_the_frames():
+    """About ten seconds whatever the trace wrote: 2 a second for a handful
+    of frames, as before; never faster than a GIF is shown at."""
+    assert [animation_fps(n) for n in (2, 20, 21, 62, 100, 200, 5000)] == [2, 2, 3, 7, 10, 20, 20]

@@ -119,19 +119,24 @@ def test_negative_start_step(tmp_path):
 
 
 def test_trace_inputs_kept_as_written(tmp_path):
-    case = _load(tmp_path, _TRACED + 'ptrace_inputs = ["ptrace_params.nml", "/abs/x.txt"]\n')["a"]
-    assert case.ptrace_inputs == ["ptrace_params.nml", "/abs/x.txt"]
+    case = _load(tmp_path, _TRACED + 'ptrace_inputs = ["seeds.dat", "/abs/x.txt"]\n')["a"]
+    assert case.ptrace_inputs == ["seeds.dat", "/abs/x.txt"]
 
 
 def test_trace_inputs_accepts_a_single_path(tmp_path):
-    case = _load(tmp_path, _TRACED + 'ptrace_inputs = "ptrace_params.nml"\n')["a"]
-    assert case.ptrace_inputs == ["ptrace_params.nml"]
+    case = _load(tmp_path, _TRACED + 'ptrace_inputs = "seeds.dat"\n')["a"]
+    assert case.ptrace_inputs == ["seeds.dat"]
 
 
 @pytest.mark.parametrize("value, message", [
     ('["a/p.nml", "b/p.nml"]', r"\['p.nml'\] appear more than once"),
     ('["part_restart.h5"]', "go in ptrace_particles"),
     ("[1]", "must be a list of paths"),
+    # ptrace_gc no longer reads a settings file of the user's: say so, rather
+    # than copy one in for it to ignore
+    ('["ptrace_params.nml"]', r"\['ptrace_params.nml'\] in ptrace_inputs -- ptrace_gc no longer reads"),
+    ('["x/ptrace_overrides.nml"]', "Set each setting as a ptrace_<name> key"),
+    ('["ptrace_settings.nml"]', r"ashen\s+writes them all to ptrace_settings.nml"),
 ])
 def test_invalid_trace_inputs(tmp_path, value, message):
     with pytest.raises(CasesError, match=message):
@@ -207,28 +212,33 @@ def test_invalid_particle_color(tmp_path, value):
 # --- ptrace_<setting>: ptrace_gc's &ptrace settings ------------------------------
 
 
+#: The least a 'markers' trace needs besides what a test is about.
+_MARKER = "ptrace_n_markers = 1\nptrace_R0 = 1.5\nptrace_Z0 = 0\nptrace_cos_pitch = 0.9\n"
+
+
 def test_ptrace_settings_are_collected_and_normalised(tmp_path):
     case = _load(tmp_path, _TRACED + textwrap.dedent("""
         ptrace_dt          = 1e-10
         ptrace_initialiser = "current_pdf_simple"
         ptrace_n_markers   = 1000
         ptrace_E_kin_eV    = 10000000
-        ptrace_R0          = [1.5, 1.6]
+        ptrace_cos_pitch   = 0.9
         ptrace_charge      = -1
         ptrace_hold_last_field = true
     """))["a"]
+    # what the case sets, not the defaults: those are filled in for the trace
     assert case.ptrace_settings == {
         "dt": 1e-10, "initialiser": "current_pdf_simple", "n_markers": 1000,
-        "E_kin_eV": [1e7], "R0": [1.5, 1.6], "charge": [-1], "hold_last_field": True,
+        "E_kin_eV": [1e7], "cos_pitch": [0.9], "charge": [-1], "hold_last_field": True,
     }
     assert isinstance(case.ptrace_settings["E_kin_eV"][0], float)
 
 
 def test_ptrace_setting_names_ignore_case(tmp_path):
-    case = _load(tmp_path, _TRACED + "ptrace_e_kin_ev = 1e7\n")["a"]
-    assert case.ptrace_settings == {"E_kin_eV": [1e7]}
+    case = _load(tmp_path, _TRACED + _MARKER + "ptrace_e_kin_ev = 1e7\n")["a"]
+    assert case.ptrace_settings["E_kin_eV"] == [1e7]
     with pytest.raises(CasesError, match="sets ptrace_E_kin_eV twice"):
-        _load(tmp_path, _TRACED + "ptrace_e_kin_ev = 1e7\nptrace_E_kin_eV = 2e7\n")
+        _load(tmp_path, _TRACED + _MARKER + "ptrace_e_kin_ev = 1e7\nptrace_E_kin_eV = 2e7\n")
 
 
 def test_no_ptrace_settings_by_default(tmp_path):
@@ -245,8 +255,36 @@ def test_ptrace_settings_from_defaults(tmp_path):
         ptrace_exe        = "{RE_GC}"
         ptrace_start_step = 3000
         ptrace_dt         = 2e-10
+        ptrace_n_markers  = 1
+        ptrace_R0         = 1.5
+        ptrace_Z0         = 0
+        ptrace_E_kin_eV   = 1e7
+        ptrace_cos_pitch  = 0.9
     """)
-    assert cases["a"].ptrace_settings == {"dt": 2e-10}
+    assert cases["a"].ptrace_settings["dt"] == 2e-10
+
+
+@pytest.mark.parametrize("extra, message", [
+    ("ptrace_dt = 1e-10", "ptrace_n_markers is not set, and has no default"),
+    ("ptrace_n_markers = 2", "ptrace_E_kin_eV is not set"),
+    ("ptrace_n_markers = 2\nptrace_E_kin_eV = 1e7", "ptrace_cos_pitch is not set, and has no default"),
+    ("ptrace_n_markers = 2\nptrace_E_kin_eV = 1e7\nptrace_cos_pitch = 0.9",
+     "ptrace_R0 is not set: the 'markers' initialiser"),
+    ("ptrace_n_markers = 3\nptrace_E_kin_eV = [1e7, 2e7]\nptrace_R0 = 1.5\nptrace_Z0 = 0\n"
+     "ptrace_cos_pitch = 0.9", "ptrace_E_kin_eV has 2 values for ptrace_n_markers = 3"),
+    ('ptrace_initialiser = "current_pdf_simple"\nptrace_n_markers = 5\nptrace_E_kin_eV = 1e7\n'
+     "ptrace_cos_pitch = 0.9\nptrace_R0 = 1.5",
+     "ptrace_R0 set, but initialiser 'current_pdf_simple' places the markers itself"),
+    ('ptrace_initialiser = "current_pdf_simple"\nptrace_n_markers = 5\nptrace_E_kin_eV = [1e7, 2e7]\n'
+     "ptrace_cos_pitch = 0.9", "gives every marker the same one"),
+    ("ptrace_n_markers = 0\nptrace_E_kin_eV = 1e7\nptrace_cos_pitch = 0.9",
+     "ptrace_n_markers must be in 1..100000"),
+])
+def test_settings_that_do_not_make_a_trace_are_caught_at_load(tmp_path, extra, message):
+    """Before anything is staged or queued -- ptrace_gc itself would only
+    say so once it ran."""
+    with pytest.raises(CasesError, match=message):
+        _load(tmp_path, _TRACED + extra + "\n")
 
 
 @pytest.mark.parametrize("extra, message", [

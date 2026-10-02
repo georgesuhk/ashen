@@ -28,6 +28,7 @@ from ashen.cli._common import (
 )
 from ashen.config import SiteConfigError, load_site
 from ashen.jorek2 import enable_tool_output
+from ashen.particle_programs import SETTINGS_FILE
 from ashen.ptracing import (
     LOG_FILE,
     META_FILE,
@@ -179,6 +180,10 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"  steps {plan.steps[0]}..{plan.steps[-1]} ({len(plan.steps)} restart(s))"
             )
+            if plan.settings and (args.force or not is_current(plan)):
+                print(f"  settings ({SETTINGS_FILE} in the trace folder):")
+                for line in plan.describe_settings():
+                    print(f"    {line}")
             result = run_ptrace(plan, force=args.force)
             if result.ran and result.job_id is not None:
                 print(f"  queued: job {result.job_id} ({job}) in {plan.work_dir}; "
