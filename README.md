@@ -1630,6 +1630,25 @@ a grey outline -- so they grow into it.
   `ptrace_gc_refluid_fixed_T_rho` plots the same. It must hold psi_n, R, Z,
   phi and lost.
 
+### Plotting a trace that has not finished
+
+`particle_exits`, `particle_wetted` and `particle_loss` plot whatever a
+trace has written, so one that is still running, ran out of time or was
+killed can be looked at as far as it got. Nothing extra is needed: run the
+plot as usual.
+
+- The plot says how far the trace got, on the terminal and in the caption:
+  `trace unfinished: 45 % of the way to ptrace_end_step 3400` (or to the
+  last restart it was given, without a `ptrace_end_step`). The wetted JSON
+  records it as `trace_fraction`, `null` for a trace that reached its end.
+- A trace stopped *while writing* a diagnostics row leaves that row in
+  some datasets only. It is left out, with a note; every earlier row is
+  used. A file cut off so badly that it cannot be opened at all cannot be
+  recovered: retrace.
+- Numbers from an unfinished trace are not comparable with a finished
+  one's: fewer particles have reached the wall. The duration in the
+  caption says what they cover.
+
 ### Where the lost particles started
 
 `plot --diag particle_loss` is the connection-length map with particle loss

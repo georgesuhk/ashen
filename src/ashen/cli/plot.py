@@ -126,7 +126,7 @@ from ashen.quantities import (
     is_known_quantity,
     quantity,
 )
-from ashen.particle_programs import DIAG_FILES, find_diag_file
+from ashen.particle_programs import DIAG_FILES, SETTINGS_FILE, find_diag_file
 from ashen.ptracing import LOG_FILE, other_traces, ptrace_dir, ptrace_label, traced_start
 
 DIAG_CHOICES = (
@@ -2310,6 +2310,66 @@ def _particles_view(case: Case, paths: RunPaths):
 _LOGGED_RESTART = re.compile(r"ptrace_gc: restart step (\d+) at t =\s*(\S+) s")
 
 
+def _logged_restart_times(folder: Path) -> dict[int, float]:
+    """{step: time [s]} of the restarts a trace was given, from ptrace_gc's
+    table in ptrace.log -- written when it starts, so there for a trace
+    that never finished too. Empty without a log or a table."""
+    times: dict[int, float] = {}
+    log = folder / LOG_FILE
+    if log.is_file():
+        for match in _LOGGED_RESTART.finditer(log.read_text(encoding="utf-8", errors="replace")):
+            try:
+                times.setdefault(int(match.group(1)), float(match.group(2)))
+            except ValueError:
+                continue
+    return times
+
+
+#: t_span as ashen wrote it into a trace's settings file.
+_WRITTEN_T_SPAN = re.compile(r"^\s*t_span\s*=\s*([^\s,!]+)", re.MULTILINE)
+
+
+def _unfinished_trace(case: Case, folder: Path, window, history, *, diag: str):
+    """For a trace that stopped before its end -- still running, out of
+    time, killed -- the plots draw what was traced, and say so: a note for
+    the captions, and how far it got as a fraction of start..end; printed
+    too, with any row the trace was cut off while writing. (None, None) for
+    one that got there, or whose end is not known.
+
+    The end is ptrace_end_step's time; without one, the last restart the
+    trace was given (ptrace.log), unless it traced a t_span instead.
+    """
+    if history.dropped_rows:
+        print(f"  {diag}: the last {history.dropped_rows} row(s) of {history.path.name} were "
+              "cut off mid-write (the trace was stopped while writing) and are left out")
+    if window is None or history.time.size == 0:
+        return None, None
+    t_min, t_max = window
+    to = f"ptrace_end_step {case.ptrace_end_step}"
+    if t_max is None:
+        settings = folder / SETTINGS_FILE
+        match = _WRITTEN_T_SPAN.search(settings.read_text(encoding="utf-8", errors="replace")) \
+            if settings.is_file() else None
+        try:
+            t_span = float(match.group(1).lower().replace("d", "e")) if match else 0.0
+        except ValueError:
+            t_span = 0.0
+        logged = _logged_restart_times(folder)
+        if t_span > 0 or not logged:
+            return None, None
+        step, t_max = max(logged.items(), key=lambda item: item[1])
+        to = f"the last restart, step {step}"
+    last = float(history.time[-1])
+    spacing = last - float(history.time[-2]) if history.time.size > 1 else 0.0
+    if not t_max > t_min or t_max - last <= spacing * 1.01 + abs(t_max) * 1e-6:
+        return None, None
+    fraction = (last - t_min) / (t_max - t_min)
+    note = f"trace unfinished: {100 * fraction:.3g} % of the way to {to}"
+    print(f"  {diag}: the trace stops at t = {last * 1e3:.6g} ms, {100 * fraction:.3g} % of the "
+          f"way to {to} (t = {t_max * 1e3:.6g} ms) -- plotting what was traced")
+    return note, fraction
+
+
 def _traced_window(
     case: Case, paths: RunPaths, folder: Path, *, diag: str,
 ) -> tuple[float, float | None] | None:
@@ -2327,14 +2387,7 @@ def _traced_window(
     wanted = [start]
     if case.ptrace_end_step is not None:
         wanted.append(case.ptrace_end_step)
-    times: dict[int, float] = {}
-    log = folder / LOG_FILE
-    if log.is_file():
-        for match in _LOGGED_RESTART.finditer(log.read_text(encoding="utf-8", errors="replace")):
-            try:
-                times.setdefault(int(match.group(1)), float(match.group(2)))
-            except ValueError:
-                continue
+    times = _logged_restart_times(folder)
     for step in wanted:
         if step not in times and zero_d_is_usable(paths.zero_d(step)):
             try:
@@ -2610,6 +2663,7 @@ def _plot_particle_exits(
         if history.time.size < n_times:
             print(f"  particle_exits: {n_times - history.time.size} diagnostics time(s) outside "
                   "ptrace_start_step..ptrace_end_step left out")
+    unfinished, _ = _unfinished_trace(case, folder, window, history, diag="particle_exits")
     selection = _initial_psi_selection(case, history, diag="particle_exits")
     if selection is None:
         return
@@ -2629,8 +2683,9 @@ def _plot_particle_exits(
     )
     result = exit_angles(history, psi_n=threshold, axis=axis, boundary=boundary)
     caption = exit_caption(result, psi_n=threshold, boundary=boundary is not None)
-    if selected:
-        caption += f"\n{selected}"
+    for note in (selected, unfinished):
+        if note:
+            caption += f"\n{note}"
     out = plot_exit_histograms(
         result, folder / f"particle_exits{suffix}.png", bins=case.ptrace_exit_bins,
         caption=caption, **_dpi_kwargs(dpi),
@@ -2678,6 +2733,7 @@ def _plot_particle_loss(
         print(f"  particle_loss: {diag.name} has fewer than two diagnostics times within "
               "ptrace_start_step..ptrace_end_step, skipped")
         return
+    unfinished, _ = _unfinished_trace(case, folder, window, history, diag="particle_loss")
     selection = _initial_psi_selection(case, history, diag="particle_loss")
     if selection is None:
         return
@@ -2699,7 +2755,7 @@ def _plot_particle_loss(
     caption = (
         f"{result.n_lost} of {result.n_considered} particles lost ({how}) over "
         f"{(history.time[-1] - history.time[0]) * 1e6:.4g} µs of trace"
-        + (f"\n{selected}" if selected else "")
+        + "".join(f"\n{note}" for note in (selected, unfinished) if note)
     )
     out = plot_loss_map(
         result, folder / f"particle_loss{suffix}.png", caption=caption, **_dpi_kwargs(dpi),
@@ -2736,11 +2792,15 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
     window = _traced_window(case, paths, folder, diag="particle_wetted")
     if window is not None:
         history = history.within(*window)
+    unfinished, trace_fraction = _unfinished_trace(
+        case, folder, window, history, diag="particle_wetted",
+    )
     selection = _initial_psi_selection(case, history, diag="particle_wetted")
     if selection is None:
         return
     n_markers = history.n
     history, selected, suffix = selection
+    notes = "\n".join(note for note in (selected, unfinished) if note) or None
     wall = Wall.from_points(boundary)
     hits = wall_hits(history, wall)
     if hits.n == 0:
@@ -2757,7 +2817,7 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
     out = plot_wetted_area(
         result, hits, folder / f"particle_wetted{suffix}.png",
         density_range=case.ptrace_wetted_density_range, duration=duration,
-        note=selected, **_dpi_kwargs(dpi),
+        note=notes, **_dpi_kwargs(dpi),
     )
     numbers = {
         **result.as_dict(),
@@ -2769,12 +2829,15 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
         # started inside this psi_n range.
         "initial_psi_n_range": case.ptrace_initial_psi_n_range,
         "n_markers": n_markers, "n_selected": history.n,
+        # How far an unfinished trace got, as a fraction of start..end; null
+        # for one that got to its end (or whose end is not known).
+        "trace_fraction": trace_fraction,
     }
     results_file = Path(WETTED_RESULTS_FILE)
     (folder / f"{results_file.stem}{suffix}{results_file.suffix}").write_text(
         json.dumps(numbers, indent=2) + "\n", encoding="utf-8"
     )
-    caption = wetted_caption(result, hits, duration=duration, note=selected)
+    caption = wetted_caption(result, hits, duration=duration, note=notes)
     print(f"  particle_wetted: {caption.replace(chr(10), '; ')} -> {out}")
 
 
