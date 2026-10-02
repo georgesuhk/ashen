@@ -64,6 +64,9 @@ class ParticleHistory:
     #: None when the program didn't write theta (see exit_angles' axis).
     theta: np.ndarray | None
     lost: np.ndarray
+    #: Rows at the end of the file left out because not every dataset had
+    #: them: the trace was cut off while writing (read_particle_diag).
+    dropped_rows: int = 0
 
     @property
     def n(self) -> int:
@@ -130,35 +133,63 @@ class ExitResult:
         return self.n_crossed + self.n_outside_boundary + self.n_left_grid
 
 
-def _as_time_by_particle(data: np.ndarray, n_times: int, where: str) -> np.ndarray:
-    """Fortran writes (n_particles, n_times); h5py sees it (n_times,
-    n_particles). A transposed layout is accepted too, told apart by the
-    time axis' length."""
-    data = np.asarray(data)
-    if data.ndim == 2 and data.shape[0] == n_times:
-        return data
-    if data.ndim == 2 and data.shape[1] == n_times:
-        return data.T
-    raise ParticleFileError(
-        f"{where} has shape {data.shape}, expected ({n_times}, n_particles) "
-        "-- one row per diagnostics time in t"
-    )
+def _time_first(arrays: dict[str, np.ndarray], n_times: int, where: str) -> dict[str, np.ndarray]:
+    """Each dataset as (n_rows, n_particles). Fortran writes (n_particles,
+    n_times); h5py sees it (n_times, n_particles); a transposed layout is
+    accepted too, when its time axis has exactly n_times. In the usual
+    layout the rows may be within one of n_times: a trace killed while it
+    was writing a row leaves the datasets one row apart, as they are
+    extended one after another and the time last."""
+    for name, data in arrays.items():
+        if data.ndim != 2:
+            raise ParticleFileError(
+                f"{where}: {name} has shape {data.shape}, expected (n_times, n_particles)"
+            )
+    off = [max(abs(data.shape[axis] - n_times) for data in arrays.values()) for axis in (0, 1)]
+    # An exact fit either way round first; then the layout the programs
+    # write, give or take the cut-off row.
+    if off[0] == 0:
+        axis = 0
+    elif off[1] == 0:
+        axis = 1
+    elif off[0] <= 1:
+        axis = 0
+    else:
+        shapes = {name: data.shape for name, data in arrays.items()}
+        raise ParticleFileError(
+            f"{where}: {shapes} do not have one row per diagnostics time in t "
+            f"({n_times} times)"
+        )
+    arrays = {name: data if axis == 0 else data.T for name, data in arrays.items()}
+    if len({data.shape[1] for data in arrays.values()}) != 1:
+        shapes = {name: data.shape for name, data in arrays.items()}
+        raise ParticleFileError(f"{where}: datasets differ in their number of particles: {shapes}")
+    return arrays
 
 
 def read_particle_diag(path: Path | str) -> ParticleHistory:
-    """Read a write_particle_diagnostics file (e.g. ptrace_diag.h5)."""
+    """Read a write_particle_diagnostics file (e.g. ptrace_diag.h5).
+
+    A trace that stopped early -- still running, out of time, killed -- is
+    read as far as it got: the rows every dataset has. One that was cut off
+    while writing a row has that row in some datasets only; it is left out
+    and counted in dropped_rows.
+    """
     h5py = require_h5py("reading particle diagnostics", ParticleFileError)
     path = Path(path)
     try:
         f = h5py.File(path, "r")
     except OSError as exc:
-        raise ParticleFileError(f"{path}: cannot open -- {exc}") from exc
+        raise ParticleFileError(
+            f"{path}: cannot open -- {exc} (if its trace was killed while writing "
+            "this file, it cannot be recovered: retrace)"
+        ) from exc
 
     with f:
         groups = f.get("groups")
         if groups is None or not len(groups):
             raise ParticleFileError(f"{path}: no particle groups under /groups")
-        time = None
+        times: list[np.ndarray] = []
         columns: dict[str, list[np.ndarray]] = {name: [] for name in (*_REQUIRED, "theta")}
         has_theta = True
         for name in sorted(groups):
@@ -166,34 +197,42 @@ def read_particle_diag(path: Path | str) -> ParticleHistory:
             where = f"{path}: group {name!r}"
             if "t" not in group:
                 raise ParticleFileError(f"{where} has no 't' -- not a particle diagnostics file")
-            t = np.asarray(group["t"], dtype=float).reshape(-1)
-            if time is None:
-                time = t
-            elif t.shape != time.shape or not np.allclose(t, time):
-                raise ParticleFileError(f"{where}: its times differ from the first group's")
             missing = [d for d in _REQUIRED if d not in group]
             if missing:
                 raise ParticleFileError(
                     f"{where} has no {missing} -- the program must write psi_n, R, Z, "
                     "phi and lost (write_particle_diagnostics' `only`)"
                 )
+            t = np.asarray(group["t"], dtype=float).reshape(-1)
+            names = [*_REQUIRED, *(["theta"] if "theta" in group else [])]
+            arrays = _time_first({d: np.asarray(group[d]) for d in names}, t.size, where)
+            times.append(t)
             for d in _REQUIRED:
-                columns[d].append(_as_time_by_particle(group[d], t.size, f"{where}: {d}"))
-            if "theta" in group and has_theta:
-                columns["theta"].append(
-                    _as_time_by_particle(group["theta"], t.size, f"{where}: theta")
-                )
+                columns[d].append(arrays[d])
+            if "theta" in arrays and has_theta:
+                columns["theta"].append(arrays["theta"])
             else:
                 has_theta = False
 
+    used = [d for d in (*_REQUIRED, "theta") if d != "theta" or has_theta]
+    lengths = [t.size for t in times] + [a.shape[0] for d in used for a in columns[d]]
+    n_rows = min(lengths)
+    time = times[0][:n_rows]
+    for index, t in enumerate(times):
+        if not np.allclose(t[:n_rows], time):
+            raise ParticleFileError(
+                f"{path}: group {index + 1}'s times differ from the first group's"
+            )
+
     def joined(d: str, dtype) -> np.ndarray:
-        return np.concatenate(columns[d], axis=1).astype(dtype)
+        return np.concatenate([a[:n_rows] for a in columns[d]], axis=1).astype(dtype)
 
     return ParticleHistory(
         path=path, time=time,
         psi_n=joined("psi_n", float), R=joined("R", float), Z=joined("Z", float),
         phi=joined("phi", float), lost=joined("lost", int) > 0,
         theta=joined("theta", float) if has_theta else None,
+        dropped_rows=max(lengths) - n_rows,
     )
 
 

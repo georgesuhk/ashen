@@ -427,3 +427,124 @@ def test_invalid_initial_psi_range(campaign, value, capsys):
     _ranged(campaign, value)
     assert plot_cli.main(["--case", "run", "--diag", "particle_exits"]) == 1
     assert "ptrace_initial_psi_n_range must be [min, max]" in capsys.readouterr().err
+
+
+# --- a trace that stopped before its end: plot what was traced ----------------------
+
+
+def _cut_off(path, *, t_rows, var_rows, behind=None):
+    """A diagnostics file as a trace killed mid-write leaves it: the
+    datasets are extended one after another and the time last, so they end
+    up a row apart."""
+    import h5py
+
+    n = max(t_rows, var_rows)
+    psi = np.linspace(0.2, 0.9, n * 4).reshape(n, 4)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(path, "w") as f:
+        g = f.create_group("groups/001")
+        g["t"] = (np.arange(t_rows) * 1e-6).astype(np.float32)
+        for name in ("psi_n", "R", "Z", "phi", "theta", "lost"):
+            rows = var_rows - 1 if name == behind else var_rows
+            g[name] = np.zeros((rows, 4)) if name == "lost" else psi[:rows]
+    return path
+
+
+@pytest.mark.parametrize("t_rows, var_rows, behind, kept, dropped", [
+    (5, 5, None, 5, 0),          # a trace that was not writing when it stopped
+    (5, 6, None, 5, 1),          # the variables written, the time not yet
+    (6, 5, None, 5, 1),
+    (5, 6, "phi", 5, 1),         # stopped part-way through the variables
+    (5, 5, "theta", 4, 1),
+])
+def test_a_cut_off_file_is_read_as_far_as_every_dataset_goes(
+    tmp_path, t_rows, var_rows, behind, kept, dropped,
+):
+    history = read_particle_diag(
+        _cut_off(tmp_path / "d.h5", t_rows=t_rows, var_rows=var_rows, behind=behind))
+    assert history.time.size == kept and history.dropped_rows == dropped
+    for name in ("psi_n", "R", "Z", "phi", "theta", "lost"):
+        assert getattr(history, name).shape == (kept, 4)
+    np.testing.assert_allclose(history.time, np.arange(kept) * 1e-6, rtol=1e-6)
+    # the rows kept are the first ones, untouched
+    np.testing.assert_allclose(history.psi_n[0], [0.2, 0.2 + 0.7 / (4 * max(t_rows, var_rows) - 1),
+                                                  0.2 + 1.4 / (4 * max(t_rows, var_rows) - 1),
+                                                  0.2 + 2.1 / (4 * max(t_rows, var_rows) - 1)])
+
+
+def test_more_than_a_row_apart_is_not_a_cut_off_write(tmp_path):
+    with pytest.raises(ParticleFileError, match="do not have one row per diagnostics time"):
+        read_particle_diag(_cut_off(tmp_path / "d.h5", t_rows=5, var_rows=8))
+
+
+def test_a_file_that_cannot_be_opened_says_it_may_have_been_killed(tmp_path):
+    path = _cut_off(tmp_path / "d.h5", t_rows=5, var_rows=5)
+    data = path.read_bytes()
+    path.write_bytes(data[: len(data) // 2])
+    with pytest.raises(ParticleFileError, match="killed while writing"):
+        read_particle_diag(path)
+
+
+#: The trace was given restarts out to step 3200 at 1e-5 s; T ends at 2e-6 s.
+LONG_LOG = LOG.replace("2.000000E-06", "1.000000E-05")
+
+
+def _unfinished(campaign, *, end_step=False, settings=None):
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    write_diag(folder / "ptrace_diag.h5", t=T, psi_n=PSI, R=R, Z=Z, phi=PHI,
+               lost=LOST, theta=THETA)
+    (folder / "ptrace.log").write_text(LONG_LOG, encoding="utf-8")
+    if settings:
+        (folder / "ptrace_settings.nml").write_text(settings, encoding="utf-8")
+    if end_step:
+        (campaign / "cases.toml").write_text(
+            CASES.replace("ptrace_exit_psi_n = 1.3",
+                          "ptrace_exit_psi_n = 1.3\nptrace_end_step = 3200"), encoding="utf-8")
+    return folder
+
+
+def test_an_unfinished_trace_is_plotted_and_said_to_be(campaign, capsys):
+    folder = _unfinished(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert ("particle_exits: the trace stops at t = 0.002 ms, 20 % of the way to the last "
+            "restart, step 3200 (t = 0.01 ms) -- plotting what was traced") in out
+    assert "; trace unfinished: 20 % of the way to the last restart, step 3200 -> " in out
+    assert (folder / "particle_exits.png").is_file()
+
+
+def test_unfinished_against_an_explicit_end_step(campaign, capsys):
+    _unfinished(campaign, end_step=True)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    assert "trace unfinished: 20 % of the way to ptrace_end_step 3200" in capsys.readouterr().out
+
+
+def test_a_finished_trace_gets_no_such_note(campaign, capsys):
+    folder = _unfinished(campaign)
+    (folder / "ptrace.log").write_text(LOG, encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "unfinished" not in out and "the trace stops" not in out
+
+
+def test_a_trace_of_a_t_span_is_not_measured_against_the_last_restart(campaign, capsys):
+    _unfinished(campaign, settings="&ptrace\n  t_span = 2d-06\n/\n")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    assert "unfinished" not in capsys.readouterr().out
+
+
+def test_a_cut_off_file_is_plotted_with_a_note(campaign, capsys):
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    _cut_off(folder / "ptrace_diag.h5", t_rows=5, var_rows=6)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert ("the last 1 row(s) of ptrace_diag.h5 were cut off mid-write (the trace was "
+            "stopped while writing) and are left out") in out
+    assert (folder / "particle_exits.png").is_file()
+
+
+def test_the_loss_map_of_an_unfinished_trace(campaign, capsys):
+    folder = _unfinished(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_loss", "--dpi", "40"]) == 0
+    assert "trace unfinished: 20 % of the way" in capsys.readouterr().out
+    assert (folder / "particle_loss.png").is_file()

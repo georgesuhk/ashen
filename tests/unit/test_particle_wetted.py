@@ -312,3 +312,28 @@ def test_wetted_range_no_marker_started_in(campaign, capsys):
     _two_shells(campaign, "[0.9, 0.95]")
     assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
     assert "none of 40 markers start with psi_n in 0.9..0.95" in capsys.readouterr().out
+
+
+# --- a trace that stopped before its end -----------------------------------------
+
+
+def test_wetted_of_an_unfinished_trace_records_how_far_it_got(campaign, capsys):
+    """Two rows 1 us apart, of a trace given restarts out to 4 us: a quarter."""
+    folder = _two_shells(campaign)
+    (folder / "ptrace.log").write_text(
+        "ptrace_gc: restart step 3000 at t =   0.000000E+00 s\n"
+        "ptrace_gc: restart step 3400 at t =   4.000000E-06 s\n", encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "particle_wetted: the trace stops at t = 0.001 ms, 25 % of the way" in out
+    assert "trace unfinished: 25 % of the way to the last restart, step 3400" in out
+    numbers = json.loads((folder / "particle_wetted.json").read_text(encoding="utf-8"))
+    assert numbers["trace_fraction"] == pytest.approx(0.25)
+    assert numbers["duration_microseconds"] == pytest.approx(1.0, rel=1e-5)
+
+
+def test_wetted_of_a_finished_trace_has_no_trace_fraction(campaign):
+    folder = _two_shells(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    numbers = json.loads((folder / "particle_wetted.json").read_text(encoding="utf-8"))
+    assert numbers["trace_fraction"] is None
