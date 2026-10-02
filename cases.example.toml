@@ -435,8 +435,12 @@ note  = "internal kink investigation"
 # it), or leave the grid. --exit-psi-n overrides it for one plot.
 # ptrace_exit_psi_n = 1.0
 # ptrace_exit_bins  = 72
-# Only the markers that started with psi_n in a range (particle_exits and
-# particle_wetted; written under names carrying the range):
+# plot --diag particle_loss: the connection-length map's layout, coloured by
+# the fraction of particles lost, by the psi_n they started at.
+# ptrace_loss_bins = 40
+#
+# Only the markers that started with psi_n in a range (particle_exits,
+# particle_wetted and particle_loss; written under names carrying the range):
 # ptrace_initial_psi_n_range = [0.8, 1.0]
 #
 # plot --diag particle_wetted: how widely the particles wet the wall (the

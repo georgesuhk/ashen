@@ -63,6 +63,7 @@ from ashen.diagnostics.four_modes import (
 from ashen.diagnostics.particle_exits import (
     exit_angles,
     exits_from_history,
+    loss_map,
     read_particle_diag,
 )
 from ashen.diagnostics.particle_wetted import Wall, wall_hits, wetted_area
@@ -96,6 +97,7 @@ from ashen.plotting.particle_exits import (
     exit_caption,
     plot_exit_histograms,
 )
+from ashen.plotting.particle_loss import plot_loss_map
 from ashen.plotting.particle_wetted import plot_wetted_area, wetted_caption
 from ashen.plotting.particles import (
     PoincareOverlay,
@@ -129,7 +131,7 @@ from ashen.ptracing import LOG_FILE, other_traces, ptrace_dir, ptrace_label, tra
 
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
-    "scan_map", "particles", "particle_exits", "particle_wetted",
+    "scan_map", "particles", "particle_exits", "particle_wetted", "particle_loss",
 )
 
 #: Diags with a registered --compare renderer -- asking for one without (e.g.
@@ -2255,6 +2257,8 @@ def _run_case(
         )
     if "particle_wetted" in diags:
         _plot_particle_wetted(case, paths, dpi=dpi, explicit=explicit_diags)
+    if "particle_loss" in diags:
+        _plot_particle_loss(case, paths, dpi=dpi, psi_n=exit_psi_n, explicit=explicit_diags)
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
     if comparison_only and explicit_diags:
         # Gated on explicit_diags: a bare `plot --case X` (no --diag) asks
@@ -2643,6 +2647,64 @@ def _plot_particle_exits(
             print("  particle_exits: no exits, or a trace with no time span -- no animation written")
         else:
             print(f"  particle_exits: {gif}")
+
+
+def _plot_particle_loss(
+    case: Case, paths: RunPaths, *, dpi: int | None, psi_n: float | None, explicit: bool,
+) -> None:
+    """The connection-length map's layout with particle loss as its colour:
+    time against the psi_n the traced particles started at, coloured by the
+    fraction of them that has left -- by particle_exits' rule (past psi_n,
+    outside the original boundary under ptrace_original_boundary, or off
+    the grid). Written into the ptrace folder as particle_loss.png."""
+    if case.ptrace_exe is None:
+        if explicit:
+            print("  particle_loss: case sets no ptrace_exe, skipped")
+        return
+    folder = ptrace_dir(case, paths.run_dir)
+    diag = find_diag_file(folder)
+    if diag is None:
+        print(f"  particle_loss: no particle diagnostics file ({', '.join(DIAG_FILES)}) "
+              f"in {folder} (run bin/ptrace first), skipped")
+        _note_other_traces(case, paths, diag="particle_loss")
+        return
+
+    threshold = case.ptrace_exit_psi_n if psi_n is None else psi_n
+    history = read_particle_diag(diag)
+    window = _traced_window(case, paths, folder, diag="particle_loss")
+    if window is not None:
+        history = history.within(*window)
+    if history.time.size < 2:
+        print(f"  particle_loss: {diag.name} has fewer than two diagnostics times within "
+              "ptrace_start_step..ptrace_end_step, skipped")
+        return
+    selection = _initial_psi_selection(case, history, diag="particle_loss")
+    if selection is None:
+        return
+    history, selected, suffix = selection
+    boundary = (
+        _original_boundary(case, paths, diag="particle_loss")
+        if case.ptrace_original_boundary else None
+    )
+    result = loss_map(
+        history, psi_n=threshold, boundary=boundary, n_psi=case.ptrace_loss_bins,
+        psi_range=tuple(case.ptrace_initial_psi_n_range)
+        if case.ptrace_initial_psi_n_range else None,
+    )
+    if result.n_considered == 0:
+        print("  particle_loss: no particle was on the grid at the first diagnostics time, skipped")
+        return
+    how = f"past psi_n = {threshold:g}" + (
+        ", outside the original boundary" if boundary is not None else "") + " or off the grid"
+    caption = (
+        f"{result.n_lost} of {result.n_considered} particles lost ({how}) over "
+        f"{(history.time[-1] - history.time[0]) * 1e6:.4g} µs of trace"
+        + (f"\n{selected}" if selected else "")
+    )
+    out = plot_loss_map(
+        result, folder / f"particle_loss{suffix}.png", caption=caption, **_dpi_kwargs(dpi),
+    )
+    print(f"  particle_loss: {caption.replace(chr(10), '; ')} -> {out}")
 
 
 #: Where _plot_particle_wetted writes its numbers, in the ptrace folder.

@@ -1630,6 +1630,39 @@ a grey outline -- so they grow into it.
   `ptrace_gc_refluid_fixed_T_rho` plots the same. It must hold psi_n, R, Z,
   phi and lost.
 
+### Where the lost particles started
+
+`plot --diag particle_loss` is the connection-length map with particle loss
+as its colour: time along x, the psi_n each particle *started* at along y,
+and the colour the fraction of the particles from that psi_n that have left
+by that time. Written into the ptrace folder as `particle_loss.png`.
+
+```bash
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_loss
+```
+
+- **Lost** means what `particle_exits` counts as exited: past
+  `ptrace_exit_psi_n` (or `--exit-psi-n`), outside the original boundary
+  under `ptrace_original_boundary`, or off the grid. A particle off the
+  grid from the start is not counted. The fraction is cumulative, so each
+  row only ever rises.
+- **Made to be read beside the connection-length map** (`LCTT_*.png`). The
+  time axis is the same simulation time in microseconds, and the colours
+  mean the same: green where field lines are short and particles leave, red
+  where field lines are long and particles stay. Black is no data -- no
+  particle started at that psi_n.
+- **The y axes are not the same psi_n.** This one is the tracer's psi_n,
+  as for `ptrace_exit_psi_n`; the connection-length map's is `psi_n_in`,
+  scaled by `real_psi_edge`. In a run with an extended boundary the two
+  differ by that factor.
+- **The panel on the right** is how many particles started in each bin. A
+  bin with a handful moves in big steps: 4 particles can only show 0, 25,
+  50, 75 or 100 %.
+- `ptrace_loss_bins` (default 40) sets the psi_n bins, from 0 to the
+  outermost start. With `ptrace_initial_psi_n_range` they span that range
+  instead, and the file is `particle_loss_psi<min>-<max>.png`.
+- Long traces are thinned to 400 times across, evenly.
+
 ### How much wall the particles wet
 
 `plot --diag particle_wetted` measures how widely the escaping particles
