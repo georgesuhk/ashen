@@ -260,6 +260,11 @@ def build_parser() -> argparse.ArgumentParser:
         "four_radial_quantity (default abs). real and phase are always linear",
     )
     parser.add_argument(
+        "--wetted-counts", action="store_true",
+        help="particle_wetted: draw how many particles hit each cell and bin, not "
+        "fractions, as particle_wetted_counts.png (as each case's ptrace_wetted_counts)",
+    )
+    parser.add_argument(
         "--exit-psi-n", type=float, default=None,
         help="particle_exits: the psi_n past which a particle has left the "
         "plasma (overrides each case's ptrace_exit_psi_n, default 1)",
@@ -2194,6 +2199,7 @@ def _run_case(
     animate: bool = False,
     explicit_diags: bool = False,
     exit_psi_n: float | None = None,
+    wetted_counts: bool = False,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -2256,7 +2262,8 @@ def _run_case(
             animate=animate or case.animate,
         )
     if "particle_wetted" in diags:
-        _plot_particle_wetted(case, paths, dpi=dpi, explicit=explicit_diags)
+        _plot_particle_wetted(case, paths, dpi=dpi, explicit=explicit_diags,
+                              counts=wetted_counts or case.ptrace_wetted_counts)
     if "particle_loss" in diags:
         _plot_particle_loss(case, paths, dpi=dpi, psi_n=exit_psi_n, explicit=explicit_diags)
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
@@ -2783,7 +2790,9 @@ def _plot_particle_loss(
 WETTED_RESULTS_FILE = "particle_wetted.json"
 
 
-def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, explicit: bool) -> None:
+def _plot_particle_wetted(
+    case: Case, paths: RunPaths, *, dpi: int | None, explicit: bool, counts: bool = False,
+) -> None:
     """How widely the traced particles wet the wall -- the plasma boundary
     before extend_bnd -- poloidally, toroidally and in total (see
     ashen.diagnostics.particle_wetted). Written into the ptrace folder as
@@ -2830,10 +2839,11 @@ def _plot_particle_wetted(case: Case, paths: RunPaths, *, dpi: int | None, expli
     # fractions grow with it, so numbers from different spans don't compare.
     t_start, t_end = float(history.time[0]), float(history.time[-1])
     duration = t_end - t_start
+    # counts: a version of its own, so the fraction figure is kept beside it
     out = plot_wetted_area(
-        result, hits, folder / f"particle_wetted{suffix}.png",
+        result, hits, folder / f"particle_wetted{'_counts' if counts else ''}{suffix}.png",
         density_range=case.ptrace_wetted_density_range, duration=duration,
-        note=notes, **_dpi_kwargs(dpi),
+        note=notes, counts=counts, **_dpi_kwargs(dpi),
     )
     numbers = {
         **result.as_dict(),
@@ -3081,6 +3091,7 @@ def main(argv: list[str] | None = None) -> int:
                 animate=args.animate,
                 explicit_diags=explicit_diags,
                 exit_psi_n=args.exit_psi_n,
+                wetted_counts=args.wetted_counts,
             )
         except CASE_ERRORS as exc:
             error(f"{name}: {exc}")

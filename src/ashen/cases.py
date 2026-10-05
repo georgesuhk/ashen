@@ -48,6 +48,7 @@ _CASE_KEYS = (
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
     "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins", "ptrace_pdf_step",
     "ptrace_wetted_density_range", "ptrace_initial_psi_n_range", "ptrace_loss_bins",
+    "ptrace_wetted_counts",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -297,6 +298,10 @@ class Case:
     #: colour scale, in 1/m^2 (share of all hits per m^2 of wall). None =
     #: the data's own range. Set it to compare maps between cases.
     ptrace_wetted_density_range: list[float] | None = None
+    #: `plot --diag particle_wetted`: draw how many particles hit (each
+    #: cell, each bin) instead of fractions, as particle_wetted_counts.png.
+    #: `--wetted-counts` turns it on from the command line.
+    ptrace_wetted_counts: bool = False
     #: `plot --diag particles`: the colour of the particles, any matplotlib
     #: colour ("red", "#ff8800", "tab:orange"). Red stands out against the
     #: Poincare plot's viridis.
@@ -659,7 +664,7 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
                 f'name or "#rrggbb", got {value!r}'
             )
 
-    for key in ("ptrace_poincare", "ptrace_original_boundary"):
+    for key in ("ptrace_poincare", "ptrace_original_boundary", "ptrace_wetted_counts"):
         if key in merged and not isinstance(merged[key], bool):
             raise CasesError(f"{where}: {key} must be true or false, got {merged[key]!r}")
     if merged.get("ptrace_poincare_psi_n") is not None:

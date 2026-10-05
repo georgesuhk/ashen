@@ -1760,6 +1760,15 @@ is not bounded by 1 -- a cell of 0.016 m^2 holding 2 % of the hits shows
 the data's own range), e.g. to compare cases; cells above `max` take the
 top colour.
 
+**Counts instead of fractions.** `--wetted-counts` on the command line, or
+`ptrace_wetted_counts = true` in the case, draws numbers of particles: the
+map shows how many hit each cell, the profiles how many hit each bin. It is
+written as `particle_wetted_counts.png`, beside the fraction version, and
+the numbers in the JSON are the same either way. Counts per cell are not
+divided by the cell's area, so for the same density a smaller inboard cell
+shows fewer -- but they show directly how many hits each cell rests on.
+`ptrace_wetted_density_range` then sets the colour scale in particles.
+
 `ptrace_wetted_bins = [n_l, n_phi]` (default `[36, 36]`, or one number for
 both) sets the cells. The 2D `f_tot` needs many more hits than cells to be
 trusted -- use thousands of markers (`ptrace_initialiser = "current_pdf_simple"`)
