@@ -4,6 +4,22 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-05: `util --func trace_organize`
+
+New entry point `bin/util`, one housekeeping function per `--func`. The
+first is `trace_organize`, for a full disk quota and the trace layouts
+left by earlier versions:
+
+- Removes leftover restart links and copies (`jorek*.h5`) from every trace
+  folder. A copy frees its size; the summary says how much in total.
+- Moves traces from older layouts (`<run>/trace/<exe>/`, or loose in
+  `<run>/ptrace/<exe>/`) into `<run>/ptrace/<exe>/E<eV>eV_n<markers>/`,
+  named from each trace's own settings files, renaming old file names to
+  today's.
+- Leaves alone a folder whose queued job may be running, a `ptrace_gc`
+  trace whose energy cannot be read, and any place already taken.
+- `--dry-run` shows everything first. Run it before the real thing.
+
 ## 2026-10-01 and 2026-10-02: particle tracing and plotting session
 
 Fifteen changes, all merged into `main` (`45fb7d8` to `ac00300`). Nothing

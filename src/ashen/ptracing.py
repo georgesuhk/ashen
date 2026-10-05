@@ -98,6 +98,7 @@ __all__ = [
     "is_current",
     "other_traces",
     "ptrace_label",
+    "settings_label",
     "last_error",
     "last_jobscript",
     "poll_job",
@@ -293,7 +294,12 @@ def ptrace_label(case: Case) -> str | None:
     ``E1000000-10000000eV``). Always plain integers, so the names sort and
     match however a number was written in cases.toml. None for a case that
     sets no ptrace_<setting> keys -- a program that takes none."""
-    settings = case.ptrace_settings
+    return settings_label(case.ptrace_settings)
+
+
+def settings_label(settings: dict) -> str | None:
+    """ptrace_label's name for a trace with these settings ({"E_kin_eV":
+    [...], "n_markers": n, ...}): only those two count. None with neither."""
     parts = []
     energies = settings.get("E_kin_eV")
     if energies:
