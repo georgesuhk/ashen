@@ -4,6 +4,15 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-05: `util --func downsample_restarts`
+
+- Keeps only the restarts whose step is a multiple of `--every` (e.g. 40
+  to go from every 20 steps to every 40), deleting the rest.
+- Never deletes a step `cases.toml` uses, or a run's first and last
+  restart.
+- Shows what it would delete until given `--apply`; deleting cannot be
+  undone.
+
 ## 2026-10-05: `util --func trace_organize`
 
 New entry point `bin/util`, one housekeeping function per `--func`. The

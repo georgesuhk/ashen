@@ -1825,6 +1825,29 @@ It leaves alone, saying why:
 - a trace whose new place already holds another trace. Nothing is
   overwritten.
 
+**`downsample_restarts`** deletes restart files to give back disk space:
+it keeps the restarts whose step is a multiple of `--every`, so a run that
+saved every 20 steps can be cut to every 40.
+
+```bash
+python ~/ashen/bin/util --func downsample_restarts --every 40           # what it would delete
+python ~/ashen/bin/util --func downsample_restarts --every 40 --apply   # delete
+```
+
+- **Deleted restarts cannot be recovered**, so without `--apply` it only
+  says what it would delete and how much space that frees.
+- **Always kept**, multiple or not: every step the case uses in
+  `cases.toml` (its `steps`, each diag's own steps, `ptrace_start_step`,
+  `ptrace_end_step`, `ptrace_pdf_step`), the run's first restart and its
+  last (the one to continue from). It lists what it kept and why.
+- Only files named exactly `jorek<5 or 6 digits>.h5` are touched;
+  `jorek_restart.h5` and everything else stay.
+- A case whose `steps` asks for every restart (`steps = {}`, or `{ step =
+  20 }` on a run saved every 20) keeps them all. Change `steps` first.
+- Gathered caches (zeroD, Poincare, four) for deleted steps stay. A trace
+  over the run's restarts changes when its restarts do, so it shows as
+  out of date; its existing outputs still plot.
+
 ## Simulation time at a restart step
 
 `bin/timestep` is a one-off lookup, not a `cases.toml`-driven gather: run it
