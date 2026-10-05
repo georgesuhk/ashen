@@ -4,6 +4,13 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-05: `util --func delete_figures`
+
+- Deletes each run's figures (`.png`, `.gif`) where `plot` writes them,
+  keeping every cache and trace output. `plot` draws them again.
+- Comparison figures in the campaign's `figures/` are not touched.
+- Shows what it would delete and the space it frees until given `--apply`.
+
 ## 2026-10-05: `particle_wetted` in counts
 
 - `--wetted-counts`, or `ptrace_wetted_counts = true`, draws how many
