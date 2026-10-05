@@ -4,6 +4,10 @@ tracing -- one function at a time, chosen with --func.
 - trace_organize: in each case's run folder, remove the restart links and
   copies left in trace folders, and move traces from older layouts to where
   ashen looks for them now (ashen.trace_tidy).
+- downsample_restarts: delete the restarts whose step is not a multiple of
+  --every, keeping every step cases.toml uses and the first and last
+  (ashen.restart_thin). Irreversible, so it only shows what it would delete
+  until given --apply.
 
 Run from the folder holding cases.toml, like `analyse`.
 """
@@ -14,12 +18,13 @@ import argparse
 from pathlib import Path
 
 from ashen.cli._common import CASE_ERRORS, CASE_HELP, error, load_cases_or_exit, resolve_selection
+from ashen.restart_thin import apply_thin, case_steps, plan_thin
 from ashen.trace_tidy import apply_tidy, plan_tidy
 
 __all__ = ["FUNCS", "build_parser", "main"]
 
 #: What --func can be.
-FUNCS = ("trace_organize",)
+FUNCS = ("trace_organize", "downsample_restarts")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,7 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--func", "-func", required=True, choices=FUNCS,
         help="trace_organize: remove restart links/copies left in trace folders, and move "
-        "traces from older layouts to ptrace/<exe>/E<eV>eV_n<markers>/",
+        "traces from older layouts to ptrace/<exe>/E<eV>eV_n<markers>/. "
+        "downsample_restarts: keep only the restarts at multiples of --every steps",
     )
     parser.add_argument(
         "--cases", type=Path, default=Path("cases.toml"),
@@ -42,7 +48,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="show what would be removed and moved, without doing it",
+        help="trace_organize: show what would be removed and moved, without doing it",
+    )
+    parser.add_argument(
+        "--every", type=int, default=None, metavar="STEPS",
+        help="downsample_restarts: keep the restarts whose step is a multiple of this "
+        "(e.g. 40 to go from every 20 steps to every 40)",
+    )
+    parser.add_argument(
+        "--apply", action="store_true",
+        help="downsample_restarts: actually delete. Without it, only what would be "
+        "deleted is shown -- deleted restarts cannot be recovered",
     )
     return parser
 
@@ -107,4 +123,44 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.func == "trace_organize":
         return _trace_organize(names, dry_run=args.dry_run)
+    if args.func == "downsample_restarts":
+        if args.every is None or args.every < 1:
+            error("downsample_restarts needs --every STEPS (>= 1): the step spacing to keep")
+            return 1
+        return _downsample_restarts(names, cases, every=args.every, apply=args.apply)
     return 1
+
+
+def _downsample_restarts(names: list[str], cases, *, every: int, apply: bool) -> int:
+    root = Path.cwd()
+    freed = n_deleted = 0
+    for name in names:
+        run_dir = root / name
+        print(f"==== {name} ====")
+        if not run_dir.is_dir():
+            print("  no such folder, skipped")
+            continue
+        plan = plan_thin(run_dir, every, keep=case_steps(cases[name]))
+        if not plan.n_steps:
+            print("  no restarts")
+            continue
+        n_steps_deleted = len({step for step, _, _ in plan.delete})
+        verb = "deleted" if apply else "would delete"
+        print(f"  {plan.n_steps} restart step(s): {verb} {n_steps_deleted}, keeping "
+              f"{plan.n_kept} ({_human(plan.freed)})")
+        by_reason: dict[str, list[int]] = {}
+        for step, reason in sorted(plan.kept_anyway.items()):
+            by_reason.setdefault(reason, []).append(step)
+        for reason, steps in by_reason.items():
+            shown = ", ".join(map(str, steps[:8])) + (f", ... ({len(steps)})" if len(steps) > 8 else "")
+            print(f"  kept, not a multiple of {every} but {reason}: {shown}")
+        if apply:
+            apply_thin(plan)
+        freed += plan.freed
+        n_deleted += n_steps_deleted
+    if apply:
+        print(f"deleted {n_deleted} restart step(s), freeing {_human(freed)}")
+    else:
+        print(f"would delete {n_deleted} restart step(s), freeing {_human(freed)} -- "
+              "nothing deleted yet; add --apply to delete (it cannot be undone)")
+    return 0
