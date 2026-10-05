@@ -42,7 +42,8 @@ from pathlib import Path
 
 from ashen.ptracing import META_FILE, TRACE_DIR, PtraceError, poll_job, settings_label
 
-__all__ = ["TidyAction", "TidyPlan", "apply_tidy", "plan_tidy", "read_label_settings"]
+__all__ = ["TidyAction", "TidyPlan", "apply_tidy", "job_may_be_running", "plan_tidy",
+           "read_label_settings"]
 
 #: The folder traces lived in before "trace" became "ptrace".
 OLD_TRACE_DIR = "trace"
@@ -195,7 +196,7 @@ def _restart_actions(folder: Path) -> list[TidyAction]:
     return actions
 
 
-def _job_may_be_running(folder: Path) -> str | None:
+def job_may_be_running(folder: Path) -> str | None:
     """Why the folder must be left alone, if a job queued for it has not
     been seen to end -- asking SLURM, as `ptrace` does, which also
     concludes a job that has ended. None if there is no such job."""
@@ -252,7 +253,7 @@ def plan_tidy(run_dir: Path | str) -> TidyPlan:
                                         if p.is_dir() and not p.is_symlink())]
             home = run_dir / TRACE_DIR / exe_dir.name
             for folder in folders:
-                busy = _job_may_be_running(folder) if (folder / META_FILE).is_file() else None
+                busy = job_may_be_running(folder) if (folder / META_FILE).is_file() else None
                 if busy:
                     plan.actions.append(TidyAction("keep", folder, note=(
                         f"{busy}; its restart links stay while it runs -- `ptrace` once it "

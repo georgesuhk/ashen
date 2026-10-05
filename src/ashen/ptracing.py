@@ -75,6 +75,7 @@ from ashen.paths import RunPaths
 from ashen.castor_io import load_two_col_data
 from ashen.particle_programs import (
     BOUNDARY_FILE,
+    DIAG_FILES,
     LOST_MARKER,
     NOTE_MARKER,
     OUTPUT_FILES,
@@ -605,6 +606,37 @@ def _remove_restart_links(work_dir: Path) -> None:
             entry.unlink()
 
 
+def _compact_diagnostics(work_dir: Path) -> tuple[str, ...]:
+    """Once a program has ended, repack its diagnostics file to the size of
+    its data (ashen.diag_repack: JOREK writes it ~50000/n_markers times too
+    big). Lossless; a file that cannot be repacked is left as it is. Notes
+    saying what was done."""
+    from ashen.diag_repack import repack
+
+    notes = []
+    for name in DIAG_FILES:
+        path = work_dir / name
+        if not path.is_file():
+            continue
+        try:
+            result = repack(path)
+        except Exception as exc:  # never lose a trace's output over its size
+            notes.append(f"{name} left as written, not repacked: {exc}")
+            continue
+        if result.skipped is None:
+            notes.append(f"{name} repacked from {_human_size(result.before)} to "
+                         f"{_human_size(result.after)}, losslessly")
+    return tuple(notes)
+
+
+def _human_size(n: float) -> str:
+    for unit in ("B", "kB", "MB", "GB"):
+        if n < 1000 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1000
+    return f"{n:.1f} TB"
+
+
 def _outcome(work_dir: Path) -> tuple[bool, tuple[str, ...], bool]:
     """(lost, notes, wrote_particles) from what a finished program left:
     its log, and a part_restart.h5 it wrote -- not one ashen copied in from
@@ -655,6 +687,7 @@ def run_ptrace(plan: PtracePlan, *, force: bool = False) -> PtraceResult:
         status = _launch(plan)
     finally:
         _remove_restart_links(plan.work_dir)
+    compacted = _compact_diagnostics(plan.work_dir)
     log = plan.work_dir / LOG_FILE
     if status != 0:
         raise PtraceError(
@@ -667,6 +700,7 @@ def run_ptrace(plan: PtracePlan, *, force: bool = False) -> PtraceResult:
             f"{plan.exe.name} exited 0 without writing {PARTICLES_FILE}, which every "
             f"JOREK particle program writes at the end -- see {log}",
         )
+    notes += compacted
     _write_meta(plan, complete=True, lost=lost, notes=notes)
     return PtraceResult(ran=True, lost=lost, notes=notes)
 
@@ -766,6 +800,7 @@ def poll_job(work_dir: Path) -> QueuedJob | None:
 
     _remove_restart_links(work_dir)
     lost, notes, wrote = _outcome(work_dir)
+    notes += _compact_diagnostics(work_dir)
     log = work_dir / LOG_FILE
     error = None
     if state and state != "COMPLETED":
