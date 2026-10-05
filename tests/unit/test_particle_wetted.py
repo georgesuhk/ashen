@@ -337,3 +337,64 @@ def test_wetted_of_a_finished_trace_has_no_trace_fraction(campaign):
     assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
     numbers = json.loads((folder / "particle_wetted.json").read_text(encoding="utf-8"))
     assert numbers["trace_fraction"] is None
+
+
+# --- counts instead of fractions ------------------------------------------------------
+
+
+def test_counts_mode_draws_numbers_of_particles(tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+
+    from ashen.plotting.particle_wetted import COUNT_LABEL, plot_wetted_area
+
+    wall = Wall.from_points(np.array([[3.5, -0.5], [4.5, -0.5], [4.5, 0.5], [3.5, 0.5]]))
+    rng = np.random.default_rng(2)
+    hits = WallHits(rng.uniform(0, wall.length, 300), rng.uniform(0, 2 * np.pi, 300), 300, 0, 300)
+    result = wetted_area(hits, wall, n_l=6, n_phi=5, n_boot=2)
+    monkeypatch.setattr(plt, "close", lambda *args: None)
+    plot_wetted_area(result, hits, tmp_path / "w.png", counts=True, dpi=40)
+    fig = plt.gcf()
+    ax_map, ax_tor, ax_pol = fig.axes[:3]
+    # the map: hits per cell, as counted
+    np.testing.assert_array_equal(ax_map.collections[0].get_array().filled(0).reshape(6, 5),
+                                  result.counts)
+    assert any(ax.get_ylabel() == COUNT_LABEL for ax in fig.axes)
+    # the profiles: hits per bin, adding up to every hit
+    assert ax_tor.get_ylabel() == "particles" and ax_pol.get_xlabel() == "particles"
+    tor_heights = ax_tor.patches[0].get_path().vertices[:, 1].max()
+    assert tor_heights == result.counts.sum(axis=0).max()
+    monkeypatch.undo()
+    plt.close("all")
+
+
+def test_counts_from_the_flag_or_the_case_key_beside_the_fractions(campaign, capsys):
+    folder = _two_shells(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert (folder / "particle_wetted.png").is_file()
+    assert not (folder / "particle_wetted_counts.png").exists()
+
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--wetted-counts",
+                          "--dpi", "40"]) == 0
+    assert f"-> {folder / 'particle_wetted_counts.png'}" in capsys.readouterr().out
+    (folder / "particle_wetted_counts.png").unlink()
+
+    (campaign / "cases.toml").write_text(CASES + "ptrace_wetted_counts = true\n", encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert (folder / "particle_wetted_counts.png").is_file()
+    # the numbers are the same either way
+    numbers = json.loads((folder / "particle_wetted.json").read_text(encoding="utf-8"))
+    assert numbers["n_hits"] == 20
+
+
+def test_counts_with_a_psi_range_carry_both_in_the_name(campaign):
+    folder = _two_shells(campaign, "[0.6, 0.8]")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--wetted-counts",
+                          "--dpi", "40"]) == 0
+    assert (folder / "particle_wetted_counts_psi0.6-0.8.png").is_file()
+
+
+def test_invalid_counts_key(campaign, capsys):
+    _two_shells(campaign)
+    (campaign / "cases.toml").write_text(CASES + "ptrace_wetted_counts = 1\n", encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted"]) == 1
+    assert "ptrace_wetted_counts must be true or false" in capsys.readouterr().err

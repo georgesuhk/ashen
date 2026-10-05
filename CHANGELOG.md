@@ -4,6 +4,12 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-05: `particle_wetted` in counts
+
+- `--wetted-counts`, or `ptrace_wetted_counts = true`, draws how many
+  particles hit each cell and each bin instead of fractions, as
+  `particle_wetted_counts.png` beside the fraction figure.
+
 ## 2026-10-05: `util --func downsample_restarts`
 
 - Keeps only the restarts whose step is a multiple of `--every` (e.g. 40

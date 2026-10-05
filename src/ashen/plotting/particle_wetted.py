@@ -12,7 +12,8 @@ import numpy as np
 from ashen.diagnostics.particle_wetted import WallHits, WettedResult
 from ashen.plotting import DEFAULT_DPI, style
 
-__all__ = ["plot_wetted_area", "wetted_caption"]
+__all__ = [
+    "COUNT_LABEL","plot_wetted_area", "wetted_caption"]
 
 _PHI_TICKS = ([0, np.pi / 2, np.pi, 3 * np.pi / 2, 2 * np.pi],
               ["0", r"$\pi/2$", r"$\pi$", r"$3\pi/2$", r"$2\pi$"])
@@ -46,6 +47,8 @@ def wetted_caption(
 
 #: The map's colour scale: a density, so not bounded by 1.
 DENSITY_LABEL = r"(fraction of total hits) / m$^2$"
+#: ...and in counts mode: how many particles hit each cell.
+COUNT_LABEL = "particles hitting each cell"
 
 
 def plot_wetted_area(
@@ -57,6 +60,7 @@ def plot_wetted_area(
     density_range: tuple[float, float] | None = None,
     duration: float | None = None,
     note: str | None = None,
+    counts: bool = False,
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save the (phi, l) hit-density map -- the share of all hits
@@ -64,14 +68,24 @@ def plot_wetted_area(
     (so it passes 1 wherever a cell much smaller than 1 m^2 holds a few
     percent of the hits) -- with the toroidal profile above it and the
     poloidal one to its right, each as the fraction of hits per bin.
-    density_range, (min, max) in 1/m^2, fixes the colour scale; cells
-    beyond it take the end colours, and the colourbar says so."""
+
+    With counts, every panel shows numbers of particles instead: the map
+    how many hit each cell (so an inboard cell, smaller, shows fewer for
+    the same density), the profiles how many hit each bin.
+
+    density_range, (min, max) in the map's own units -- 1/m^2, or particles
+    with counts -- fixes the colour scale; cells beyond it take the end
+    colours, and the colourbar says so."""
     import matplotlib.pyplot as plt
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     total = max(result.counts.sum(), 1)
-    density = result.counts / result.cell_area / total
+    if counts:
+        density, label, scale, profile_label = result.counts, COUNT_LABEL, 1, "particles"
+    else:
+        density, label = result.counts / result.cell_area / total, DENSITY_LABEL
+        scale, profile_label = total, "fraction"
 
     with style():
         fig = plt.figure(figsize=figsize, layout="constrained")
@@ -89,7 +103,7 @@ def plot_wetted_area(
         extend = "neither"
         if density_range is not None and density.max() > density_range[1]:
             extend = "max"
-        fig.colorbar(mesh, ax=ax_pol, extend=extend, label=DENSITY_LABEL)
+        fig.colorbar(mesh, ax=ax_pol, extend=extend, label=label)
         ax_map.set_xlim(0, 2 * np.pi)
         ax_map.set_ylim(result.l_edges[0], result.l_edges[-1])
         ax_map.set_xticks(_PHI_TICKS[0])
@@ -97,13 +111,13 @@ def plot_wetted_area(
         ax_map.set_xlabel(r"toroidal angle $\phi$")
         ax_map.set_ylabel(r"poloidal arc length $l$ [m] (0: outboard midplane, ccw)")
 
-        ax_tor.stairs(result.counts.sum(axis=0) / total, result.phi_edges,
+        ax_tor.stairs(result.counts.sum(axis=0) / scale, result.phi_edges,
                       fill=True, color="tab:blue", alpha=0.7)
-        ax_tor.set_ylabel("fraction")
+        ax_tor.set_ylabel(profile_label)
         ax_tor.tick_params(labelbottom=False)
-        ax_pol.stairs(result.counts.sum(axis=1) / total, result.l_edges,
+        ax_pol.stairs(result.counts.sum(axis=1) / scale, result.l_edges,
                       fill=True, color="tab:blue", alpha=0.7, orientation="horizontal")
-        ax_pol.set_xlabel("fraction")
+        ax_pol.set_xlabel(profile_label)
         ax_pol.tick_params(labelleft=False)
 
         fig.suptitle(wetted_caption(result, hits, duration=duration, note=note), fontsize=9)
