@@ -1782,6 +1782,49 @@ With `diag_step` much above the RK4
 `dt`, the exit positions are still interpolated rather than exact -- a
 10 MeV electron covers about 3 m per 10 ns, mostly toroidally.
 
+## Housekeeping: `util`
+
+`bin/util` runs one housekeeping function over the runs in `cases.toml`,
+chosen with `--func`. Like `analyse` and `plot`, it runs from the folder
+holding `cases.toml` and takes `--case` (names, patterns, folders).
+
+```bash
+python ~/ashen/bin/util --func trace_organize --dry-run   # what it would do
+python ~/ashen/bin/util --func trace_organize             # do it
+python ~/ashen/bin/util --func trace_organize --case 'qa2.1*'
+```
+
+**`trace_organize`** tidies every trace folder under each run:
+
+- **Removes leftover restart links** (`jorek*.h5`) from trace folders.
+  ashen links the restarts in while a trace runs and removes them after,
+  but an interrupted trace, a failed staging or an unconcluded queued job
+  leaves them behind. They are the program's input, never a result. A link
+  frees no space; a *copy* frees its size, and the summary says how much.
+  The run's own restarts are never touched.
+- **Moves traces from older layouts** to where the plots look now,
+  `<run>/ptrace/<exe>/E<eV>eV_n<markers>/`:
+  - `<run>/trace/<exe>/`, from before "trace" became "ptrace". Its files
+    take today's names: `trace.log` -> `ptrace.log`, `trace_meta.json` ->
+    `ptrace_meta.json`, `trace_diag.h5` -> `ptrace_diag.h5`.
+  - a trace loose in `<run>/ptrace/<exe>/`, from before traces got a folder
+    per energy and marker count.
+
+  The folder name comes from the trace's **own** settings files
+  (`ptrace_settings.nml`; or `ptrace_overrides.nml` over
+  `ptrace_params.nml`; or `trace_params.nml`), so it names what that trace
+  ran with, whatever `cases.toml` says now. A program without settings
+  (re_gc, ex6/ex7) goes to `<run>/ptrace/<exe>/` itself.
+
+It leaves alone, saying why:
+
+- a folder whose queued job may still be running (it asks SLURM, as
+  `ptrace` does);
+- a `ptrace_gc` trace whose settings files do not give its energy and
+  marker count -- move that one by hand;
+- a trace whose new place already holds another trace. Nothing is
+  overwritten.
+
 ## Simulation time at a restart step
 
 `bin/timestep` is a one-off lookup, not a `cases.toml`-driven gather: run it
