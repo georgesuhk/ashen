@@ -1857,6 +1857,27 @@ python ~/ashen/bin/util --func downsample_restarts --every 40 --apply   # delete
   over the run's restarts changes when its restarts do, so it shows as
   out of date; its existing outputs still plot.
 
+**`delete_figures`** deletes the figures `plot` drew for each run, to free
+disk space. `plot` draws them again from the gathered data whenever you
+want them back (`plot --case X`, or with `--diag` for just some).
+
+```bash
+python ~/ashen/bin/util --func delete_figures                  # what it would delete, and the space
+python ~/ashen/bin/util --func delete_figures --apply          # delete
+python ~/ashen/bin/util --func delete_figures --case 'qa2.1*' --apply
+```
+
+- **Deleted:** `.png` and `.gif` files where `plot` writes them --
+  `poinc_dir/`, `four_dir/`, `profiles/` -- and in each trace folder the
+  `particles`, `particle_exits*`, `particle_wetted*` and `particle_loss*`
+  figures.
+- **Kept:** every cache and trace output (`.h5`, `.dat`, `.json`, ...), any
+  other image in a trace folder, and anything linked rather than a file.
+- **Not touched:** comparison figures in the campaign's `figures/`, which
+  belong to no one run.
+- Like `downsample_restarts`, it only says what it would delete and how
+  much space that frees until given `--apply`.
+
 ## Simulation time at a restart step
 
 `bin/timestep` is a one-off lookup, not a `cases.toml`-driven gather: run it

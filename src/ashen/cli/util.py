@@ -8,6 +8,11 @@ tracing -- one function at a time, chosen with --func.
   --every, keeping every step cases.toml uses and the first and last
   (ashen.restart_thin). Irreversible, so it only shows what it would delete
   until given --apply.
+- delete_figures: delete the run's figures (.png, .gif) wherever `plot`
+  writes them, keeping every cache and trace output, to free disk space;
+  `plot` draws them again (ashen.figure_clean). Like downsample_restarts,
+  it only says what it would delete, and how much space that frees, until
+  given --apply.
 
 Run from the folder holding cases.toml, like `analyse`.
 """
@@ -18,13 +23,14 @@ import argparse
 from pathlib import Path
 
 from ashen.cli._common import CASE_ERRORS, CASE_HELP, error, load_cases_or_exit, resolve_selection
+from ashen.figure_clean import figure_files
 from ashen.restart_thin import apply_thin, case_steps, plan_thin
 from ashen.trace_tidy import apply_tidy, plan_tidy
 
 __all__ = ["FUNCS", "build_parser", "main"]
 
 #: What --func can be.
-FUNCS = ("trace_organize", "downsample_restarts")
+FUNCS = ("trace_organize", "downsample_restarts", "delete_figures")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,7 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--func", "-func", required=True, choices=FUNCS,
         help="trace_organize: remove restart links/copies left in trace folders, and move "
         "traces from older layouts to ptrace/<exe>/E<eV>eV_n<markers>/. "
-        "downsample_restarts: keep only the restarts at multiples of --every steps",
+        "downsample_restarts: keep only the restarts at multiples of --every steps. "
+        "delete_figures: delete the figures plot made (it can draw them again)",
     )
     parser.add_argument(
         "--cases", type=Path, default=Path("cases.toml"),
@@ -57,8 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--apply", action="store_true",
-        help="downsample_restarts: actually delete. Without it, only what would be "
-        "deleted is shown -- deleted restarts cannot be recovered",
+        help="downsample_restarts, delete_figures: actually delete. Without it, only "
+        "what would be deleted, and the space it frees, is shown",
     )
     return parser
 
@@ -128,7 +135,41 @@ def main(argv: list[str] | None = None) -> int:
             error("downsample_restarts needs --every STEPS (>= 1): the step spacing to keep")
             return 1
         return _downsample_restarts(names, cases, every=args.every, apply=args.apply)
+    if args.func == "delete_figures":
+        return _delete_figures(names, apply=args.apply)
     return 1
+
+
+def _delete_figures(names: list[str], *, apply: bool) -> int:
+    root = Path.cwd()
+    total = count = 0
+    for name in names:
+        run_dir = root / name
+        if not run_dir.is_dir():
+            print(f"==== {name} ====\n  no such folder, skipped")
+            continue
+        files = figure_files(run_dir)
+        if not files:
+            continue
+        size = sum(p.stat().st_size for p in files)
+        by_folder: dict[Path, int] = {}
+        for path in files:
+            by_folder[path.parent] = by_folder.get(path.parent, 0) + 1
+        print(f"==== {name} ====")
+        for folder, n in sorted(by_folder.items()):
+            print(f"  {'delete' if apply else 'would delete'} {n} figure(s) in "
+                  f"{folder.relative_to(run_dir)}/")
+        if apply:
+            for path in files:
+                path.unlink()
+        total += size
+        count += len(files)
+    if apply:
+        print(f"deleted {count} figure(s), freeing {_human(total)} -- `plot` draws them again")
+    else:
+        print(f"would delete {count} figure(s), freeing {_human(total)} -- nothing deleted "
+              "yet; add --apply to delete")
+    return 0
 
 
 def _downsample_restarts(names: list[str], cases, *, every: int, apply: bool) -> int:
