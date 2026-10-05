@@ -13,6 +13,11 @@ tracing -- one function at a time, chosen with --func.
   `plot` draws them again (ashen.figure_clean). Like downsample_restarts,
   it only says what it would delete, and how much space that frees, until
   given --apply.
+- compress_traces: repack each trace's particle diagnostics file to the
+  size of its data, losslessly -- JOREK writes it ~50000/n_markers times
+  too big (ashen.diag_repack). Says how much it would free until given
+  --apply. Finished traces are repacked by `ptrace` anyway; this is for
+  the ones from before.
 
 Run from the folder holding cases.toml, like `analyse`.
 """
@@ -20,17 +25,19 @@ Run from the folder holding cases.toml, like `analyse`.
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 from ashen.cli._common import CASE_ERRORS, CASE_HELP, error, load_cases_or_exit, resolve_selection
+from ashen.diag_repack import data_size, diag_files, is_compressed, repack
 from ashen.figure_clean import figure_files
 from ashen.restart_thin import apply_thin, case_steps, plan_thin
-from ashen.trace_tidy import apply_tidy, plan_tidy
+from ashen.trace_tidy import job_may_be_running, apply_tidy, plan_tidy
 
 __all__ = ["FUNCS", "build_parser", "main"]
 
 #: What --func can be.
-FUNCS = ("trace_organize", "downsample_restarts", "delete_figures")
+FUNCS = ("trace_organize", "downsample_restarts", "delete_figures", "compress_traces")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,7 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="trace_organize: remove restart links/copies left in trace folders, and move "
         "traces from older layouts to ptrace/<exe>/E<eV>eV_n<markers>/. "
         "downsample_restarts: keep only the restarts at multiples of --every steps. "
-        "delete_figures: delete the figures plot made (it can draw them again)",
+        "delete_figures: delete the figures plot made (it can draw them again). "
+        "compress_traces: repack trace diagnostics files losslessly to their data's size",
     )
     parser.add_argument(
         "--cases", type=Path, default=Path("cases.toml"),
@@ -64,8 +72,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--apply", action="store_true",
-        help="downsample_restarts, delete_figures: actually delete. Without it, only "
-        "what would be deleted, and the space it frees, is shown",
+        help="downsample_restarts, delete_figures, compress_traces: actually do it. "
+        "Without it, only what would be done, and the space it frees, is shown",
     )
     return parser
 
@@ -137,7 +145,75 @@ def main(argv: list[str] | None = None) -> int:
         return _downsample_restarts(names, cases, every=args.every, apply=args.apply)
     if args.func == "delete_figures":
         return _delete_figures(names, apply=args.apply)
+    if args.func == "compress_traces":
+        return _compress_traces(names, apply=args.apply)
     return 1
+
+
+#: A diagnostics file written to more recently than this [s] may belong to
+#: a trace still running, which appends to it: left alone.
+_RECENT = 600
+
+
+def _compress_traces(names: list[str], *, apply: bool) -> int:
+    root = Path.cwd()
+    before = after = n_files = 0
+    failed = []
+    for name in names:
+        run_dir = root / name
+        files = diag_files(run_dir) if run_dir.is_dir() else []
+        if not files:
+            continue
+        print(f"==== {name} ====")
+        for path in files:
+            where = path.relative_to(run_dir)
+            size = path.stat().st_size
+            try:
+                # first: a running trace's file is never compressed, and a
+                # repack has just written it, which would look like one
+                if is_compressed(path):
+                    print(f"  keep     {where}  ({_human(size)}): already compressed")
+                    continue
+            except Exception as exc:
+                error(f"{name}: {where}: {exc} -- left as it is")
+                failed.append(f"{name}/{where}")
+                continue
+            busy = None
+            if (path.parent / "ptrace_meta.json").is_file():
+                busy = job_may_be_running(path.parent)
+            age = time.time() - path.stat().st_mtime
+            if busy is None and age < _RECENT:
+                busy = f"written to {age:.0f} s ago, so its trace may still be running"
+            if busy:
+                print(f"  keep     {where}  ({_human(size)}): {busy}")
+                continue
+            try:
+                if not apply:
+                    data = data_size(path)
+                    print(f"  repack   {where}  {_human(size)} -> at most {_human(data)}")
+                    before, after, n_files = before + size, after + data, n_files + 1
+                    continue
+                result = repack(path)
+            except Exception as exc:  # report, keep the file, go on with the others
+                error(f"{name}: {where}: {exc} -- left as it is")
+                failed.append(f"{name}/{where}")
+                continue
+            if result.skipped:
+                print(f"  keep     {where}  ({_human(size)}): {result.skipped}")
+                continue
+            print(f"  repacked {where}  {_human(result.before)} -> {_human(result.after)}")
+            before, after, n_files = before + result.before, after + result.after, n_files + 1
+    if apply:
+        print(f"repacked {n_files} file(s), {_human(before)} -> {_human(after)}, freeing "
+              f"{_human(before - after)}; every value checked identical")
+    else:
+        print(f"would repack {n_files} file(s), {_human(before)} -> at most {_human(after)} "
+              f"(less after compression), freeing at least {_human(before - after)} -- nothing "
+              "changed yet; add --apply to repack")
+    if failed:
+        error(f"{len(failed)} file(s) not repacked: {', '.join(failed)}")
+        return 1
+    return 0
 
 
 def _delete_figures(names: list[str], *, apply: bool) -> int:

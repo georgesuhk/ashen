@@ -1419,6 +1419,14 @@ ptrace_cos_pitch   = 0.9
     ...
 ```
 
+**Diagnostics files are repacked when a trace ends.** JOREK writes
+`ptrace_diag.h5` about 50000/n_markers times bigger than its data (see
+`util --func compress_traces`). Once the program has exited -- after
+`--run_i`, or when `ptrace` concludes a queued job -- ashen repacks it to
+the size of its data, losslessly, and says so in a `note:`. The file still
+grows to its full size *while* the trace runs, so the quota needs that
+room until then.
+
 **Stopping a trace early.** Once the field perturbation has saturated and
 the markers have stopped leaving, tracing on costs time and disk for
 nothing. Two rules end a trace before its end step, with every output
@@ -1877,6 +1885,32 @@ python ~/ashen/bin/util --func delete_figures --case 'qa2.1*' --apply
   belong to no one run.
 - Like `downsample_restarts`, it only says what it would delete and how
   much space that frees until given `--apply`.
+
+**`compress_traces`** repacks the particle diagnostics files of traces
+made before ashen did this itself (below), to the size of their data:
+
+```bash
+python ~/ashen/bin/util --func compress_traces            # how much it would free
+python ~/ashen/bin/util --func compress_traces --apply    # repack
+```
+
+JOREK's diagnostics writer chunks every dataset 50000 particles x 1 time,
+uncompressed, and HDF5 stores each chunk at full size: every diagnostics
+row takes the room of 50000 particles however many are traced. A
+`ptrace_gc` trace writes 2.8 MB a row, so 120 us at `diag_step = 1e-8` is
+about 34 GB -- with 1000 markers, ~50 times its data. Repacked, that file
+is well under 1 GB.
+
+- **Lossless.** The new file is written beside the old one, compared value
+  by value, and only then put in its place; on any failure the original
+  stays. The plots read the repacked file exactly as before.
+- **Every layout:** `ptrace_diag.h5`, `part_diag.h5`, `diag.h5`, and the
+  oldest `trace_diag.h5`.
+- **Left alone:** a file already compressed, one whose queued job may be
+  running, and one written to in the last ten minutes (its trace may still
+  be running and appending to it).
+- It reads the whole file to repack it, so a 34 GB file takes a minute or
+  two.
 
 ## Simulation time at a restart step
 

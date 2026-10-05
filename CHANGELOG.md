@@ -4,6 +4,19 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-05: trace diagnostics repacked to their data's size
+
+JOREK's diagnostics writer chunks every dataset 50000 particles x 1 time,
+uncompressed, so each row takes the room of 50000 particles: about 34 GB
+for a 1000-marker, 120 us trace at `diag_step = 1e-8`, ~50 times its data.
+
+- `ptrace` now repacks the file losslessly (fitted chunks, gzip) as soon as
+  the program ends, after `--run_i` or when a queued job is concluded. It
+  still reaches full size while the trace runs.
+- `util --func compress_traces` repacks the files of earlier traces. It says
+  what it would free until given `--apply`.
+- Every value is compared with the original before it is replaced.
+
 ## 2026-10-05: `util --func delete_figures`
 
 - Deletes each run's figures (`.png`, `.gif`) where `plot` writes them,
