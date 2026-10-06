@@ -4,6 +4,32 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-06: particle plots faster and leaner
+
+These were measured on a 2000-marker, 12000-row trace with 60 snapshots
+and a 256-point wall. Every figure, GIF and JSON is byte-identical to
+before.
+
+- `particles`, `particle_exits`, `particle_loss` and `particle_wetted`
+  together take 5.0 s, down from 18.6 s. With `--animate` they take 7.9 s,
+  down from 17.4 s. Peak memory is 2.1 GB, down from 3.1 GB.
+- **The inside-the-wall test is about 10x faster.** It looks up each
+  point's band of Z between the wall's vertex heights and tests only that
+  band's edges. It runs in chunks, so its memory stays bounded. The
+  arithmetic is unchanged and is tested against the old version.
+- **One read of `ptrace_diag.h5` per case.** The particle diags drawn in
+  one `plot` run share the read; before, each diag read the file again.
+  The shared arrays are read-only. A file that changes on disk is read
+  again.
+- **Less memory per read.** The float32 data now becomes float64 in one
+  step instead of two full copies.
+- **`particle_exits` without theta in the file** computes it only at each
+  particle's exit row, not at every row.
+- **Not changed:** GIF writing (matplotlib drawing, Pillow's palette per
+  frame) is most of what is left under `--animate`. Making it faster would
+  change the images.
+- Unverified: not yet run on the HPC's real traces.
+
 ## 2026-10-06: `particle_wetted` faster, cached, own counts range
 
 - The test of which points are inside the wall now sorts the points by Z

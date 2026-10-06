@@ -2283,6 +2283,29 @@ def _run_case(
         print(f"  diag(s) {comparison_only} are comparison-only (use --compare), skipped")
 
 
+#: The last diagnostics file _read_diag read: (its path, size and mtime), history.
+_LAST_DIAG: list = []
+
+
+def _read_diag(path: Path):
+    """read_particle_diag, once per file for all the particle diags of a
+    case: the history is kept until another file is asked for, or this one
+    changes on disk (size or modification time). Its arrays are made
+    read-only, so no diag can change what the next one sees."""
+    stat = path.stat()
+    key = (path.resolve(), stat.st_size, stat.st_mtime_ns)
+    if _LAST_DIAG and _LAST_DIAG[0] == key:
+        return _LAST_DIAG[1]
+    _LAST_DIAG.clear()                  # let the old one go before reading
+    history = read_particle_diag(path)
+    for name in ("time", "psi_n", "R", "Z", "phi", "theta", "lost"):
+        array = getattr(history, name)
+        if array is not None:
+            array.flags.writeable = False
+    _LAST_DIAG[:] = [key, history]
+    return history
+
+
 def _original_boundary(case: Case, paths: RunPaths, *, diag: str = "particles"):
     """The plasma boundary before extend_bnd (original_bnd.dat, written by
     run_jorek), or None -- with a note -- when there isn't one."""
@@ -2462,7 +2485,7 @@ def _boundary_exits(case: Case, folder: Path, snapshots, boundary, window=None):
               "(no diagnostics file), as fine as their spacing")
         return None
     try:
-        history = read_particle_diag(diag)
+        history = _read_diag(diag)
     except ParticleFileError as exc:
         print(f"  particles: boundary exits judged from the snapshots only ({exc})")
         return None
@@ -2702,7 +2725,7 @@ def _plot_particle_exits(
         return
 
     threshold = case.ptrace_exit_psi_n if psi_n is None else psi_n
-    history = read_particle_diag(diag)
+    history = _read_diag(diag)
     window = _traced_window(case, paths, folder, diag="particle_exits")
     if window is not None:
         n_times = history.time.size
@@ -2772,7 +2795,7 @@ def _plot_particle_loss(
         return
 
     threshold = case.ptrace_exit_psi_n if psi_n is None else psi_n
-    history = read_particle_diag(diag)
+    history = _read_diag(diag)
     window = _traced_window(case, paths, folder, diag="particle_loss")
     if window is not None:
         history = history.within(*window)
@@ -2825,7 +2848,7 @@ def _wetted_inputs(folder: Path, diag: Path, boundary, window, wall: Wall) -> We
     if cached is not None:
         print(f"  particle_wetted: wall hits from {path.name} ({diag.name} unchanged)")
         return cached
-    history = read_particle_diag(diag)
+    history = _read_diag(diag)
     if window is not None:
         history = history.within(*window)
     inputs = WettedInputs(

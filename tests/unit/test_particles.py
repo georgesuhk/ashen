@@ -739,3 +739,17 @@ def test_animation_frame_rate_scales_with_the_frames():
     """About ten seconds whatever the trace wrote: 2 a second for a handful
     of frames, as before; never faster than a GIF is shown at."""
     assert [animation_fps(n) for n in (2, 20, 21, 62, 100, 200, 5000)] == [2, 2, 3, 7, 10, 20, 20]
+
+
+def test_inside_polygon_in_chunks_is_the_same(monkeypatch):
+    import ashen.diagnostics.particles as particles
+
+    rng = np.random.default_rng(4)
+    angle = np.sort(rng.uniform(0, 2 * np.pi, 60))
+    poly = np.column_stack([1.7 + rng.uniform(0.3, 1, 60) * np.cos(angle),
+                            rng.uniform(0.3, 1, 60) * np.sin(angle)])
+    R, Z = rng.uniform(0.5, 3, (37, 101)), rng.uniform(-1.2, 1.2, (37, 101))
+    whole = inside_polygon(R, Z, poly)
+    monkeypatch.setattr(particles, "_INSIDE_CHUNK", 97)
+    np.testing.assert_array_equal(inside_polygon(R, Z, poly), whole)
+    np.testing.assert_array_equal(whole, _inside_polygon_every_edge(R, Z, poly))

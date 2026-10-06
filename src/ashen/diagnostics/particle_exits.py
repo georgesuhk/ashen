@@ -225,7 +225,11 @@ def read_particle_diag(path: Path | str) -> ParticleHistory:
             )
 
     def joined(d: str, dtype) -> np.ndarray:
-        return np.concatenate([a[:n_rows] for a in columns[d]], axis=1).astype(dtype)
+        # Straight into dtype: one new array, not a joined copy and then another.
+        parts = [a[:n_rows] for a in columns[d]]
+        if len(parts) == 1:
+            return parts[0].astype(dtype)
+        return np.concatenate(parts, axis=1, dtype=dtype)
 
     return ParticleHistory(
         path=path, time=time,
@@ -284,13 +288,15 @@ def exit_angles(
             f"{history.path}: no theta in the file, and no magnetic axis given to "
             "compute it from R and Z"
         )
-    theta_all = history.theta
-    if theta_all is None:
-        theta_all = np.arctan2(history.Z - axis[1], history.R - axis[0])
-
     rows, kinds = _exit_rows(history, psi_n=psi_n, boundary=boundary)
     cols = np.flatnonzero(rows >= 0)
-    theta = np.mod(theta_all[rows[cols], cols].astype(float), 2 * np.pi)
+    if history.theta is not None:
+        theta_exit = history.theta[rows[cols], cols]
+    else:
+        # Only where each particle exits: the same numbers, not every row's.
+        theta_exit = np.arctan2(history.Z[rows[cols], cols] - axis[1],
+                                history.R[rows[cols], cols] - axis[0])
+    theta = np.mod(theta_exit.astype(float), 2 * np.pi)
     theta[theta > np.pi] -= 2 * np.pi
     return ExitResult(
         theta=theta,
