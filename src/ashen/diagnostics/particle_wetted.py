@@ -42,7 +42,10 @@ import numpy as np
 from ashen.diagnostics.particle_exits import ParticleHistory
 from ashen.diagnostics.particles import inside_polygon
 
-__all__ = ["Wall", "WallHits", "WettedResult", "wall_hits", "wetted_area"]
+__all__ = [
+    "ParticleHits", "Wall", "WallHits", "WettedResult", "particle_hits", "wall_hits",
+    "wetted_area",
+]
 
 TWO_PI = 2 * np.pi
 
@@ -146,22 +149,59 @@ class WallHits:
         return int(self.l.size)
 
 
-def wall_hits(history: ParticleHistory, wall: Wall) -> WallHits:
+@dataclass(frozen=True)
+class ParticleHits:
+    """Every particle's first hit on the wall, one entry per particle, so a
+    selection of particles can be taken afterwards (and the whole kept in
+    ashen.diagnostics.wetted_cache)."""
+
+    #: Inside the wall and on the grid at the first diagnostics time.
+    considered: np.ndarray
+    #: Of those, the ones that hit the wall...
+    hit: np.ndarray
+    #: ...and of the hits, the ones that left the grid first.
+    left_grid: np.ndarray
+    #: Where each hit: arc length [m], in [0, wall.length), and toroidal
+    #: angle [rad], not yet wrapped; nan for a particle that didn't hit.
+    l: np.ndarray
+    phi: np.ndarray
+
+    @property
+    def n(self) -> int:
+        return int(self.considered.size)
+
+    def wall_hits(self, particles: np.ndarray | None = None) -> WallHits:
+        """The hits of the particles where the boolean mask is True (all
+        without one), in particle order."""
+        keep = np.ones(self.n, dtype=bool) if particles is None else np.asarray(particles, bool)
+        hit = self.hit & keep
+        return WallHits(
+            l=self.l[hit], phi=np.mod(self.phi[hit], TWO_PI),
+            n_crossed=int(np.count_nonzero(hit & ~self.left_grid)),
+            n_left_grid=int(np.count_nonzero(hit & self.left_grid)),
+            n_considered=int(np.count_nonzero(self.considered & keep)),
+        )
+
+
+def particle_hits(history: ParticleHistory, wall: Wall) -> ParticleHits:
     """Each particle's first hit on wall (see the module docstring)."""
-    n_times = history.time.size
-    ls, phis = [], []
-    n_crossed = n_left = n_considered = 0
-    if n_times == 0:
-        return WallHits(np.empty(0), np.empty(0), 0, 0, 0)
+    n = history.n
+    considered = np.zeros(n, dtype=bool)
+    hit = np.zeros(n, dtype=bool)
+    left_grid = np.zeros(n, dtype=bool)
+    ls = np.full(n, np.nan)
+    phis = np.full(n, np.nan)
+    if history.time.size == 0:
+        return ParticleHits(considered, hit, left_grid, ls, phis)
     polygon = np.column_stack([wall.R, wall.Z])
     on_grid = ~history.lost
     inside = on_grid & inside_polygon(
         history.R.ravel(), history.Z.ravel(), polygon
     ).reshape(history.R.shape)
-    for p in range(history.n):
+    for p in range(n):
         if not inside[0, p]:
             continue
-        n_considered += 1
+        considered[p] = True
         gone = ~inside[:, p]
         if not gone.any():
             continue
@@ -170,19 +210,21 @@ def wall_hits(history: ParticleHistory, wall: Wall) -> WallHits:
         phi0 = history.phi[k - 1, p]
         if on_grid[k, p]:
             p1 = np.array([history.R[k, p], history.Z[k, p]])
-            hit = wall.crossing(p0, p1)
-            frac, l = hit if hit is not None else (1.0, wall.nearest(p1))
+            crossing = wall.crossing(p0, p1)
+            frac, l = crossing if crossing is not None else (1.0, wall.nearest(p1))
             phi = phi0 + frac * (history.phi[k, p] - phi0)
-            n_crossed += 1
         else:
             l, phi = wall.nearest(p0), phi0
-            n_left += 1
-        ls.append(l % wall.length)
-        phis.append(phi)
-    return WallHits(
-        l=np.asarray(ls, dtype=float), phi=np.mod(np.asarray(phis, dtype=float), TWO_PI),
-        n_crossed=n_crossed, n_left_grid=n_left, n_considered=n_considered,
-    )
+            left_grid[p] = True
+        hit[p] = True
+        ls[p] = l % wall.length
+        phis[p] = phi
+    return ParticleHits(considered, hit, left_grid, ls, phis)
+
+
+def wall_hits(history: ParticleHistory, wall: Wall) -> WallHits:
+    """Each particle's first hit on wall (see the module docstring)."""
+    return particle_hits(history, wall).wall_hits()
 
 
 @dataclass(frozen=True)

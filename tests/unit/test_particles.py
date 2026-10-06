@@ -342,6 +342,49 @@ def test_inside_polygon():
     assert inside.tolist() == [True, False, False, True]
 
 
+def _inside_polygon_every_edge(R, Z, polygon):
+    """inside_polygon as it was: every point against every edge."""
+    R, Z = np.asarray(R, dtype=float), np.asarray(Z, dtype=float)
+    poly = np.asarray(polygon, dtype=float)
+    r0, z0 = poly[:, 0], poly[:, 1]
+    r1, z1 = np.roll(r0, -1), np.roll(z0, -1)
+    inside = np.zeros(R.shape, dtype=bool)
+    for a_r, a_z, b_r, b_z in zip(r0, z0, r1, z1):
+        crosses = (a_z > Z) != (b_z > Z)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r_cross = a_r + (Z - a_z) * (b_r - a_r) / (b_z - a_z)
+        inside ^= crosses & (R < r_cross)
+    return inside
+
+
+def test_inside_polygon_is_exactly_every_point_against_every_edge():
+    """Sorting by Z changes the work, not the answer -- also for points on
+    a vertex's Z or R, on a vertex, flat edges, either winding, NaN, 2D."""
+    rng = np.random.default_rng(3)
+    for trial in range(120):
+        n_v = int(rng.integers(3, 200))
+        angle = np.sort(rng.uniform(0, 2 * np.pi, n_v))
+        radius = rng.uniform(0.3, 1, n_v)
+        poly = np.column_stack([1.7 + radius * np.cos(angle), radius * np.sin(angle)])
+        if trial % 3 == 0:
+            poly = np.round(poly, 1)
+        if trial % 5 == 0:
+            poly = poly[::-1]
+        n = 2 * int(rng.integers(8, 2000))
+        R, Z = rng.uniform(0.5, 3, n), rng.uniform(-1.2, 1.2, n)
+        k = n // 4
+        Z[:k] = rng.choice(poly[:, 1], k)
+        R[k:2 * k] = rng.choice(poly[:, 0], k)
+        vertex = rng.integers(0, n_v, k // 2)
+        R[2 * k:2 * k + k // 2], Z[2 * k:2 * k + k // 2] = poly[vertex, 0], poly[vertex, 1]
+        Z[-3:], R[-5:-3], Z[-6] = np.nan, np.nan, -0.0
+        if trial % 2:
+            R, Z = R.reshape(2, -1), Z.reshape(2, -1)
+        got = inside_polygon(R, Z, poly)
+        assert got.shape == R.shape
+        np.testing.assert_array_equal(got, _inside_polygon_every_edge(R, Z, poly))
+
+
 #: The square, shrunk to R 3.5..3.72.
 SHRUNK = SQUARE - [[0, 0], [0.28, 0], [0.28, 0], [0, 0]]
 

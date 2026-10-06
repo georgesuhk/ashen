@@ -165,18 +165,30 @@ def named_step(path: Path | str) -> int | None:
 def inside_polygon(R: np.ndarray, Z: np.ndarray, polygon: np.ndarray) -> np.ndarray:
     """Whether each point (R, Z) is inside the closed polygon, an (N, 2)
     array of (R, Z) vertices (first and last need not repeat). Even-odd ray
-    casting, so points exactly on an edge may go either way."""
+    casting, so points exactly on an edge may go either way.
+
+    An edge from a_z to b_z is crossed by the points with min <= Z < max of
+    the two -- exactly (a_z > Z) != (b_z > Z) -- so with the points sorted
+    by Z once, each edge needs only its own slice of them: the work is the
+    sort plus the crossings, not every point times every edge. The crossing
+    R is the same expression on the same numbers, so the answer is too."""
     R, Z = np.asarray(R, dtype=float), np.asarray(Z, dtype=float)
+    shape = np.broadcast_shapes(R.shape, Z.shape)
+    R, Z = np.broadcast_to(R, shape).ravel(), np.broadcast_to(Z, shape).ravel()
     poly = np.asarray(polygon, dtype=float)
     r0, z0 = poly[:, 0], poly[:, 1]
     r1, z1 = np.roll(r0, -1), np.roll(z0, -1)
-    inside = np.zeros(R.shape, dtype=bool)
+    inside = np.zeros(R.size, dtype=bool)
+    order = np.argsort(Z, kind="stable")     # NaN last: never in a slice
+    z_sorted = Z[order]
     for a_r, a_z, b_r, b_z in zip(r0, z0, r1, z1):
-        crosses = (a_z > Z) != (b_z > Z)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            r_cross = a_r + (Z - a_z) * (b_r - a_r) / (b_z - a_z)
-        inside ^= crosses & (R < r_cross)
-    return inside
+        if not a_z != b_z:                   # flat (or NaN): crossed by nothing
+            continue
+        lo, hi = (a_z, b_z) if a_z < b_z else (b_z, a_z)
+        idx = order[np.searchsorted(z_sorted, lo, "left"):np.searchsorted(z_sorted, hi, "left")]
+        r_cross = a_r + (Z[idx] - a_z) * (b_r - a_r) / (b_z - a_z)
+        inside[idx] ^= R[idx] < r_cross
+    return inside.reshape(shape)
 
 
 #: Relative tolerance on "exited by this snapshot's time": diagnostics
