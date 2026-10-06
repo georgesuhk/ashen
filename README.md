@@ -1775,7 +1775,19 @@ written as `particle_wetted_counts.png`, beside the fraction version, and
 the numbers in the JSON are the same either way. Counts per cell are not
 divided by the cell's area, so for the same density a smaller inboard cell
 shows fewer -- but they show directly how many hits each cell rests on.
-`ptrace_wetted_density_range` then sets the colour scale in particles.
+Its colour scale is set apart from the density map's, by
+`ptrace_wetted_count_range = [min, max]` in particles per cell (default:
+the data's own range); `ptrace_wetted_density_range` doesn't touch it.
+
+**Replotting is cached.** Where each particle hit the wall is kept in
+`particle_wetted_cache.npz` in the ptrace folder, so a second run of
+`--diag particle_wetted` neither reads the diagnostics file nor finds the
+hits again: changing the bins, colour ranges, counts or
+`ptrace_initial_psi_n_range` just redraws. The cache is used only while
+the diagnostics file (its name, size and modification time),
+`original_bnd.dat` and the `ptrace_start_step..ptrace_end_step` times are
+what it was made from; otherwise -- a trace still running, retraced,
+repacked -- it is recomputed and overwritten. Delete it to force that.
 
 `ptrace_wetted_bins = [n_l, n_phi]` (default `[36, 36]`, or one number for
 both) sets the cells. The 2D `f_tot` needs many more hits than cells to be

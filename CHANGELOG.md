@@ -4,6 +4,26 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-06: `particle_wetted` faster, cached, own counts range
+
+- The test of which points are inside the wall now sorts the points by Z
+  once and gives each edge only the points that can cross it. Before, it
+  checked every (row, particle) point against every edge. The answer is
+  bit-for-bit the same (tested against the old code). This speeds up
+  `particle_exits`, `particle_loss` and the `particles` exits too. On a
+  1000-marker, 12000-row trace with a 256-point wall, `particle_wetted`
+  went from 7.3 s to 2.7 s, with identical `particle_wetted.json`.
+- The first wall hit of each particle is cached in
+  `particle_wetted_cache.npz` in the ptrace folder. A replot of an
+  unchanged trace takes 0.4 s, whether it changes the bins, either colour
+  range, counts or `ptrace_initial_psi_n_range`. A changed diagnostics file
+  (name, size or mtime), `original_bnd.dat` or start..end window makes a
+  fresh cache. Delete the cache to force one.
+- `ptrace_wetted_count_range = [min, max]` sets the colour scale of the
+  counts map, in particles per cell. `ptrace_wetted_density_range` now
+  sets only the density map.
+- Unverified: not yet run on the HPC's real traces.
+
 ## 2026-10-05: trace diagnostics repacked to their data's size
 
 JOREK's diagnostics writer chunks every dataset 50000 particles x 1 time,

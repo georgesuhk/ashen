@@ -28,6 +28,7 @@ import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable, Mapping
 
 import numpy as np
@@ -66,7 +67,14 @@ from ashen.diagnostics.particle_exits import (
     loss_map,
     read_particle_diag,
 )
-from ashen.diagnostics.particle_wetted import Wall, wall_hits, wetted_area
+from ashen.diagnostics.particle_wetted import Wall, particle_hits, wetted_area
+from ashen.diagnostics.wetted_cache import (
+    CACHE_FILE as WETTED_CACHE_FILE,
+    WettedInputs,
+    cache_key as wetted_cache_key,
+    read_cache as read_wetted_cache,
+    write_cache as write_wetted_cache,
+)
 from ashen.diagnostics.particles import ParticleFileError, find_snapshots, named_step
 from ashen.diagnostics.poincare_cache import read_step, select_lines
 from ashen.diagnostics.profiles import (
@@ -2640,21 +2648,37 @@ def _initial_psi_selection(case: Case, history, *, diag: str):
     for the file names -- so a range's figures sit beside the all-marker
     ones instead of replacing them. (history, None, "") without a range;
     None, with a message, when no marker started inside it."""
+    start = history.psi_n[0] if history.time.size else np.array([])
+    selection = _initial_psi_mask(case, start, history.n, diag=diag)
+    if selection is None:
+        return None
+    mask, note, suffix = selection
+    return (history if mask is None else history.select(mask)), note, suffix
+
+
+def _initial_psi_mask(case: Case, start: np.ndarray, n: int, *, diag: str):
+    """_initial_psi_selection on the n markers' psi_n at the first
+    diagnostics time (start; empty without one): (mask, note, suffix), the
+    mask None for every marker; None, with a message, for none."""
     span = case.ptrace_initial_psi_n_range
     if span is None:
-        return history, None, ""
+        return None, None, ""
     low, high = span
-    chosen = history.starting_within(low, high)
-    if chosen.n == 0:
-        start = history.psi_n[0] if history.time.size else np.array([])
+    if not start.size:
+        # No first time to judge by: every marker, as starting_within does.
+        mask, chosen = None, n
+    else:
+        mask = (start >= low) & (start <= high)
+        chosen = int(np.count_nonzero(mask))
+    if chosen == 0:
         have = (f"; they start at psi_n {float(np.nanmin(start)):.3g} to "
                 f"{float(np.nanmax(start)):.3g}" if start.size else "")
-        print(f"  {diag}: none of {history.n} markers start with psi_n in "
+        print(f"  {diag}: none of {n} markers start with psi_n in "
               f"{low:g}..{high:g} (ptrace_initial_psi_n_range){have}, skipped")
         return None
     note = (f"markers starting at psi_n {low:g} to {high:g}: "
-            f"{chosen.n} of {history.n}")
-    return chosen, note, f"_psi{low:g}-{high:g}"
+            f"{chosen} of {n}")
+    return mask, note, f"_psi{low:g}-{high:g}"
 
 
 def _plot_particle_exits(
@@ -2790,6 +2814,32 @@ def _plot_particle_loss(
 WETTED_RESULTS_FILE = "particle_wetted.json"
 
 
+def _wetted_inputs(folder: Path, diag: Path, boundary, window, wall: Wall) -> WettedInputs:
+    """Each particle's first wall hit within window, and the times and
+    starting psi_n beside them: from the ptrace folder's cache when the
+    diagnostics file, wall and window are the ones it was made from (see
+    ashen.diagnostics.wetted_cache), else read and found, and cached."""
+    path = folder / WETTED_CACHE_FILE
+    key = wetted_cache_key(diag, boundary, window)
+    cached = read_wetted_cache(path, key)
+    if cached is not None:
+        print(f"  particle_wetted: wall hits from {path.name} ({diag.name} unchanged)")
+        return cached
+    history = read_particle_diag(diag)
+    if window is not None:
+        history = history.within(*window)
+    inputs = WettedInputs(
+        time=history.time,
+        start_psi_n=history.psi_n[0] if history.time.size else np.array([]),
+        dropped_rows=history.dropped_rows, hits=particle_hits(history, wall),
+    )
+    try:
+        write_wetted_cache(path, key, inputs)
+    except OSError as exc:
+        print(f"  particle_wetted: could not write {path.name} ({exc}); not cached")
+    return inputs
+
+
 def _plot_particle_wetted(
     case: Case, paths: RunPaths, *, dpi: int | None, explicit: bool, counts: bool = False,
 ) -> None:
@@ -2813,21 +2863,22 @@ def _plot_particle_wetted(
         print("  particle_wetted: the wall is the boundary before extend_bnd; skipped")
         return
 
-    history = read_particle_diag(diag)
     window = _traced_window(case, paths, folder, diag="particle_wetted")
-    if window is not None:
-        history = history.within(*window)
+    wall = Wall.from_points(boundary)
+    inputs = _wetted_inputs(folder, diag, boundary, window, wall)
     unfinished, trace_fraction = _unfinished_trace(
-        case, folder, window, history, diag="particle_wetted",
+        case, folder, window,
+        SimpleNamespace(path=diag, time=inputs.time, dropped_rows=inputs.dropped_rows),
+        diag="particle_wetted",
     )
-    selection = _initial_psi_selection(case, history, diag="particle_wetted")
+    selection = _initial_psi_mask(case, inputs.start_psi_n, inputs.n, diag="particle_wetted")
     if selection is None:
         return
-    n_markers = history.n
-    history, selected, suffix = selection
+    n_markers = inputs.n
+    mask, selected, suffix = selection
+    n_selected = n_markers if mask is None else int(np.count_nonzero(mask))
     notes = "\n".join(note for note in (selected, unfinished) if note) or None
-    wall = Wall.from_points(boundary)
-    hits = wall_hits(history, wall)
+    hits = inputs.hits.wall_hits(mask)
     if hits.n == 0:
         print(f"  particle_wetted: none of {hits.n_considered} particles hit the wall"
               + (f" ({selected})" if selected else "") + ", skipped")
@@ -2837,12 +2888,14 @@ def _plot_particle_wetted(
     # How much of the trace the hits were collected over: the diagnostics
     # times used, i.e. within ptrace_start_step..ptrace_end_step. The
     # fractions grow with it, so numbers from different spans don't compare.
-    t_start, t_end = float(history.time[0]), float(history.time[-1])
+    t_start, t_end = float(inputs.time[0]), float(inputs.time[-1])
     duration = t_end - t_start
-    # counts: a version of its own, so the fraction figure is kept beside it
+    # counts: a version of its own, so the fraction figure is kept beside it,
+    # and a colour range of its own, in particles rather than 1/m^2
     out = plot_wetted_area(
         result, hits, folder / f"particle_wetted{'_counts' if counts else ''}{suffix}.png",
-        density_range=case.ptrace_wetted_density_range, duration=duration,
+        density_range=case.ptrace_wetted_count_range if counts
+        else case.ptrace_wetted_density_range, duration=duration,
         note=notes, counts=counts, **_dpi_kwargs(dpi),
     )
     numbers = {
@@ -2854,7 +2907,7 @@ def _plot_particle_wetted(
         # Which markers were counted: all of them (null), or those that
         # started inside this psi_n range.
         "initial_psi_n_range": case.ptrace_initial_psi_n_range,
-        "n_markers": n_markers, "n_selected": history.n,
+        "n_markers": n_markers, "n_selected": n_selected,
         # How far an unfinished trace got, as a fraction of start..end; null
         # for one that got to its end (or whose end is not known).
         "trace_fraction": trace_fraction,

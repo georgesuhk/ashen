@@ -48,7 +48,7 @@ _CASE_KEYS = (
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
     "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins", "ptrace_pdf_step",
     "ptrace_wetted_density_range", "ptrace_initial_psi_n_range", "ptrace_loss_bins",
-    "ptrace_wetted_counts",
+    "ptrace_wetted_counts", "ptrace_wetted_count_range",
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
@@ -302,6 +302,10 @@ class Case:
     #: cell, each bin) instead of fractions, as particle_wetted_counts.png.
     #: `--wetted-counts` turns it on from the command line.
     ptrace_wetted_counts: bool = False
+    #: `plot --diag particle_wetted` with counts: [min, max] of the map's
+    #: colour scale in particles per cell, apart from
+    #: ptrace_wetted_density_range's. None = the data's own range.
+    ptrace_wetted_count_range: list[float] | None = None
     #: `plot --diag particles`: the colour of the particles, any matplotlib
     #: colour ("red", "#ff8800", "tab:orange"). Red stands out against the
     #: Poincare plot's viridis.
@@ -641,18 +645,21 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
             )
         merged["ptrace_wetted_bins"] = list(bins)
 
-    if merged.get("ptrace_wetted_density_range") is not None:
-        value = merged["ptrace_wetted_density_range"]
+    for key, units in (("ptrace_wetted_density_range", "in 1/m^2"),
+                       ("ptrace_wetted_count_range", "in particles")):
+        if merged.get(key) is None:
+            continue
+        value = merged[key]
         if not (
             isinstance(value, list) and len(value) == 2
             and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value)
             and 0 <= value[0] < value[1]
         ):
             raise CasesError(
-                f"{where}: ptrace_wetted_density_range must be [min, max] in 1/m^2 "
+                f"{where}: {key} must be [min, max] {units} "
                 f"with 0 <= min < max, got {value!r}"
             )
-        merged["ptrace_wetted_density_range"] = [float(v) for v in value]
+        merged[key] = [float(v) for v in value]
 
     if "ptrace_particle_color" in merged:
         from matplotlib.colors import is_color_like

@@ -398,3 +398,132 @@ def test_invalid_counts_key(campaign, capsys):
     (campaign / "cases.toml").write_text(CASES + "ptrace_wetted_counts = 1\n", encoding="utf-8")
     assert plot_cli.main(["--case", "run", "--diag", "particle_wetted"]) == 1
     assert "ptrace_wetted_counts must be true or false" in capsys.readouterr().err
+
+
+def test_count_range_sets_the_counts_map_apart_from_the_density_range(campaign, monkeypatch):
+    from ashen.cases import CasesError, load_cases
+
+    path = campaign / "cases.toml"
+    assert load_cases(path)["run"].ptrace_wetted_count_range is None
+    for bad in ("[2, 1]", "[-1, 1]", "[1]", '["a", 1]'):
+        path.write_text(CASES + f"ptrace_wetted_count_range = {bad}\n", encoding="utf-8")
+        with pytest.raises(CasesError, match="ptrace_wetted_count_range must be .* in particles"):
+            load_cases(path)
+
+    _two_shells(campaign)
+    path.write_text(CASES + "ptrace_wetted_density_range = [0, 2]\n"
+                    "ptrace_wetted_count_range = [0, 30]\n", encoding="utf-8")
+    seen = []
+    monkeypatch.setattr(plot_cli, "plot_wetted_area",
+                        lambda *args, counts, density_range, **kw: seen.append(
+                            (counts, density_range)) or args[2])
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--wetted-counts",
+                          "--dpi", "40"]) == 0
+    assert seen == [(False, [0.0, 2.0]), (True, [0.0, 30.0])]
+    # without a count range the counts map takes the data's own, not the density's
+    seen.clear()
+    path.write_text(CASES + "ptrace_wetted_density_range = [0, 2]\n", encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--wetted-counts",
+                          "--dpi", "40"]) == 0
+    assert seen == [(True, None)]
+
+
+# --- the wall-hit cache ---------------------------------------------------------------
+
+
+def test_replotting_reuses_the_cached_hits_with_the_same_numbers(campaign, capsys, monkeypatch):
+    folder = _two_shells(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    first = capsys.readouterr().out
+    assert "wall hits from" not in first
+    assert (folder / "particle_wetted_cache.npz").is_file()
+    numbers = (folder / "particle_wetted.json").read_text(encoding="utf-8")
+
+    # a replot neither reads the diagnostics file nor finds the hits again
+    def boom(*args, **kwargs):
+        raise AssertionError("recomputed")
+
+    monkeypatch.setattr(plot_cli, "read_particle_diag", boom)
+    monkeypatch.setattr(plot_cli, "particle_hits", boom)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "particle_wetted: wall hits from particle_wetted_cache.npz (ptrace_diag.h5 unchanged)" in out
+    assert (folder / "particle_wetted.json").read_text(encoding="utf-8") == numbers
+    # the selection, counts and bins are made from the cache too
+    (campaign / "cases.toml").write_text(
+        CASES.replace("[8, 6]", "[4, 3]") + "ptrace_initial_psi_n_range = [0.6, 0.8]\n",
+        encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--wetted-counts",
+                          "--dpi", "40"]) == 0
+    selected = json.loads((folder / "particle_wetted_psi0.6-0.8.json").read_text(encoding="utf-8"))
+    assert (selected["n_markers"], selected["n_selected"], selected["n_hits"]) == (40, 20, 20)
+    assert selected["bins"] == [4, 3]
+
+
+def test_cached_selection_matches_computing_it_afresh(campaign, monkeypatch):
+    """The numbers from a selection taken from the cache are those of a
+    first run with that selection, which reads and selects the history."""
+    folder = _two_shells(campaign, "[0.6, 0.8]")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    fresh = (folder / "particle_wetted_psi0.6-0.8.json").read_text(encoding="utf-8")
+    (folder / "particle_wetted_psi0.6-0.8.json").unlink()
+    (folder / "particle_wetted_cache.npz").unlink()
+    (campaign / "cases.toml").write_text(CASES, encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    (campaign / "cases.toml").write_text(
+        CASES + "ptrace_initial_psi_n_range = [0.6, 0.8]\n", encoding="utf-8")
+    monkeypatch.setattr(plot_cli, "read_particle_diag", lambda *a: pytest.fail("recomputed"))
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert (folder / "particle_wetted_psi0.6-0.8.json").read_text(encoding="utf-8") == fresh
+
+
+def test_a_changed_trace_or_wall_is_recomputed(campaign, capsys):
+    import os
+
+    folder = _two_shells(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    capsys.readouterr()
+    diag = folder / "ptrace_diag.h5"
+    # the trace moved on: a newer file
+    stat = diag.stat()
+    os.utime(diag, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert "wall hits from" not in capsys.readouterr().out
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert "wall hits from" in capsys.readouterr().out
+    # another wall
+    np.savetxt(campaign / "run" / "original_bnd.dat", circle(100))
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert "wall hits from" not in capsys.readouterr().out
+    # another window
+    (folder / "ptrace.log").write_text(
+        "ptrace_gc: restart step 3000 at t =   0.000000E+00 s\n"
+        "ptrace_gc: restart step 3400 at t =   4.000000E-06 s\n", encoding="utf-8")
+    (campaign / "cases.toml").write_text(CASES + "ptrace_end_step = 3400\n", encoding="utf-8")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert "wall hits from" not in capsys.readouterr().out
+    # an unreadable cache is recomputed, not trusted
+    (folder / "particle_wetted_cache.npz").write_bytes(b"not a cache")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert "wall hits from" not in capsys.readouterr().out
+
+
+def test_particle_hits_selected_equal_wall_hits_of_the_selection(wall):
+    rng = np.random.default_rng(5)
+    n_t, n = 30, 200
+    r = np.clip(np.cumsum(rng.normal(0.02, 0.05, (n_t, n)), axis=0) + 0.3, 0, None)
+    a = rng.uniform(0, 2 * np.pi, n) + np.cumsum(rng.normal(0, 0.2, (n_t, n)), axis=0)
+    lost = np.zeros((n_t, n), int)
+    lost[20:, ::7] = 1
+    h = history(R0 + r * np.cos(a), r * np.sin(a), np.cumsum(rng.uniform(0, 1, (n_t, n)), 0), lost)
+    from ashen.diagnostics.particle_wetted import particle_hits
+
+    per = particle_hits(h, wall)
+    mask = rng.random(n) < 0.5
+    a_hits, b_hits = per.wall_hits(mask), wall_hits(h.select(mask), wall)
+    assert a_hits.n > 10 and a_hits.n_left_grid > 0
+    np.testing.assert_array_equal(a_hits.l, b_hits.l)
+    np.testing.assert_array_equal(a_hits.phi, b_hits.phi)
+    assert (a_hits.n_crossed, a_hits.n_left_grid, a_hits.n_considered) == (
+        b_hits.n_crossed, b_hits.n_left_grid, b_hits.n_considered)
