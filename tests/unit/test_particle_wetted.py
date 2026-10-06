@@ -527,3 +527,33 @@ def test_particle_hits_selected_equal_wall_hits_of_the_selection(wall):
     np.testing.assert_array_equal(a_hits.phi, b_hits.phi)
     assert (a_hits.n_crossed, a_hits.n_left_grid, a_hits.n_considered) == (
         b_hits.n_crossed, b_hits.n_left_grid, b_hits.n_considered)
+
+
+# --- one read of the diagnostics file for all the particle diags --------------------
+
+
+def test_the_particle_diags_of_a_case_read_the_diagnostics_file_once(campaign, monkeypatch):
+    import os
+
+    folder = _two_shells(campaign)
+    (campaign / "cases.toml").write_text(CASES + "ptrace_original_boundary = true\n",
+                                         encoding="utf-8")
+    (campaign / "run" / "log").write_text("R_axis = 4.0\nZ_axis = 0.0\n", encoding="utf-8")
+    reads = []
+    real = plot_cli.read_particle_diag
+    monkeypatch.setattr(plot_cli, "read_particle_diag",
+                        lambda path: reads.append(path) or real(path))
+    args = ["--case", "run", "--dpi", "40"]
+    for diag in ("particle_exits", "particle_loss", "particle_wetted"):
+        args += ["--diag", diag]
+    assert plot_cli.main(args) == 0
+    assert len(reads) == 1
+    # what is shared can't be changed by one diag under the next
+    history = plot_cli._read_diag(folder / "ptrace_diag.h5")
+    with pytest.raises(ValueError):
+        history.R[0, 0] = 0.0
+    # a file that changed on disk is read again
+    stat = (folder / "ptrace_diag.h5").stat()
+    os.utime(folder / "ptrace_diag.h5", ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+    assert plot_cli.main(["--case", "run", "--diag", "particle_loss", "--dpi", "40"]) == 0
+    assert len(reads) == 2

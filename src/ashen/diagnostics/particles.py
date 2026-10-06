@@ -168,27 +168,59 @@ def inside_polygon(R: np.ndarray, Z: np.ndarray, polygon: np.ndarray) -> np.ndar
     casting, so points exactly on an edge may go either way.
 
     An edge from a_z to b_z is crossed by the points with min <= Z < max of
-    the two -- exactly (a_z > Z) != (b_z > Z) -- so with the points sorted
-    by Z once, each edge needs only its own slice of them: the work is the
-    sort plus the crossings, not every point times every edge. The crossing
-    R is the same expression on the same numbers, so the answer is too."""
+    the two -- exactly (a_z > Z) != (b_z > Z). Between two neighbouring
+    vertex heights every point crosses the same edges, so each point looks
+    up its band of Z (a search among the vertex heights) and is tested
+    against that band's few edges only -- not against every edge. The
+    crossing R is the same expression on the same numbers as testing every
+    edge, so the answer is too. Done in chunks of points, to bound memory.
+    (Only edges with finite ends count; a NaN end never crosses anyway.)"""
     R, Z = np.asarray(R, dtype=float), np.asarray(Z, dtype=float)
     shape = np.broadcast_shapes(R.shape, Z.shape)
     R, Z = np.broadcast_to(R, shape).ravel(), np.broadcast_to(Z, shape).ravel()
     poly = np.asarray(polygon, dtype=float)
-    r0, z0 = poly[:, 0], poly[:, 1]
-    r1, z1 = np.roll(r0, -1), np.roll(z0, -1)
+    a_r, a_z = poly[:, 0], poly[:, 1]
+    b_r, b_z = np.roll(a_r, -1), np.roll(a_z, -1)
     inside = np.zeros(R.size, dtype=bool)
-    order = np.argsort(Z, kind="stable")     # NaN last: never in a slice
-    z_sorted = Z[order]
-    for a_r, a_z, b_r, b_z in zip(r0, z0, r1, z1):
-        if not a_z != b_z:                   # flat (or NaN): crossed by nothing
-            continue
-        lo, hi = (a_z, b_z) if a_z < b_z else (b_z, a_z)
-        idx = order[np.searchsorted(z_sorted, lo, "left"):np.searchsorted(z_sorted, hi, "left")]
-        r_cross = a_r + (Z[idx] - a_z) * (b_r - a_r) / (b_z - a_z)
-        inside[idx] ^= R[idx] < r_cross
+    # Edges that something can cross: not flat, ends finite.
+    edges = np.flatnonzero(np.isfinite(a_z) & np.isfinite(b_z) & (a_z != b_z))
+    if not edges.size:
+        return inside.reshape(shape)
+    a_r, a_z, b_r, b_z = a_r[edges], a_z[edges], b_r[edges], b_z[edges]
+    d_r, d_z = b_r - a_r, b_z - a_z
+    # Bands [levels[k], levels[k+1]) between the vertex heights, and the
+    # edges spanning each: those with lo <= levels[k] and levels[k+1] <= hi.
+    levels = np.unique(np.concatenate([a_z, b_z]))
+    lo = np.searchsorted(levels, np.minimum(a_z, b_z))
+    hi = np.searchsorted(levels, np.maximum(a_z, b_z))
+    n_bands = levels.size - 1
+    per_band = np.zeros(n_bands, dtype=int)
+    for k0, k1 in zip(lo, hi):
+        per_band[k0:k1] += 1
+    band_edges = np.full((n_bands, int(per_band.max())), -1, dtype=int)
+    filled = np.zeros(n_bands, dtype=int)
+    for e, (k0, k1) in enumerate(zip(lo, hi)):
+        band_edges[np.arange(k0, k1), filled[k0:k1]] = e
+        filled[k0:k1] += 1
+
+    for start in range(0, R.size, _INSIDE_CHUNK):
+        r, z = R[start:start + _INSIDE_CHUNK], Z[start:start + _INSIDE_CHUNK]
+        band = np.searchsorted(levels, z, "right") - 1   # NaN: past the last band
+        in_band = np.flatnonzero((band >= 0) & (band < n_bands))
+        r, z, band = r[in_band], z[in_band], band[in_band]
+        parity = np.zeros(in_band.size, dtype=bool)
+        for slot in range(band_edges.shape[1]):
+            e = band_edges[band, slot]
+            has = np.flatnonzero(e >= 0)
+            e = e[has]
+            r_cross = a_r[e] + (z[has] - a_z[e]) * d_r[e] / d_z[e]
+            parity[has] ^= r[has] < r_cross
+        inside[start + in_band] = parity
     return inside.reshape(shape)
+
+
+#: Points inside_polygon tests at a time.
+_INSIDE_CHUNK = 1 << 22
 
 
 #: Relative tolerance on "exited by this snapshot's time": diagnostics
