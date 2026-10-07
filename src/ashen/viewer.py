@@ -15,6 +15,7 @@ elements: good for looking, not for measuring.
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,7 @@ __all__ = [
     "restart_nodes",
     "starwall_wall",
     "tuner_figure",
+    "tuner_status",
 ]
 
 _BLUE, _GREY, _RED, _INK, _ORANGE = "#2a78d6", "#898781", "#c8442f", "#52514e", "#d98a1f"
@@ -201,6 +203,66 @@ def plasma_geometry(run_dir: Path | str, site=None, params=None) -> cur.PlasmaGe
             "run run_jorek on the shotfile once first"
         )
     return cur.boundary_geometry(bnd, _f0(run_dir, site))
+
+
+_REQUESTED = re.compile(
+    r"requested:\s*q0\s*=\s*([-\d.eE+]+),\s*l_i\s*=\s*([-\d.eE+]+),\s*q_edge\s*=\s*([-\d.eE+]+)"
+)
+
+
+def _same(a, b) -> bool:
+    return all(abs(x - y) <= 5e-5 * max(1.0, abs(y)) for x, y in zip(a, b))
+
+
+def tuner_status(run_dir: Path | str, q0: float, li: float, q_edge: float) -> list[str]:
+    """What is out of step between the sliders, the shotfile and the run
+    folder's input files. Empty when all three agree.
+
+    The input files are judged by the ``requested:`` line run_jorek writes at
+    the top of ``j_prof.dat``.
+    """
+    run_dir = Path(run_dir)
+    warnings: list[str] = []
+    try:
+        params = load_shotfile(run_dir / "shotfile.py")
+    except (ShotfileError, OSError) as exc:
+        return [f"shotfile.py could not be read: {exc}"]
+    saved = (params.current_q0, params.current_li, params.current_q_edge)
+    is_q_li = params.ffprime_method == "q_li" and None not in saved
+
+    if not is_q_li:
+        warnings.append(
+            f"shotfile.py has ffprime_method = {params.ffprime_method!r}, so these "
+            "values are not what the run uses. Save to shotfile switches it to \"q_li\"."
+        )
+    elif not _same((q0, li, q_edge), saved):
+        warnings.append(
+            "Sliders differ from shotfile.py "
+            f"(q0 = {saved[0]:g}, l_i = {saved[1]:g}, q_edge = {saved[2]:g}): not saved."
+        )
+
+    if is_q_li:
+        j_prof = run_dir / "j_prof.dat"
+        match = None
+        if j_prof.is_file():
+            with open(j_prof, encoding="utf-8", errors="replace") as f:
+                match = _REQUESTED.search("".join(f.readline() for _ in range(8)))
+        if match is None:
+            warnings.append(
+                "The input files have not been made from this shotfile yet "
+                "(no j_prof.dat from \"q_li\"). Regenerate inputs."
+            )
+        else:
+            generated = tuple(float(v) for v in match.groups())
+            if not _same(generated, saved):
+                warnings.append(
+                    "Input files are out of date: j_prof.dat and ffprime_prof.dat were "
+                    f"made for q0 = {generated[0]:g}, l_i = {generated[1]:g}, "
+                    f"q_edge = {generated[2]:g}, but shotfile.py now has "
+                    f"q0 = {saved[0]:g}, l_i = {saved[1]:g}, q_edge = {saved[2]:g}. "
+                    "Regenerate inputs before running JOREK."
+                )
+    return warnings
 
 
 # --- figures -------------------------------------------------------------------
@@ -513,8 +575,12 @@ def _show(out, make_figure) -> None:
 
 
 def _slider(w, value, lo, hi, step, name):
+    # One per row at a comfortable width: three abreast leaves each too short
+    # to set a value to two decimals with the mouse.
     return w.FloatSlider(value=value, min=lo, max=hi, step=step, description=name,
-                         continuous_update=False, readout_format=".2f")
+                         continuous_update=False, readout_format=".2f",
+                         layout=w.Layout(width="min(720px, 95%)", height="36px"),
+                         style={"description_width": "70px"})
 
 
 def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
@@ -523,7 +589,8 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
     **Save to shotfile** writes the three values (and ``ffprime_method =
     "q_li"``) into ``shotfile.py``. **Regenerate inputs** then prepares the run
     folder from the shotfile, as ``run_jorek shotfile.py`` does, without
-    submitting anything. If the equilibrium at ``step`` has q-profile and
+    submitting anything. A warning band says when the sliders are not saved,
+    or the input files were made for other values (tuner_status). If the equilibrium at ``step`` has q-profile and
     zeroD caches, what JOREK achieved is drawn next to what is requested.
     """
     w = _widgets()
@@ -550,8 +617,18 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
     save = w.Button(description="Save to shotfile", button_style="primary")
     regenerate = w.Button(description="Regenerate inputs")
     figure_out, log_out = w.Output(), w.Output()
+    status = w.HTML()
+
+    def refresh_status():
+        notes = tuner_status(run_dir, q0.value, li.value, q_edge.value)
+        status.value = "".join(
+            '<div style="background:#fff3cd;border-left:4px solid #d98a1f;color:#52514e;'
+            f'padding:6px 10px;margin:3px 0">&#9888; {html.escape(note)}</div>'
+            for note in notes
+        )
 
     def redraw(*_):
+        refresh_status()
         _show(figure_out, lambda: tuner_figure(
             q0.value, li.value, q_edge.value, geometry, achieved=achieved))
 
@@ -570,7 +647,8 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
                 print(f"not saved: {exc}")
                 return
             print(f"saved to {shotfile}: q0 = {q0.value:.4g}, l_i = {li.value:.4g}, "
-                  f"q_edge = {q_edge.value:.4g}. Regenerate inputs to update the run folder.")
+                  f"q_edge = {q_edge.value:.4g}.")
+        refresh_status()
 
     def on_regenerate(_):
         with log_out:
@@ -588,13 +666,15 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
             print(f"run folder prepared ({len(result.actions)} steps): j_prof.dat, "
                   "ffprime_prof.dat, T/rho profiles, boundary and namelists rewritten.\n"
                   "Next, in the run folder:  run_jorek shotfile.py --run_eq")
+        refresh_status()
 
     for slider in (q0, li, q_edge):
         slider.observe(redraw, names="value")
     save.on_click(on_save)
     regenerate.on_click(on_regenerate)
     redraw()
-    return w.VBox([w.HBox([q0, li, q_edge]), w.HBox([save, regenerate]), log_out, figure_out])
+    return w.VBox([w.VBox([q0, li, q_edge]), w.HBox([save, regenerate]), status, log_out,
+                   figure_out])
 
 
 def boundary_view(run_dir: Path | str = "."):

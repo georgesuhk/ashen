@@ -258,13 +258,24 @@ def test_profile_tuner_saves_and_regenerates(synthetic_campaign, tmp_path, symli
 
     box = viewer.profile_tuner(run, site=site)
     (q0, li, q_edge), (save, regenerate) = _tuner_children(box)
+    status = box.children[2]
     assert (q0.value, li.value, q_edge.value) == (1.1, 1.2, 3.0)
+    assert "have not been made" in status.value            # a new folder
 
     q0.value = 1.25
+    assert "not saved" in status.value
     save.click()
     assert load_shotfile(run / "shotfile.py").current_q0 == 1.25
+    assert "not saved" not in status.value and "Regenerate inputs" in status.value
 
     regenerate.click()
+    assert status.value == ""                              # all three agree
+    q0.value = 1.3
+    save.click()
+    assert "out of date" in status.value and "q0 = 1.25" in status.value
+    q0.value = 1.25
+    save.click()
+    assert status.value == ""
     j0 = 2.0 * (1 + 1.2**2) / (MU_0 * 1.5 * 1.2 * 1.25)
     assert np.loadtxt(run / "ffprime_prof.dat")[0, 1] == pytest.approx(-MU_0 * 1.5 * j0, rel=1e-6)
     assert "q0 = 1.25" in (run / "j_prof.dat").read_text()
@@ -288,3 +299,60 @@ def test_profile_tuner_does_not_save_an_unreachable_q0(synthetic_campaign, tmp_p
 
     assert (run / "shotfile.py").read_text() == SHOTFILE
     assert "not saved" in capsys.readouterr().out
+
+
+# --- tuner_status ------------------------------------------------------------------
+
+
+def _status_folder(tmp_path, *, method="q_li", generated=(1.1, 1.2, 3.0)):
+    run = tmp_path / "statusrun"
+    run.mkdir()
+    (run / "shotfile.py").write_text(SHOTFILE.replace('"q_li"', f'"{method}"'))
+    if generated is not None:
+        (run / "j_prof.dat").write_text(
+            "# made by run_jorek\n"
+            f"# requested: q0 = {generated[0]:g}, l_i = {generated[1]:g}, q_edge = {generated[2]:g}\n"
+            "0.0 1.0\n1.0 0.0\n"
+        )
+    return run
+
+
+def test_tuner_status_is_empty_when_everything_agrees(tmp_path):
+    assert viewer.tuner_status(_status_folder(tmp_path), 1.1, 1.2, 3.0) == []
+
+
+def test_tuner_status_unsaved_sliders(tmp_path):
+    notes = viewer.tuner_status(_status_folder(tmp_path), 1.1, 1.35, 3.0)
+    assert len(notes) == 1 and "not saved" in notes[0] and "l_i = 1.2" in notes[0]
+
+
+def test_tuner_status_saved_but_not_regenerated(tmp_path):
+    notes = viewer.tuner_status(_status_folder(tmp_path, generated=(0.9, 1.2, 3.0)), 1.1, 1.2, 3.0)
+    assert len(notes) == 1
+    assert "out of date" in notes[0] and "q0 = 0.9" in notes[0] and "q0 = 1.1" in notes[0]
+
+
+def test_tuner_status_both_at_once(tmp_path):
+    notes = viewer.tuner_status(_status_folder(tmp_path, generated=(0.9, 1.2, 3.0)), 1.4, 1.2, 3.0)
+    assert ["not saved" in notes[0], "out of date" in notes[1]] == [True, True]
+
+
+def test_tuner_status_inputs_never_generated(tmp_path):
+    notes = viewer.tuner_status(_status_folder(tmp_path, generated=None), 1.1, 1.2, 3.0)
+    assert len(notes) == 1 and "have not been made" in notes[0]
+
+
+def test_tuner_status_a_hand_made_j_prof_counts_as_not_generated(tmp_path):
+    run = _status_folder(tmp_path, generated=None)
+    (run / "j_prof.dat").write_text("0.0 1.0\n1.0 0.0\n")
+    assert "have not been made" in viewer.tuner_status(run, 1.1, 1.2, 3.0)[0]
+
+
+def test_tuner_status_other_ffprime_method(tmp_path):
+    run = tmp_path / "castorrun"
+    run.mkdir()
+    (run / "shotfile.py").write_text(
+        SHOTFILE.replace('ffprime_method = "q_li"', 'ffprime_method = "current"\ncurrent_file = "j.dat"')
+    )
+    notes = viewer.tuner_status(run, 1.1, 1.2, 3.0)
+    assert len(notes) == 1 and "ffprime_method = 'current'" in notes[0]
