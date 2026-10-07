@@ -38,7 +38,6 @@ from ashen.cases import Case
 from ashen.diagnostics.four_modes import (
     DELTA_B,
     DELTA_B_OVER_B,
-    delta_b_over_b_series,
     delta_b_series,
     max_amplitude_series,
 )
@@ -208,6 +207,16 @@ def _eta(ctx: QuantityContext) -> float | None:
     except (NamelistError, OSError, TypeError, ValueError) as exc:
         ctx.report(f"  {ctx.case.name}: no eta ({exc})")
         return None
+
+
+def toroidal_f0(case: Case, paths: RunPaths) -> float:
+    """F0 = R B_phi from the run's namelist; raises NamelistError/OSError/
+    ValueError if it is not there."""
+    return float(read_field(paths.run_dir / case.namelist, "F0", float))
+
+
+#: What delta_b needs beyond the four cache, for a "nothing came out" note.
+DELTA_B_NEEDS = "the q-profile and zeroD caches (analyse --diag four --diag zerod)"
 
 
 def _edge_q(ctx: QuantityContext) -> float | None:
@@ -436,21 +445,14 @@ def _delta_b_value(ctx: QuantityContext, *, variable: str, reduction: str) -> fl
         [(ctx.delta_b_mode[1], ctx.delta_b_mode[0])] if ctx.delta_b_mode is not None
         else ([(n, m) for m, n in case.modes] if case.modes else None)
     )
-    series = max_amplitude_series(paths, steps, variables=["Psi"], modes=modes_filter)
-    psi_only = {k: v for k, v in series.items() if k[0] == "Psi"}
-    if not psi_only:
-        ctx.report(
-            f"  {case.name}: no jorek2_four Psi cache found, skipped "
-            "(run analyse --diag four)"
-        )
-        return None
-
     try:
         r0 = r_axis(paths.log)
-    except LogfileError as exc:
+        f0 = toroidal_f0(case, paths)
+    except (LogfileError, NamelistError, OSError, TypeError, ValueError) as exc:
         ctx.report(f"  {case.name}: skipping ({exc})")
         return None
 
+    b_ref = None
     if variable == DELTA_B_OVER_B:
         b_ref = ctx.ensure_b_ref() if ctx.ensure_b_ref is not None else None
         if b_ref is None:
@@ -459,9 +461,19 @@ def _delta_b_value(ctx: QuantityContext, *, variable: str, reduction: str) -> fl
                 "at the plasma edge)"
             )
             return None
-        converted = delta_b_over_b_series(psi_only, r_axis=r0, b_ref=b_ref)
-    else:
-        converted = delta_b_series(psi_only, r_axis=r0)
+
+    converted = delta_b_series(
+        paths, steps, r_axis=r0, f0=f0, modes=modes_filter, b_ref=b_ref
+    )
+    if not converted:
+        ctx.report(
+            f"  {case.name}: no jorek2_four Psi cache found, skipped "
+            "(run analyse --diag four)"
+        )
+        return None
+    if all(np.all(np.isnan(v)) for v in converted.values()):
+        ctx.report(f"  {case.name}: {variable} needs {DELTA_B_NEEDS}, skipped")
+        return None
 
     if reduction == "max":
         value = _peak_of_variable(converted, variable)
@@ -504,11 +516,9 @@ def _mode_energy_fraction(ctx: QuantityContext, *, reduction: str) -> float | No
 
     Energy is taken proportional to delta_b^2 (Tesla^2, ashen.diagnostics.
     four_modes.delta_b_series) rather than the raw |Psi_mn| amplitude:
-    delta_b already carries each mode's own m/r_axis**2 scale factor, so
-    "3/2's energy relative to 2/1's" means what it says even though the two
-    modes don't share a scale factor. r_axis itself cancels in the ratio,
-    so this needs no b_ref (unlike delta_b_over_b) and never skips for
-    lacking one.
+    delta_b carries each mode's own m and the minor radius of the surface
+    it peaks on, so "3/2's energy relative to 2/1's" means what it says.
+    Needs no b_ref (unlike delta_b_over_b).
 
     reduction is "max" (the largest instantaneous ratio over the requested
     steps -- when is (3,2) most competitive with (2,1)) or
@@ -523,25 +533,28 @@ def _mode_energy_fraction(ctx: QuantityContext, *, reduction: str) -> float | No
 
     m32, n32 = _MODE_32
     m21, n21 = _MODE_21
-    series = max_amplitude_series(
-        paths, steps, variables=["Psi"], modes=[(n32, m32), (n21, m21)],
+    try:
+        r0 = r_axis(paths.log)
+        f0 = toroidal_f0(case, paths)
+    except (LogfileError, NamelistError, OSError, TypeError, ValueError) as exc:
+        ctx.report(f"  {case.name}: skipping ({exc})")
+        return None
+
+    series = delta_b_series(
+        paths, steps, r_axis=r0, f0=f0, modes=[(n32, m32), (n21, m21)],
     )
-    key32, key21 = ("Psi", n32, m32), ("Psi", n21, m21)
+    key32, key21 = (DELTA_B, n32, m32), (DELTA_B, n21, m21)
     if key32 not in series or key21 not in series:
         ctx.report(
             f"  {case.name}: no jorek2_four cache for mode (m={m32},n={n32}) or "
             f"(m={m21},n={n21}), skipped (run analyse --diag four)"
         )
         return None
-
-    try:
-        r0 = r_axis(paths.log)
-    except LogfileError as exc:
-        ctx.report(f"  {case.name}: skipping ({exc})")
+    db32, db21 = series[key32], series[key21]
+    if np.all(np.isnan(db32)) or np.all(np.isnan(db21)):
+        ctx.report(f"  {case.name}: mode energy fraction needs {DELTA_B_NEEDS}, skipped")
         return None
 
-    db32 = delta_b_series({key32: series[key32]}, r_axis=r0)[(DELTA_B, n32, m32)]
-    db21 = delta_b_series({key21: series[key21]}, r_axis=r0)[(DELTA_B, n21, m21)]
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = (db32**2) / (db21**2)
 
