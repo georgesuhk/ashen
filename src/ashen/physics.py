@@ -12,5 +12,9 @@ import math
 #: Elementary charge [C].
 E_CHARGE = 1.6e-19
 
+#: Elementary charge [C], exact. E_CHARGE above stays rounded because the
+#: CASTOR3D path's golden files were made with it.
+ELEMENTARY_CHARGE = 1.602176634e-19
+
 #: Vacuum permeability [H/m].
 MU_0 = 4 * math.pi * 1e-7

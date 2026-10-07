@@ -632,3 +632,136 @@ def test_prepare_run_skips_starwall_symlink_when_run_sw(
     run_dir_consuming = tmp_path / "rundir_main"
     prepare_run(params, site, run_dir_consuming, dry_run=False, run_sw=False)
     assert (run_dir_consuming / "starwall-response.dat").exists()
+
+
+# --- profiles and boundary without CASTOR3D -----------------------------------
+
+
+def _current_params(params, run_dir, **changes):
+    """synthetic_campaign's params with a current profile, flat T and a
+    boundary file in run_dir, and no CASTOR3D source at all."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    x = np.linspace(0, 1, 101)
+    np.savetxt(run_dir / "j_prof.dat", np.column_stack((x, 3.0e6 * (1 - x) ** 2)))
+    theta = np.linspace(0, 2 * np.pi, 120, endpoint=False)
+    np.savetxt(
+        run_dir / "bnd.dat",
+        np.column_stack((1.5 + 0.5 * np.cos(theta), 0.6 * np.sin(theta))),
+    )
+    fields = dict(
+        ffprime_method="current", T_method="const", bnd_method="file",
+        current_file="j_prof.dat", current_R0=1.5, T_const=100.0,
+        bnd_file="bnd.dat", bnd_file_is_plasma=True, castor_params=None,
+    )
+    return dataclasses.replace(params, **(fields | changes))
+
+
+def test_current_method_needs_no_castor(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    from ashen.physics import MU_0
+
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _current_params(params, run_dir)
+
+    result = prepare_run(params, site, run_dir)
+
+    assert result.real_psi_edge == pytest.approx(1 / params.extend_ratio)
+    ffprime = np.loadtxt(run_dir / "ffprime_prof.dat")
+    assert ffprime.shape == (200, 2)
+    assert ffprime[0, 0] == 0.0 and ffprime[-1, 0] == pytest.approx(1.0)
+    assert ffprime[0, 1] == pytest.approx(-MU_0 * 1.5 * 3.0e6)
+    # the plasma edge sits at real_psi_edge; beyond it, vacuum
+    assert np.all(ffprime[ffprime[:, 0] >= result.real_psi_edge, 1] == pytest.approx(0.0, abs=1e-12))
+    assert np.all(ffprime[:, 1] <= 1e-12)
+
+    # the profile JOREK reads is the one asked for, at the plasma's own psi_N
+    x = ffprime[:, 0] / result.real_psi_edge
+    inside = x <= 1
+    np.testing.assert_allclose(
+        ffprime[inside, 1], -MU_0 * 1.5 * 3.0e6 * (1 - x[inside]) ** 2, atol=2e-3 * MU_0 * 1.5 * 3.0e6
+    )
+
+    t_prof = np.loadtxt(run_dir / "T_prof.dat")
+    assert np.all(t_prof[:, 1] == pytest.approx(100.0 * 1.602176634e-19 * MU_0 * 1e18))
+
+
+def test_plasma_boundary_file_is_expanded(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _current_params(params, run_dir)
+
+    prepare_run(params, site, run_dir)
+
+    np.testing.assert_allclose(
+        np.loadtxt(run_dir / "original_bnd.dat"), np.loadtxt(run_dir / "bnd.dat")
+    )
+    text = (run_dir / "in_bnd").read_text()
+    assert text.splitlines()[0].strip() == "n_boundary = 50"
+    # outboard midplane: 1.5 + 0.5 * extend_ratio
+    assert f"{1.5 + 0.5 * params.extend_ratio:.2f}" in text
+    assert "psi_boundary(  1) = 0.00" in text
+
+
+def test_boundary_file_as_domain_is_used_as_given(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _current_params(params, run_dir, bnd_file_is_plasma=False, psi_bnd=0.25)
+
+    result = prepare_run(params, site, run_dir, dry_run=True)
+
+    assert any("in_bnd (120 points)" in a for a in result.actions)
+
+
+def test_no_extension_leaves_psi_n_alone(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _current_params(params, run_dir, extend_bnd=False)
+
+    result = prepare_run(params, site, run_dir, dry_run=True)
+
+    assert result.real_psi_edge == 1.0
+
+
+def test_current_on_r_over_a(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    """A flat j(r/a) is flat in psi_N too, whatever the mapping."""
+    from ashen.physics import MU_0
+
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _current_params(params, run_dir, current_coord="rho", extend_bnd=False)
+    x = np.linspace(0, 1, 51)
+    np.savetxt(run_dir / "j_prof.dat", np.column_stack((x, np.full_like(x, 2.0e6))))
+
+    prepare_run(params, site, run_dir)
+
+    ffprime = np.loadtxt(run_dir / "ffprime_prof.dat")
+    np.testing.assert_allclose(ffprime[:, 1], -MU_0 * 1.5 * 2.0e6, rtol=1e-12)
+
+
+def test_edge_current_into_vacuum_warns(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _current_params(params, run_dir)
+    x = np.linspace(0, 1, 51)
+    np.savetxt(run_dir / "j_prof.dat", np.column_stack((x, 2.0e6 - 1.0e6 * x)))
+
+    with pytest.warns(UserWarning, match="plasma edge"):
+        prepare_run(params, site, run_dir, dry_run=True)
+
+
+def test_bad_current_file_is_a_shotfile_error(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _current_params(params, run_dir)
+    np.savetxt(run_dir / "j_prof.dat", np.column_stack(([0.0, 0.5, 0.9], [2e6, 1e6, 0.0])))
+
+    with pytest.raises(ShotfileError, match="0 to 1"):
+        prepare_run(params, site, run_dir, dry_run=True)
+
+
+def test_current_method_fields_are_required(synthetic_campaign):
+    site, template_dir, params = synthetic_campaign
+    with pytest.raises(ShotfileError, match="current_file, current_R0"):
+        dataclasses.replace(params, ffprime_method="current")
+    with pytest.raises(ShotfileError, match="T_const"):
+        dataclasses.replace(params, T_method="const")

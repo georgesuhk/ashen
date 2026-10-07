@@ -4,6 +4,25 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: current profile and boundary from files, without CASTOR3D
+
+- `ffprime_method = "current"` reads `current_file` (x, j in A/m^2) and
+  writes JOREK's `FFprime = -mu_0 * current_R0 * j`. `current_coord` is
+  `"psi_n"` or `"rho"` (r/a, mapped as a circular cylinder).
+- `T_method = "const"` with `T_const` (Te + Ti in eV) gives a flat T.
+- `bnd_method = "file"` no longer needs a CASTOR3D psi. `bnd_file_is_plasma
+  = True` expands the file's boundary by `extend_ratio` and resamples it to
+  50 points. `psi_bnd` sets the boundary psi (default 0).
+- Without CASTOR3D the plasma edge is at `1/extend_ratio` of the extended
+  psi_N, and `FFprime` is 0 beyond it.
+- Runs that use CASTOR3D are prepared exactly as before.
+- The README section "Profiles and boundary without CASTOR3D" has the
+  conventions and the limits (j at `R = current_R0`; pressure-gradient
+  current left out).
+- Unverified: no JOREK equilibrium has been run from these files yet. The
+  sign and size were checked against JOREK's source, the wiki's
+  normalization page and an existing run's `ffprime_prof.dat`.
+
 ## 2026-10-06: repacking a trace's diagnostics faster
 
 Measured on a 10000-marker file in JOREK's layout (3.3 GB on disk, 660 MB

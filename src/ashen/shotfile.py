@@ -106,6 +106,24 @@ class ShotParams:
     bnd_file: str | None = None
     castor_params: dict | None = None
 
+    #: ffprime_method="current": a two-column file in the run folder, x and
+    #: j_phi at R = current_R0 [A/m^2]. current_coord says what x is:
+    #: "psi_n", or "rho" (r/a, mapped as a circular cylinder). See
+    #: ashen.current_profile.
+    current_file: str | None = None
+    current_coord: str = "psi_n"
+    current_R0: float | None = None
+
+    #: T_method="const": Te + Ti [eV], flat.
+    T_const: float | None = None
+
+    #: bnd_method="file": True means bnd_file is the plasma boundary, to be
+    #: expanded by extend_ratio like a CASTOR3D one when extend_bnd is on.
+    #: False (as before) uses bnd_file as the domain boundary as it stands.
+    bnd_file_is_plasma: bool = False
+    #: psi on the boundary when no CASTOR3D psi supplies it.
+    psi_bnd: float = 0.0
+
     # --- required only if with_refluid ---------------------------------
     re_initialize: int | None = None
     initial_re_current_fraction: float | None = None
@@ -133,6 +151,18 @@ class ShotParams:
             raise ShotfileError("rho_const is required when rho_method='const'")
         if self.bnd_method == "file" and self.bnd_file is None:
             raise ShotfileError("bnd_file is required when bnd_method='file'")
+        if self.ffprime_method == "current":
+            missing = [f for f in ("current_file", "current_R0") if getattr(self, f) is None]
+            if missing:
+                raise ShotfileError(
+                    "ffprime_method='current' requires: " + ", ".join(missing)
+                )
+            if self.current_coord not in ("psi_n", "rho"):
+                raise ShotfileError(
+                    f"current_coord={self.current_coord!r}; expected 'psi_n' or 'rho'"
+                )
+        if self.T_method == "const" and self.T_const is None:
+            raise ShotfileError("T_const is required when T_method='const'")
 
         if self.with_refluid:
             missing = [f for f in _RE_FIELDS if getattr(self, f) is None]
