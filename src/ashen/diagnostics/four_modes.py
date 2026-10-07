@@ -24,7 +24,7 @@ __all__ = [
     "RADIAL_QUANTITIES", "radial_values",
     "rational_surface_series",
     "DELTA_B", "DELTA_B_OVER_B", "delta_b_series",
-    "effective_minor_radius", "minor_radius_profile",
+    "edge_minor_radius", "effective_minor_radius", "minor_radius_profile",
     "GrowthFit", "fit_growth_rate", "growth_rate_series", "format_growth_rates",
 ]
 
@@ -289,6 +289,7 @@ def delta_b_series(
     modes: Sequence[tuple[int, int]] | None = None,
     b_ref: float | None = None,
     rational: bool = False,
+    edge: bool = False,
 ) -> dict[ModeKey, np.ndarray]:
     """Perturbed radial field of each Psi mode, one value per `steps` entry.
 
@@ -300,7 +301,10 @@ def delta_b_series(
     with r the surface's effective minor radius (effective_minor_radius).
     The value kept per step is the largest over the radial grid, or, with
     `rational`, the largest over the mode's q = m/n surfaces (as
-    rational_surface_series). Keys are (DELTA_B, n, m); with `b_ref` the
+    rational_surface_series). With `edge` it is the value at the outermost
+    point of the radial grid instead: the edge of JOREK's domain, which with
+    an extended boundary is in the vacuum outside the plasma, where a probe
+    would sit. Keys are (DELTA_B, n, m); with `b_ref` the
     values are divided by it and keyed (DELTA_B_OVER_B, n, m).
 
     Approximations: r_axis stands for R everywhere on the surface, and the
@@ -324,7 +328,9 @@ def delta_b_series(
             record = records.get(("Psi", n, m))
             if record is None or radius is None or not record.abs.size:
                 continue
-            if rational:
+            if edge:
+                at, amp = record.psi_n[-1:], record.abs[-1:]
+            elif rational:
                 psi_n_q, q = read_qprofile(paths.qprofile(step))
                 at = np.asarray(find_rational_surfaces(psi_n_q, q, m / n), dtype=float)
                 amp = np.interp(at, record.psi_n, record.abs)
@@ -340,6 +346,22 @@ def delta_b_series(
             values[i] = float(np.max(field)) / (b_ref if b_ref is not None else 1.0)
         series[(target, n, m)] = values
     return series
+
+
+def edge_minor_radius(
+    paths: RunPaths, steps: Sequence[int], *, f0: float, r_axis: float
+) -> float | None:
+    """The minor radius [m] delta_b_series(edge=True) evaluates at: the
+    outermost radial point of the four cache, at the first of `steps` that
+    has what it needs. None if no step does."""
+    for step in steps:
+        radius = minor_radius_profile(paths, step, f0=f0, r_axis=r_axis)
+        records = fc.read_cache(paths.four_cache(step))
+        psi_n = next((r.psi_n for k, r in records.items() if k[0] == "Psi" and r.psi_n.size), None)
+        if radius is None or psi_n is None:
+            continue
+        return float(np.sqrt(np.interp(psi_n[-1], radius[0], radius[1] ** 2)))
+    return None
 
 
 @dataclass(frozen=True)

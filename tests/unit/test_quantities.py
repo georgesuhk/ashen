@@ -779,3 +779,21 @@ def test_delta_b_max_without_the_radius_caches_is_reported(tmp_path):
     value = quantity("delta_b_max").extract(_ctx(_case(steps=[100]), paths, report=notes.append))
     assert value is None
     assert any("q-profile and zeroD" in n for n in notes)
+
+
+@pytest.mark.real_minor_radius
+def test_delta_b_max_at_the_domain_edge(tmp_path):
+    paths = _paths(tmp_path)
+    _write_log(paths, r_axis=2.0)
+    _write_namelist(paths, F0=4.0)
+    _write_qprofile(paths, 100, [0.0, 0.5, 1.0], [1.0, 1.0, 1.0])
+    _write_zerod(paths, 100, psi_axis=0.0, psi_bnd=1.0)
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_four_record("Psi", n=1, m=2, real_peak=3.0)],
+    )
+    notes = []
+    case = _case(steps=[100], four_delta_b_at="edge")
+    value = quantity("delta_b_max").extract(_ctx(case, paths, report=notes.append))
+    assert value == pytest.approx(2 * 0.05 / (2.0 * 1.0), rel=1e-6)
+    assert any("domain edge" in n for n in notes)

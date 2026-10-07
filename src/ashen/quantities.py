@@ -463,8 +463,11 @@ def _delta_b_value(ctx: QuantityContext, *, variable: str, reduction: str) -> fl
             return None
 
     converted = delta_b_series(
-        paths, steps, r_axis=r0, f0=f0, modes=modes_filter, b_ref=b_ref
+        paths, steps, r_axis=r0, f0=f0, modes=modes_filter, b_ref=b_ref,
+        edge=case.four_delta_b_at == "edge",
     )
+    if case.four_delta_b_at == "edge":
+        ctx.report(f"  {case.name}: {variable} taken at the domain edge (four_delta_b_at)")
     if not converted:
         ctx.report(
             f"  {case.name}: no jorek2_four Psi cache found, skipped "
@@ -542,7 +545,10 @@ def _mode_energy_fraction(ctx: QuantityContext, *, reduction: str) -> float | No
 
     series = delta_b_series(
         paths, steps, r_axis=r0, f0=f0, modes=[(n32, m32), (n21, m21)],
+        edge=case.four_delta_b_at == "edge",
     )
+    if case.four_delta_b_at == "edge":
+        ctx.report(f"  {case.name}: mode energies taken at the domain edge (four_delta_b_at)")
     key32, key21 = (DELTA_B, n32, m32), (DELTA_B, n21, m21)
     if key32 not in series or key21 not in series:
         ctx.report(

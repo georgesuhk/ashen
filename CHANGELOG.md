@@ -4,6 +4,25 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: `four_delta_b_at = "edge"`: delta_b at the domain edge
+
+- A case key. `"max"` (default) keeps the largest `delta_b` over the
+  radial grid. `"edge"` takes the value at the outermost radial point, the
+  edge of JOREK's domain: with `extend_bnd`, in the vacuum outside the
+  plasma, as a probe there would see it.
+- Figures: `four_dir/delta_b_edge_modes_step.png` and `_time.png`, labelled
+  with the radius. Also used by `delta_b_over_b`, `--compare ... --diag
+  four` and the `delta_b_*` scan-map quantities for that case.
+- On `qa3.3_g3.2/eta1e-3_adv0.1`, step 26000, at r = 0.447 m: 2/1 is
+  0.35 mT (8.2 mT at its peak inside), 3/1 is 0.80 mT.
+- The radius cannot be chosen. A fall-off law to reach further out was
+  tried and dropped: the fitted exponents in the run's vacuum region were
+  -3.8, -3.2 and -1.6 for m = 2, 3, 4, against -2, -3, -4 expected.
+- Caveat: the modes are straight-field-line harmonics. At the domain edge
+  one perturbation spreads over several `m` (here n = 1 is largest in
+  m = 3 to 7), which is not what a probe array would resolve.
+- Unverified: not compared with `jorek2_fields_xyz`, which is not built.
+
 ## 2026-10-07: `delta_b` divides by the surface's minor radius
 
 - `delta_b` was `(m / R_axis^2) |Psi_mn|`. The field of a flux
