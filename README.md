@@ -183,8 +183,12 @@ bnd_file   = "boundary1.dat"
 ffprime_method = "q_li"
 current_q0     = 1.05
 current_li     = 1.2
-current_q_edge = 3.3
+current_qa = 3.3
 ```
+
+`current_qa` is q at the plasma edge, the q_edge of the model below. (It was
+called `current_q_edge` at first; a shotfile with the old name is refused
+with a message naming the new one.)
 
 `run_jorek` builds the profile, writes it to `j_prof.dat` (psi_N, j in A/m^2,
 headed by how it was made) and converts it to `ffprime_prof.dat` as above.
@@ -333,7 +337,7 @@ command that makes it.
 | `viewer.profiles_view(RUN)` | a cached radial profile at every gathered step | the `profiles` caches |
 
 **The tuner's buttons.**
-- **Save to shotfile** writes `current_q0`, `current_li`, `current_q_edge`
+- **Save to shotfile** writes `current_q0`, `current_li`, `current_qa`
   and `ffprime_method = "q_li"` into `shotfile.py`
   (`set_shotfile_values`). A q0 outside the reachable window is not saved.
 - **Regenerate inputs** prepares the run folder from the shotfile, exactly

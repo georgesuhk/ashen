@@ -4,6 +4,18 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: `current_q_edge` renamed `current_qa`
+
+- The shotfile field for the edge q of a `"q_li"` profile is now
+  `current_qa`. A shotfile still using `current_q_edge` stops with
+  "current_q_edge is now current_qa".
+- The viewer's slider, warnings and figure title say `qa`, and so does the
+  `requested:` line of a new `j_prof.dat`. An older `j_prof.dat` (saying
+  `q_edge`) is still read.
+- Earlier entries below use the old name.
+- A demo campaign made before this has the old name in its shotfile:
+  delete `notebooks/demo_campaign/` and run the demo's first cell again.
+
 ## 2026-10-07: a campaign boundary in the template; STARWALL response named after it
 
 - `bnd_method = "template"`, `bnd_file = "boundary1.dat"`: the plasma

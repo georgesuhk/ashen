@@ -105,7 +105,7 @@ extend_bnd = True
 ffprime_method = "q_li"
 current_q0 = 1.05
 current_li = 1.2
-current_q_edge = 3.3
+current_qa = 3.3
 
 T_method = "const"
 T_const = 100.0
@@ -147,7 +147,7 @@ def _pretend_equilibrium(params, geometry: cur.PlasmaGeometry, extend_ratio: flo
     plasma for rho <= 1, vacuum (no current, q ~ rho^2) out to extend_ratio."""
     made = cur.current_from_q_li(
         params.current_q0 + _MISS[0], params.current_li + _MISS[1],
-        params.current_q_edge + _MISS[2], geometry,
+        params.current_qa + _MISS[2], geometry,
     )
     r = made.rho * geometry.a
     psi = np.concatenate(([0.0], np.cumsum(

@@ -334,10 +334,10 @@ def test_set_shotfile_values_appends_a_new_name(tmp_path):
     path = tmp_path / "shotfile.py"
     path.write_text(_SHOT)
 
-    set_shotfile_values(path, {"current_q_edge": 3.3, "ffprime_method": "q_li"})
+    set_shotfile_values(path, {"current_qa": 3.3, "ffprime_method": "q_li"})
 
     text = path.read_text()
-    assert text.endswith("\ncurrent_q_edge = 3.3\nffprime_method = 'q_li'\n")
+    assert text.endswith("\ncurrent_qa = 3.3\nffprime_method = 'q_li'\n")
     assert text.startswith(_SHOT)
 
 
@@ -366,9 +366,22 @@ def test_set_shotfile_values_result_still_loads(tmp_path):
         "exe = 'jorek_model600'\njobscript = '2h'\nffprime_method = 'q_li'\n"
         "T_method = 'const'\nT_const = 100.0\nrho_method = 'const'\nrho_const = 1e18\n"
         "bnd_method = 'file'\nbnd_file = 'b.dat'\n"
-        "current_q0 = 1.0\ncurrent_li = 1.2\ncurrent_q_edge = 3.0\n"
+        "current_q0 = 1.0\ncurrent_li = 1.2\ncurrent_qa = 3.0\n"
     )
 
     set_shotfile_values(path, {"current_q0": 1.25})
 
     assert load_shotfile(path).current_q0 == 1.25
+
+
+def test_the_old_name_of_current_qa_is_refused_with_the_new_one(tmp_path):
+    path = tmp_path / "shotfile.py"
+    path.write_text(
+        "qa = 2.1\ng = 2.3\neta = 1e-3\ntstep_n = [0.03]\nnstep_n = [10]\nnout = 1\n"
+        "exe = 'jorek_model600'\njobscript = '2h'\nffprime_method = 'q_li'\n"
+        "T_method = 'const'\nT_const = 100.0\nrho_method = 'const'\nrho_const = 1e18\n"
+        "bnd_method = 'file'\nbnd_file = 'b.dat'\n"
+        "current_q0 = 1.0\ncurrent_li = 1.2\ncurrent_q_edge = 3.0\n"
+    )
+    with pytest.raises(ShotfileError, match="current_q_edge is now current_qa"):
+        load_shotfile(path)

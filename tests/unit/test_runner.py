@@ -763,7 +763,7 @@ def test_current_method_fields_are_required(synthetic_campaign):
     site, template_dir, params = synthetic_campaign
     with pytest.raises(ShotfileError, match="current_file"):
         dataclasses.replace(params, ffprime_method="current")
-    with pytest.raises(ShotfileError, match="current_q0, current_li, current_q_edge"):
+    with pytest.raises(ShotfileError, match="current_q0, current_li, current_qa"):
         dataclasses.replace(params, ffprime_method="q_li")
     with pytest.raises(ShotfileError, match="T_const"):
         dataclasses.replace(params, T_method="const")
@@ -781,7 +781,7 @@ def _q_li_params(params, run_dir, template_dir, *, f0=3.0, **changes):
         in_eq.write_text(text.replace("&end", f" F0 = {f0}\n&end", 1))
     fields = dict(
         ffprime_method="q_li", current_file=None, current_R0=None,
-        current_q0=1.1, current_li=1.2, current_q_edge=3.0,
+        current_q0=1.1, current_li=1.2, current_qa=3.0,
         freeboundary=False,
     )
     return _current_params(params, run_dir, **(fields | changes))
@@ -805,7 +805,7 @@ def test_q_li_writes_the_profile_it_was_asked_for(synthetic_campaign, tmp_path, 
 
     # j_prof.dat records it, and reads back as a "current" profile
     text = (run_dir / "j_prof.dat").read_text()
-    assert "q0 = 1.1, l_i = 1.2, q_edge = 3" in text
+    assert "q0 = 1.1, l_i = 1.2, qa = 3" in text
     psi_n, j = cur.load_current_profile(run_dir / "j_prof.dat")
     assert j[0] == pytest.approx(j0, rel=1e-9) and j[-1] == 0.0
     assert psi_n[0] == 0.0 and psi_n[-1] == pytest.approx(1.0)
@@ -864,7 +864,7 @@ def test_q_li_with_castor_boundary_and_psi(synthetic_campaign, tmp_path):
     in_eq = template_dir / "copy" / "in_eq"
     in_eq.write_text(in_eq.read_text().replace("&end", " F0 = 3.0\n&end", 1))
     params = dataclasses.replace(
-        params, ffprime_method="q_li", current_q0=1.1, current_li=1.2, current_q_edge=3.0,
+        params, ffprime_method="q_li", current_q0=1.1, current_li=1.2, current_qa=3.0,
         freeboundary=False,
     )
 
