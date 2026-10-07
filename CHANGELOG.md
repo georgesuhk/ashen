@@ -4,6 +4,25 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: a notebook viewer for a case
+
+- `notebooks/case_viewer.ipynb`, backed by `ashen.viewer`. Five views of a
+  run folder: the q0/l_i/q_edge profile tuner, boundaries, equilibrium,
+  Fourier modes, radial profiles. Needs `ipywidgets` and `h5py`
+  (`pip install --user ipywidgets ipykernel h5py`; extra `viewer` in
+  `pyproject.toml`).
+- The tuner's **Save to shotfile** writes the three values and
+  `ffprime_method = "q_li"`; **Regenerate inputs** prepares the run folder
+  from the shotfile, as `run_jorek shotfile.py` does, and submits nothing.
+- It shows what JOREK's equilibrium achieved beside what was asked, when
+  the step's q-profile and zeroD caches exist.
+- Each view is also a function returning a matplotlib Figure.
+- Tried on `qa3.3_g3.2/eta1e-3_adv0.1`: all five views render. The model
+  given that run's own q0 = 0.93, l_i = 1.39, q_edge = 3.23 lies on
+  JOREK's q-profile, with Ip = 424 kA against JOREK's 438 kA.
+- Unverified: not opened in VS Code by hand, and not run over Remote SSH
+  on the HPC. The notebook was executed headless here.
+
 ## 2026-10-07: current profile from q0, l_i and q_edge
 
 - `ffprime_method = "q_li"` with `current_q0`, `current_li`,

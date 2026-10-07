@@ -23,6 +23,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7", "h5py>=3"]
+# ashen.viewer in a notebook (notebooks/case_viewer.ipynb)
+viewer = ["ipywidgets>=8", "ipykernel", "h5py>=3"]
 
 # No [project.scripts]: the shims in bin/ (run_jorek, analyse, plot, ptrace, util, timestep)
 # are the supported entry points and work from a bare clone without installing.
