@@ -419,3 +419,8 @@ def test_standalone_and_namelist_blocks_agree(tmp_path, namelist):
         if line.startswith("R_boundary")
     ]
     assert from_file == from_namelist
+
+
+def test_format_boundary_block_can_format_psi_separately():
+    block = format_boundary_block([1.234567891], [-0.5], [0.876], ".6f", ".2f")
+    assert block[1] == "R_boundary(  1) = 1.234568, Z_boundary(  1) = -0.500000, psi_boundary(  1) = 0.88"

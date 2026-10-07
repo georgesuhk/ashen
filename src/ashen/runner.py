@@ -66,6 +66,12 @@ __all__ = [
 #: Matches run_jorek.py:113's `bnd_points = 50`.
 BOUNDARY_POINTS = 50
 
+#: Format of the boundary's R and Z [m]. The old ".2f" rounded them to 1 cm,
+#: which put kinks of up to 1 cm between neighbouring points and into JOREK's
+#: grid. psi keeps ".2f": it is one constant, and stays what it was.
+BOUNDARY_RZ_FORMAT = ".6f"
+BOUNDARY_PSI_FORMAT = ".2f"
+
 #: Points each resampled profile (ffprime/T/rho) is written out at.
 #: Matches run_jorek.py:114's `n_prof_points = 200`.
 PROFILE_POINTS = 200
@@ -133,15 +139,15 @@ class _Disk:
         if not self.dry_run:
             nml.set_fields(paths, updates, create_missing=create_missing)
 
-    def set_boundary_block(self, path: Path, R, Z, psi, fmt: str) -> None:
+    def set_boundary_block(self, path: Path, R, Z, psi) -> None:
         self._log(f"set_boundary_block {path} ({len(R)} points)")
         if not self.dry_run:
-            nml.set_boundary_block(path, R, Z, psi, fmt)
+            nml.set_boundary_block(path, R, Z, psi, BOUNDARY_RZ_FORMAT, BOUNDARY_PSI_FORMAT)
 
     def write_boundary_file(self, path: Path, R, Z, psi) -> None:
         self._log(f"write_boundary_file {path} ({len(R)} points)")
         if not self.dry_run:
-            nml.write_boundary_file(path, R, Z, psi)
+            nml.write_boundary_file(path, R, Z, psi, BOUNDARY_RZ_FORMAT, BOUNDARY_PSI_FORMAT)
 
     def write_float(self, path: Path, value: float) -> None:
         self._log(f"write_float {path} = {value}")
@@ -446,7 +452,7 @@ def prepare_run(
     # Fix vs. legacy (see module docstring): boundary goes into every
     # namelist, not just in_eq.
     for target in paths.namelists:
-        disk.set_boundary_block(target, bnd[:, 0], bnd[:, 1], psi_bnd, ".2f")
+        disk.set_boundary_block(target, bnd[:, 0], bnd[:, 1], psi_bnd)
     disk.write_boundary_file(paths.in_bnd, bnd[:, 0], bnd[:, 1], psi_bnd)
 
     if params.extend_bnd:

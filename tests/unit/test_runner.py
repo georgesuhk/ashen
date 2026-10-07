@@ -632,3 +632,24 @@ def test_prepare_run_skips_starwall_symlink_when_run_sw(
     run_dir_consuming = tmp_path / "rundir_main"
     prepare_run(params, site, run_dir_consuming, dry_run=False, run_sw=False)
     assert (run_dir_consuming / "starwall-response.dat").exists()
+
+
+def test_boundary_points_are_not_rounded_to_centimetres(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    """R and Z keep 6 decimals; ".2f" used to put 1 cm kinks in the boundary."""
+    from ashen import boundary as bnd_mod
+    from ashen.namelist import read_boundary_points
+
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+
+    prepare_run(params, site, run_dir)
+
+    raw = np.loadtxt(run_dir / "original_bnd.dat")
+    R0, Z0 = bnd_mod.boundary_center(raw)
+    exact = bnd_mod.downsample_boundary(
+        bnd_mod.expand_boundary(raw, R0, Z0, scale=params.extend_ratio), 50
+    )
+    for name in ("in_bnd", "in_eq", "in_main", "in_main_r"):
+        written = np.array(read_boundary_points(run_dir / name))
+        np.testing.assert_allclose(written, exact, atol=5.1e-7)
+    assert "psi_boundary(  1) = " in (run_dir / "in_bnd").read_text()
