@@ -148,3 +148,32 @@ def test_current_from_q_li_elongation_raises_the_current():
     ellipse = cur.current_from_q_li(1.0, 1.2, 3.0, cur.PlasmaGeometry(1.5, 0.5, 1.6, 2.0))
     assert ellipse.j0 / circle.j0 == pytest.approx((1 + 1.6**2) / (2 * 1.6))
     np.testing.assert_allclose(ellipse.q, circle.q)
+
+
+# --- the cylinder picture of any FF' profile --------------------------------------------
+
+
+@pytest.mark.parametrize("q0, li, q_edge", [(1.05, 1.2, 3.3), (0.95, 1.26, 2.96), (1.6, 0.9, 3.3)])
+def test_profile_from_ffprime_returns_what_a_family_member_was_made_from(q0, li, q_edge):
+    g = cur.PlasmaGeometry(R0=1.4, a=0.36, kappa=1.1, B0=2.6)
+    made = cur.current_from_q_li(q0, li, q_edge, g)
+    back = cur.profile_from_ffprime(made.psi_n, cur.ffprime_from_current(made.j, g.R0), g)
+    assert (back.q[0], back.li, back.q[-1]) == pytest.approx((q0, li, q_edge), abs=1e-6)
+    assert back.Ip == pytest.approx(made.Ip, rel=1e-8) and back.j0 == pytest.approx(made.j0)
+    np.testing.assert_allclose(back.psi_n, made.psi_n, atol=1e-9)
+    assert back.alpha is None and back.nu is None
+
+
+def test_profile_from_ffprime_works_on_a_coarse_uneven_grid():
+    g = cur.PlasmaGeometry(R0=1.4, a=0.36, kappa=1.1, B0=2.6)
+    made = cur.current_from_q_li(1.05, 1.2, 3.3, g)
+    psi_n = np.linspace(0, 1, 200) ** 1.3
+    ffprime = cur.ffprime_from_current(np.interp(psi_n, made.psi_n, made.j), g.R0)
+    back = cur.profile_from_ffprime(psi_n, ffprime, g)
+    assert (back.q[0], back.li, back.q[-1]) == pytest.approx((1.05, 1.2, 3.3), rel=2e-3)
+
+
+def test_profile_from_ffprime_needs_current_on_axis():
+    g = cur.PlasmaGeometry(R0=1.4, a=0.36, kappa=1.1, B0=2.6)
+    with pytest.raises(ValueError, match="no current on axis"):
+        cur.profile_from_ffprime([0.0, 1.0], [0.0, 0.0], g)

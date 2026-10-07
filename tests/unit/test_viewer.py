@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -212,8 +214,11 @@ def test_views_build(run_dir):
 
 def test_views_say_when_there_is_nothing(tmp_path):
     w = pytest.importorskip("ipywidgets")
-    for build in (viewer.equilibrium_view, viewer.four_view, viewer.profiles_view):
-        assert isinstance(build(tmp_path), w.HTML)
+    assert isinstance(viewer.equilibrium_view(tmp_path), w.HTML)
+    for build, label in ((viewer.four_view, "four"), (viewer.profiles_view, "profiles")):
+        button, _, holder = build(tmp_path).children          # the gather button stays
+        assert button.description == f"Run analyse --diag {label}"
+        assert isinstance(holder.children[0], w.HTML)
 
 
 SHOTFILE = """qa = 2.1
@@ -502,3 +507,209 @@ def test_profile_tuner_reset_without_saved_values_says_so(synthetic_campaign, tm
 
     assert q0.value == 1.3
     assert "not reset" in capsys.readouterr().out
+
+
+# --- the folder's own FF' profile, whatever made it -------------------------------------
+
+
+def _folder_with_ffprime(tmp_path, q0=0.95, li=1.26, qa=2.96, real_psi_edge=1 / 1.2):
+    """A run folder holding only what input_profile reads: an ffprime_prof.dat
+    on the extended grid, as run_jorek writes it."""
+    run = tmp_path / "castorrun"
+    run.mkdir()
+    g = cur.PlasmaGeometry(1.5, 0.5, 1.2, 2.0)
+    made = cur.current_from_q_li(q0, li, qa, g)
+    x = np.linspace(0, 1, 200)
+    ffprime = np.where(
+        x <= real_psi_edge,
+        np.interp(x / real_psi_edge, made.psi_n, cur.ffprime_from_current(made.j, g.R0)), 0.0,
+    )
+    np.savetxt(run / "ffprime_prof.dat", np.column_stack((x, ffprime)))
+    write_float(run / "real_psi_edge.dat", real_psi_edge)
+    return run, g
+
+
+def test_input_profile_reads_the_plasma_part_of_ffprime_prof(tmp_path):
+    run, g = _folder_with_ffprime(tmp_path)
+    got = viewer.input_profile(run, g)
+    assert (got.q[0], got.li, got.q[-1]) == pytest.approx((0.95, 1.26, 2.96), rel=5e-3)
+    assert viewer.input_profile(tmp_path, g) is None                 # no file
+
+
+def test_tuner_figure_draws_the_folder_s_profile_on_all_three_panels(tmp_path):
+    run, g = _folder_with_ffprime(tmp_path)
+    inputs = viewer.input_profile(run, g)
+    fig = viewer.tuner_figure(1.2, 1.1, 3.4, g, inputs=inputs, inputs_label="ffprime_prof.dat (castor)")
+    assert [len(ax.lines) for ax in fig.axes] == [2, 2, 2]
+    title = fig._suptitle.get_text()
+    assert "ffprime_prof.dat (castor):  q0 = 0.9" in title and "(cylinder estimate)" in title
+
+    # the sliders outside the window: the folder's profile is still drawn
+    fig = viewer.tuner_figure(0.2, 1.2, 3.0, g, inputs=inputs)
+    assert [len(ax.lines) for ax in fig.axes] == [1, 1, 1]
+
+
+def test_profile_tuner_on_a_castor_shotfile_shows_and_starts_from_its_profile(
+    synthetic_campaign, tmp_path, monkeypatch
+):
+    pytest.importorskip("ipywidgets")
+    site, template_dir, params = synthetic_campaign
+    run, g = _folder_with_ffprime(tmp_path)
+    np.savetxt(run / "original_bnd.dat", _ellipse())
+    (run / "in_eq").write_text(" &in1\n F0 = 3.0\n&end\n")
+    (run / "shotfile.py").write_text(
+        "qa = 2.1\ng = 2.3\neta = 1e-3\ntstep_n = [0.03]\nnstep_n = [10]\nnout = 1\n"
+        "exe = 'jorek_test_exe'\njobscript = '23h'\nrho_const = 1e18\n"
+        "ffprime_method = 'castor'\nT_method = 'castor'\nrho_method = 'const'\nbnd_method = 'castor'\n"
+        f"castor_suffix = 'TEST'\ncastor_params = {params.castor_params!r}\n"
+    )
+    drawn = []
+    original = viewer.tuner_figure
+    monkeypatch.setattr(viewer, "tuner_figure",
+                        lambda *a, **k: (drawn.append(k), original(*a, **k))[1])
+
+    box = viewer.profile_tuner(run, site=site)
+
+    (q0, li, qa), _ = _tuner_children(box)
+    assert (q0.value, li.value, qa.value) == pytest.approx((0.95, 1.26, 2.95), abs=0.02)
+    assert drawn[-1]["inputs"] is not None
+    assert drawn[-1]["inputs_label"] == "ffprime_prof.dat (castor)"
+    assert "ffprime_method = &#x27;castor&#x27;" in box.children[2].value     # the existing warning
+
+
+# --- gathering from the viewer ---------------------------------------------------------
+
+
+def _campaign_with_case(tmp_path, listed=True):
+    root = tmp_path / "camp"
+    run = root / "qa2.1_li1.0_q01.0" / "eta1e-3"
+    run.mkdir(parents=True)
+    (root / "cases.toml").write_text(
+        '[cases."qa2.1_li1.0_q01.0/eta1e-3"]\nsteps = { first_last = true }\n' if listed
+        else '[cases."something/else"]\nsteps = [1]\n'
+    )
+    return root, run
+
+
+def test_analyse_command_names_the_case_by_its_path_below_cases_toml(tmp_path):
+    root, run = _campaign_with_case(tmp_path)
+    command, cwd = viewer.analyse_command(run, ["four", "zerod"])
+    assert cwd == root
+    assert command[command.index("--case") + 1] == "qa2.1_li1.0_q01.0/eta1e-3"
+    assert command[command.index("--cases") + 1] == str(root / "cases.toml")
+    assert command[-4:] == ["--diag", "four", "--diag", "zerod"]
+
+
+def test_analyse_command_gives_the_lines_to_add_for_an_unlisted_run(tmp_path):
+    from ashen.shotfile import ShotfileError
+
+    root, run = _campaign_with_case(tmp_path, listed=False)
+    with pytest.raises(ShotfileError) as excinfo:
+        viewer.analyse_command(run, ["four"])
+    assert '[cases."qa2.1_li1.0_q01.0/eta1e-3"]' in str(excinfo.value)
+    assert "first_last" in str(excinfo.value)
+    with pytest.raises(ShotfileError, match="no cases.toml above"):
+        viewer.analyse_command(tmp_path, ["four"])
+
+
+def test_run_analyse_really_runs_analyse_for_this_case(tmp_path, capfd):
+    """A real subprocess: the run has no restarts, so analyse has nothing to
+    do, but it must start, find the case and say so."""
+    root, run = _campaign_with_case(tmp_path)
+    status = viewer.run_analyse(run, ["zerod"])
+    out = capfd.readouterr().out
+    assert isinstance(status, int)
+    assert "analyse --case qa2.1_li1.0_q01.0/eta1e-3 --diag zerod" in out
+    assert "qa2.1_li1.0_q01.0/eta1e-3" in out.split("\n", 1)[1]        # analyse's own output
+    assert "ModuleNotFoundError" not in out and "Traceback" not in out
+
+
+def test_four_view_button_gathers_then_shows_the_view(run_dir, monkeypatch):
+    w = pytest.importorskip("ipywidgets")
+    paths = RunPaths(run_dir, pad_width=6)
+    kept = {step: fc.read_cache(paths.four_cache(step)) for step in (0, 100)}
+    for step in (0, 100):
+        paths.four_cache(step).unlink()
+    asked = []
+
+    def fake_analyse(folder, diags):
+        asked.append((Path(folder), diags))
+        for step, records in kept.items():
+            fc.write_cache(paths.four_cache(step), step=step, pad_width=6, records=list(records.values()))
+        return 0
+
+    monkeypatch.setattr(viewer, "run_analyse", fake_analyse)
+    button, _, holder = viewer.four_view(run_dir).children
+    assert isinstance(holder.children[0], w.HTML)
+
+    button.click()
+
+    assert asked == [(run_dir, ["four"])]
+    assert isinstance(holder.children[0], w.VBox) and not button.disabled
+
+
+def test_gather_button_reports_a_failure_and_keeps_the_view(run_dir, monkeypatch, capsys):
+    pytest.importorskip("ipywidgets")
+
+    def broken(folder, diags):
+        raise RuntimeError("jorek2_four is not in this folder")
+
+    monkeypatch.setattr(viewer, "run_analyse", broken)
+    button, _, holder = viewer.profiles_view(run_dir).children
+    button.click()
+    assert "jorek2_four is not in this folder" in capsys.readouterr().out
+    assert holder.children and not button.disabled
+
+
+def test_gather_step_caches_runs_only_what_is_missing(run_dir, monkeypatch):
+    import ashen.diagnostics.qprofile as qprofile_mod
+    import ashen.jorek2 as jorek2_mod
+
+    calls = []
+    monkeypatch.setattr(qprofile_mod, "run_qprofile_step", lambda run, step, paths: calls.append(("q", step)))
+    monkeypatch.setattr(jorek2_mod, "run_zero_d", lambda run, step, paths: calls.append(("zeroD", step)))
+
+    assert viewer.gather_step_caches(run_dir, 0) == [
+        "q-profile of step 0: already there", "zeroD of step 0: already there"
+    ]
+    RunPaths(run_dir, pad_width=6).qprofile(100).unlink()
+    notes = viewer.gather_step_caches(run_dir, 100)
+    assert calls == [("q", 100)]
+    assert notes == ["q-profile of step 100: gathered", "zeroD of step 100: already there"]
+
+
+def test_gather_step_caches_reports_a_failing_tool(run_dir, monkeypatch):
+    import ashen.diagnostics.qprofile as qprofile_mod
+
+    def no_exe(run, step, paths):
+        raise FileNotFoundError("jorek2_postproc")
+
+    monkeypatch.setattr(qprofile_mod, "run_qprofile_step", no_exe)
+    RunPaths(run_dir, pad_width=6).qprofile(100).unlink()
+    notes = viewer.gather_step_caches(run_dir, 100)
+    assert "failed (FileNotFoundError: jorek2_postproc)" in notes[0]
+
+
+def test_tuner_gather_button_brings_in_what_jorek_achieved(run_dir, monkeypatch):
+    pytest.importorskip("ipywidgets")
+    paths = RunPaths(run_dir, pad_width=6)
+    q_text = paths.qprofile(0).read_text()
+    paths.qprofile(0).unlink()
+    (run_dir / "shotfile.py").write_text(
+        SHOTFILE.replace('bnd_file = "bnd.dat"', 'bnd_file = "original_bnd.dat"')
+    )
+    drawn = []
+    original = viewer.tuner_figure
+    monkeypatch.setattr(viewer, "tuner_figure",
+                        lambda *a, **k: (drawn.append(k.get("achieved")), original(*a, **k))[1])
+    monkeypatch.setattr(viewer, "gather_step_caches",
+                        lambda folder, step: (paths.qprofile(step).write_text(q_text), ["gathered"])[1])
+
+    box = viewer.profile_tuner(run_dir, step=0)
+    assert drawn[-1] is None
+    gather = box.children[1].children[3]
+    assert gather.description == "Gather JOREK's q-profile (step 0)"
+
+    gather.click()
+
+    assert drawn[-1] is not None and drawn[-1].q0 == pytest.approx(1.0 + 2.5 * 0.01, abs=1e-6)

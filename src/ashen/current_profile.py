@@ -53,6 +53,7 @@ __all__ = [
     "ffprime_from_current",
     "load_current_profile",
     "load_temperature_profile",
+    "profile_from_ffprime",
     "psi_n_from_rho",
     "resample_monotone",
     "temperature_to_jorek",
@@ -280,8 +281,8 @@ class QLiProfile:
     psi_n: np.ndarray   #: psi_N at each rho (circular cylinder)
     j: np.ndarray       #: j_phi at R = R0 [A/m^2]
     q: np.ndarray       #: the cylinder's q at each rho
-    alpha: float
-    nu: float
+    alpha: float | None  #: None for a profile that is not of the family
+    nu: float | None
     li: float           #: l_i of the profile as built
     j0: float           #: j on axis [A/m^2]
     Ip: float           #: total current [A], for an ellipse of this a, kappa
@@ -306,4 +307,47 @@ def current_from_q_li(q0: float, li: float, q_edge: float, geometry: PlasmaGeome
         rho=rho, psi_n=psi_n_from_rho(rho, j), j=j, q=q_edge * q_norm,
         alpha=alpha, nu=nu, li=li_built, j0=float(j0),
         Ip=float(mean_j * np.pi * g.a**2 * g.kappa),
+    )
+
+
+def profile_from_ffprime(psi_n, ffprime, geometry: PlasmaGeometry) -> QLiProfile:
+    """The cylinder picture of an FF' profile JOREK reads: j, q and l_i.
+
+    The inverse of the "q_li" route, for looking at a profile that came from
+    elsewhere (CASTOR3D, a file). ``psi_n`` is the plasma's own psi_N (0 at
+    the axis, 1 at its edge) and ``ffprime`` JOREK's FFprime there.
+
+    j = -FFprime / (mu_0 R0). r/a is found from psi_N the way psi_n_from_rho
+    goes the other way (dpsi/drho ~ I / rho), by iterating to consistency. q
+    then follows from q0 = B0 (1 + kappa^2) / (mu_0 R0 kappa j0), as in
+    current_from_q_li. Same limits: a cylinder with elongation, no pressure
+    gradient current. A profile of the q0/l_i/qa family comes back with the
+    q0, l_i and qa it was made from.
+    """
+    psi_n = np.asarray(psi_n, dtype=float)
+    j_of_psi = current_from_ffprime(ffprime, geometry.R0)
+    if j_of_psi[0] <= 0:
+        raise ValueError("the profile carries no current on axis in the direction expected")
+    rho = _RHO
+    psi_of_rho = rho**2
+    for _ in range(200):
+        j = np.interp(psi_of_rho, psi_n, j_of_psi)
+        updated = psi_n_from_rho(rho, j)
+        change = np.max(np.abs(updated - psi_of_rho))
+        psi_of_rho = updated
+        if change < 1e-12:
+            break
+    j = np.interp(psi_of_rho, psi_n, j_of_psi)
+    enclosed = _cumtrapz(j * rho, rho)
+    g = geometry
+    q0 = g.B0 * (1.0 + g.kappa**2) / (MU_0 * g.R0 * g.kappa * j[0])
+    q = np.empty_like(rho)
+    q[1:] = q0 * j[0] * rho[1:] ** 2 / (2.0 * enclosed[1:])
+    q[0] = q0
+    weight = np.zeros_like(rho)
+    weight[1:] = enclosed[1:] ** 2 / rho[1:]
+    li = 2.0 * _cumtrapz(weight, rho)[-1] / enclosed[-1] ** 2
+    return QLiProfile(
+        rho=rho, psi_n=psi_of_rho, j=j, q=q, alpha=None, nu=None, li=float(li),
+        j0=float(j[0]), Ip=float(2.0 * enclosed[-1] * np.pi * g.a**2 * g.kappa),
     )

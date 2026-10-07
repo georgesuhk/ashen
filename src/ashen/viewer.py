@@ -6,8 +6,9 @@ files already in the run folder, plus a thin ipywidgets wrapper around it
 ``profiles_view``). The figure functions need neither a notebook nor
 ipywidgets; the wrappers import ipywidgets when called.
 
-Nothing here runs a ``jorek2_*`` tool. A missing cache is reported with the
-command that makes it.
+Drawing never runs a ``jorek2_*`` tool. Gathering is done only by the
+views' own buttons: ``run_analyse`` (analyse for this run) and
+``gather_step_caches`` (one step's q-profile and zeroD).
 
 The equilibrium view contours psi on the grid nodes, not on JOREK's Bezier
 elements: good for looking, not for measuring.
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import html
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +38,7 @@ from ashen.physics import MU_0
 from ashen.shotfile import ShotfileError, load_shotfile, set_shotfile_values
 
 __all__ = [
+    "analyse_command",
     "boundary_figure",
     "boundary_view",
     "case_boundaries",
@@ -45,13 +48,16 @@ __all__ = [
     "four_figure",
     "four_steps",
     "four_view",
+    "gather_step_caches",
     "grid_boundary",
+    "input_profile",
     "plasma_geometry",
     "profile_tuner",
     "profiles_available",
     "profiles_figure",
     "profiles_view",
     "restart_nodes",
+    "run_analyse",
     "starwall_wall",
     "tuner_figure",
     "tuner_status",
@@ -169,6 +175,25 @@ def _f0(run_dir: Path, site=None) -> float:
     raise ShotfileError(
         f"F0 not found in {' or '.join(str(p) for p in candidates)}"
     )
+
+
+def input_profile(run_dir: Path | str, geometry: cur.PlasmaGeometry) -> cur.QLiProfile | None:
+    """The cylinder picture (j, q, l_i) of the FF' profile the run folder
+    holds now, ``ffprime_prof.dat``, whatever made it: CASTOR3D, a current
+    file or q0/l_i/qa. None if there is no such file, or it carries no
+    current. See current_profile.profile_from_ffprime for what the picture
+    leaves out."""
+    run_dir = Path(run_dir)
+    path = run_dir / "ffprime_prof.dat"
+    if not path.is_file():
+        return None
+    try:
+        data = np.loadtxt(path)
+        edge = _real_psi_edge(_paths(run_dir))
+        plasma = data[:, 0] <= edge * (1.0 + 1e-9)
+        return cur.profile_from_ffprime(data[plasma, 0] / edge, data[plasma, 1], geometry)
+    except (ValueError, IndexError, OSError):
+        return None
 
 
 def _find_site(run_dir: Path):
@@ -307,6 +332,96 @@ def tuner_status(run_dir: Path | str, q0: float, li: float, q_edge: float) -> li
     return warnings
 
 
+# --- gathering what a view needs -------------------------------------------------
+
+
+def analyse_command(run_dir: Path | str, diags: list[str]) -> tuple[list[str], Path]:
+    """(command, folder to run it in) for ``analyse --case <this run> --diag ...``.
+
+    The campaign's cases.toml is the nearest one above the run folder, and
+    the case is the run folder's path below it. Raises ShotfileError, with
+    the lines to add, if there is no cases.toml or the run is not in it.
+    """
+    run_dir = Path(run_dir).resolve()
+    root = next((f for f in run_dir.parents if (f / "cases.toml").is_file()), None)
+    if root is None:
+        raise ShotfileError(
+            f"no cases.toml above {run_dir}: analyse needs one in the campaign folder"
+        )
+    name = run_dir.relative_to(root).as_posix()
+    import tomllib
+
+    try:
+        listed = tomllib.loads((root / "cases.toml").read_text(encoding="utf-8")).get("cases", {})
+    except tomllib.TOMLDecodeError as exc:
+        raise ShotfileError(f"{root / 'cases.toml'}: not valid TOML ({exc})") from exc
+    if name not in listed:
+        raise ShotfileError(
+            f"{root / 'cases.toml'} has no entry for this run. Add:\n\n"
+            f'[cases."{name}"]\nsteps = {{ first_last = true }}\n'
+        )
+    command = [
+        sys.executable, "-c",
+        "import sys; from ashen.cli.analyse import main; sys.exit(main())",
+        "--cases", str(root / "cases.toml"), "--case", name,
+    ]
+    for diag in diags:
+        command += ["--diag", diag]
+    return command, root
+
+
+def run_analyse(run_dir: Path | str, diags: list[str]) -> int:
+    """Run ``analyse`` for this run and print its output as it comes.
+
+    This is the one place the viewer starts JOREK's tools: it runs in the
+    notebook's process until analyse is done, which for ``four`` or
+    ``poincare`` over many steps is long. Returns analyse's exit status.
+    """
+    import os
+    import subprocess
+
+    command, root = analyse_command(run_dir, diags)
+    env = dict(os.environ)
+    src = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = src + os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else src
+    print(f"in {root}:  analyse --case {command[command.index('--case') + 1]} "
+          + " ".join(f"--diag {d}" for d in diags), flush=True)
+    process = subprocess.Popen(
+        command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    for line in process.stdout:
+        print(line, end="", flush=True)
+    return process.wait()
+
+
+def gather_step_caches(run_dir: Path | str, step: int) -> list[str]:
+    """Gather the q-profile and zeroD of one step with jorek2_postproc, if
+    missing: what the tuner's "JOREK:" line and the equilibrium view's q
+    need. Two short calls; no cases.toml entry needed. Returns notes on what
+    was done."""
+    from ashen.diagnostics.qprofile import run_qprofile_step
+    from ashen.jorek2 import Jorek2Run, run_zero_d
+    from ashen.postproc import zero_d_is_usable
+
+    paths = _paths(run_dir)
+    run = Jorek2Run(run_dir=paths.run_dir, exe_dir=paths.run_dir,
+                    namelist=paths.run_dir / "in_main", pad_width=paths.pad_width)
+    notes = []
+    for label, have, gather in (
+        ("q-profile", paths.qprofile(step).is_file(), lambda: run_qprofile_step(run, step, paths)),
+        ("zeroD", zero_d_is_usable(paths.zero_d(step)), lambda: run_zero_d(run, step, paths)),
+    ):
+        if have:
+            notes.append(f"{label} of step {step}: already there")
+            continue
+        try:
+            gather()
+            notes.append(f"{label} of step {step}: gathered")
+        except Exception as exc:  # report, and still try the other
+            notes.append(f"{label} of step {step}: failed ({type(exc).__name__}: {exc})")
+    return notes
+
+
 # --- figures -------------------------------------------------------------------
 
 
@@ -332,10 +447,16 @@ def tuner_figure(
     geometry: cur.PlasmaGeometry,
     *,
     achieved: AchievedQLi | None = None,
+    inputs: cur.QLiProfile | None = None,
+    inputs_label: str = "ffprime_prof.dat",
 ):
     """j, q and FF' of the q0/l_i/q_edge profile; JOREK's q overlaid if given.
 
-    Outside the family's q0 window nothing is drawn but the message.
+    ``inputs`` is the profile the run folder's ffprime_prof.dat holds now
+    (input_profile), drawn in dark grey on all three panels: with
+    ffprime_method="castor" that is the CASTOR3D profile, and it is what the
+    sliders' profile can be laid over. Outside the family's q0 window the
+    sliders' profile is not drawn, only the message.
     """
     plt = _plt()
     fig, (ax_j, ax_q, ax_f) = plt.subplots(1, 3, figsize=(14, 4.2))
@@ -353,6 +474,19 @@ def tuner_figure(
         ax_j.plot(made.rho, made.j / 1e6, color=_BLUE, lw=2)
         ax_q.plot(made.rho, made.q, color=_BLUE, lw=2, label="requested (cylinder)")
         ax_f.plot(made.psi_n, cur.ffprime_from_current(made.j, geometry.R0), color=_BLUE, lw=2)
+    if inputs is not None:
+        # a broad grey line underneath, so the sliders' profile shows on top of it
+        under = dict(color=_GREY, lw=4.5, alpha=0.75, zorder=1, solid_capstyle="round")
+        ax_j.plot(inputs.rho, inputs.j / 1e6, label=inputs_label, **under)
+        ax_q.plot(inputs.rho, inputs.q, label=f"{inputs_label} (cylinder)", **under)
+        ax_f.plot(inputs.psi_n, cur.ffprime_from_current(inputs.j, geometry.R0),
+                  label=inputs_label, **under)
+        ax_j.legend(frameon=False, labelcolor=_INK, loc="upper right")
+        message += (
+            f"\n{inputs_label}:  q0 = {inputs.q[0]:.3f}   l_i = {inputs.li:.3f}   "
+            f"qa = {inputs.q[-1]:.3f}   |   j0 = {inputs.j0 / 1e6:.2f} MA/m²   "
+            f"Ip = {inputs.Ip / 1e3:.0f} kA   (cylinder estimate)"
+        )
     if achieved is not None:
         inside = achieved.r <= achieved.a * 1.0001
         ax_q.plot(
@@ -366,7 +500,7 @@ def tuner_figure(
         whole = [f"{k} = {achieved.zero_d[k]:.3f}" for k in ("li3", "q95") if k in achieved.zero_d]
         if whole:
             message += "   |   whole domain: " + ", ".join(whole)
-    if made is not None or achieved is not None:
+    if made is not None or achieved is not None or inputs is not None:
         ax_q.legend(frameon=False, labelcolor=_INK, loc="upper left")
 
     _style(ax_j, "r / a", "j [MA/m²]", "Current density at R0")
@@ -377,7 +511,8 @@ def tuner_figure(
         ax.set_ylim(bottom=0)
     ax_f.set_xlim(0, 1)
     fig.suptitle(message, x=0.01, ha="left", fontsize=10.5)
-    fig.tight_layout(rect=(0, 0, 1, 0.9 if achieved is not None else 0.94))
+    lines = message.count("\n") + 1
+    fig.tight_layout(rect=(0, 0, 1, 0.99 - 0.05 * lines))
     return fig
 
 
@@ -616,6 +751,30 @@ def _show(out, make_figure) -> None:
         plt.close(fig)
 
 
+def _gathering(w, label: str, action, build):
+    """``build()``'s view under a button that runs ``action()`` (printing
+    into a log) and then builds the view again from what is now on disk."""
+    button = w.Button(description=label, layout=w.Layout(width="auto"),
+                      tooltip="Runs in this notebook until it is done")
+    log, holder = w.Output(), w.VBox([build()])
+
+    def on_click(_):
+        button.disabled = True
+        try:
+            with log:
+                log.clear_output()
+                try:
+                    action()
+                except Exception as exc:
+                    print(f"{type(exc).__name__}: {exc}")
+            holder.children = (build(),)
+        finally:
+            button.disabled = False
+
+    button.on_click(on_click)
+    return w.VBox([button, log, holder])
+
+
 def _slider(w, value, lo, hi, step, name):
     # One per row at a comfortable width: three abreast leaves each too short
     # to set a value to two decimals with the mouse.
@@ -650,10 +809,21 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
     except Exception:
         achieved = None
 
+    def current_inputs():
+        made = input_profile(run_dir, geometry)
+        try:
+            method = load_shotfile(shotfile).ffprime_method
+        except ShotfileError:
+            method = params.ffprime_method
+        return made, f"ffprime_prof.dat ({method})"
+
+    # Without saved values the sliders start on the profile the folder has,
+    # so a "castor" run opens with the model lying near its own profile.
+    have, _ = current_inputs()
     start = (
-        params.current_q0 or (achieved.q0 if achieved else 1.0),
-        params.current_li or (achieved.li if achieved else 1.2),
-        params.current_qa or (achieved.q_edge if achieved else 3.0),
+        params.current_q0 or (have.q[0] if have else achieved.q0 if achieved else 1.0),
+        params.current_li or (have.li if have else achieved.li if achieved else 1.2),
+        params.current_qa or (have.q[-1] if have else achieved.q_edge if achieved else 3.0),
     )
     q0 = _slider(w, start[0], 0.3, 4.0, 0.01, "q0")
     li = _slider(w, start[1], 0.55, 2.5, 0.01, "l_i")
@@ -661,6 +831,10 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
     save = w.Button(description="Save to shotfile", button_style="primary")
     regenerate = w.Button(description="Regenerate inputs")
     reset = w.Button(description="Reset to shotfile", tooltip="Put the sliders back to shotfile.py's values")
+    gather = w.Button(description=f"Gather JOREK's q-profile (step {step})",
+                      layout=w.Layout(width="auto"),
+                      tooltip="q-profile and zeroD of that step, for the JOREK: line")
+    state = {"achieved": achieved}
     figure_out, log_out = w.Output(), w.Output()
     status = w.HTML()
 
@@ -680,8 +854,10 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
 
     def redraw(*_):
         refresh_status()
+        inputs, label = current_inputs()
         _show(figure_out, lambda: tuner_figure(
-            q0.value, li.value, q_edge.value, geometry, achieved=achieved))
+            q0.value, li.value, q_edge.value, geometry, achieved=state["achieved"],
+            inputs=inputs, inputs_label=label))
 
     def on_save(_):
         with log_out:
@@ -717,7 +893,7 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
             print(f"run folder prepared ({len(result.actions)} steps): j_prof.dat, "
                   "ffprime_prof.dat, T/rho profiles, boundary and namelists rewritten.\n"
                   "Next, in the run folder:  run_jorek shotfile.py --run_eq")
-        refresh_status()
+        redraw()
 
     def on_reset(_):
         with log_out:
@@ -739,13 +915,24 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
                   f"qa = {saved[2]:g}")
         refresh_status()
 
+    def on_gather(_):
+        with log_out:
+            log_out.clear_output()
+            print("\n".join(gather_step_caches(run_dir, step)))
+            try:
+                state["achieved"] = achieved_q_li(_paths(run_dir), step, f0=geometry.B0 * geometry.R0)
+            except Exception as exc:
+                print(f"could not read them back: {type(exc).__name__}: {exc}")
+        redraw()
+
     for slider in (q0, li, q_edge):
         slider.observe(redraw, names="value")
     save.on_click(on_save)
     regenerate.on_click(on_regenerate)
     reset.on_click(on_reset)
+    gather.on_click(on_gather)
     redraw()
-    return w.VBox([w.VBox([q0, li, q_edge]), w.HBox([save, regenerate, reset]), status, log_out,
+    return w.VBox([w.VBox([q0, li, q_edge]), w.HBox([save, regenerate, reset, gather]), status, log_out,
                    figure_out])
 
 
@@ -765,64 +952,88 @@ def equilibrium_view(run_dir: Path | str = "."):
         return w.HTML(f"no restart files in {Path(run_dir).resolve()}")
     step = w.SelectionSlider(options=steps, value=steps[0], description="step",
                              continuous_update=False)
-    out = w.Output()
-    step.observe(lambda _: _show(out, lambda: equilibrium_figure(run_dir, step.value)),
-                 names="value")
-    _show(out, lambda: equilibrium_figure(run_dir, step.value))
-    return w.VBox([step, out])
+    gather = w.Button(description="Gather q-profile + zeroD for this step",
+                      layout=w.Layout(width="auto"))
+    out, log = w.Output(), w.Output()
+
+    def redraw(*_):
+        _show(out, lambda: equilibrium_figure(run_dir, step.value))
+
+    def on_gather(_):
+        with log:
+            log.clear_output()
+            print("\n".join(gather_step_caches(run_dir, step.value)))
+        redraw()
+
+    step.observe(redraw, names="value")
+    gather.on_click(on_gather)
+    redraw()
+    return w.VBox([w.HBox([step, gather]), log, out])
 
 
 def four_view(run_dir: Path | str = "."):
-    """Mode amplitudes and radial structure, with variable and step selectors."""
+    """Mode amplitudes and radial structure, with variable and step selectors,
+    under a button that runs ``analyse --diag four`` for this run."""
     w = _widgets()
-    steps = four_steps(run_dir)
-    if not steps:
-        return w.HTML("no jorek2_four cache (run analyse --diag four)")
-    paths = _paths(run_dir)
-    variables = sorted({key[0] for key in fc.read_cache(paths.four_cache(steps[-1]))})
-    variable = w.Dropdown(options=variables,
-                          value="Psi" if "Psi" in variables else variables[0],
-                          description="variable")
-    step = w.SelectionSlider(options=steps, value=steps[-1], description="step",
-                             continuous_update=False)
-    n_modes = w.IntSlider(value=6, min=1, max=12, description="modes", continuous_update=False)
-    log = w.Checkbox(value=True, description="log scale")
-    out = w.Output()
 
-    def redraw(*_):
-        _show(out, lambda: four_figure(run_dir, variable.value, step=step.value,
-                                       n_modes=n_modes.value, log=log.value))
+    def build():
+        steps = four_steps(run_dir)
+        if not steps:
+            return w.HTML("no jorek2_four cache yet")
+        paths = _paths(run_dir)
+        variables = sorted({key[0] for key in fc.read_cache(paths.four_cache(steps[-1]))})
+        variable = w.Dropdown(options=variables,
+                              value="Psi" if "Psi" in variables else variables[0],
+                              description="variable")
+        step = w.SelectionSlider(options=steps, value=steps[-1], description="step",
+                                 continuous_update=False)
+        n_modes = w.IntSlider(value=6, min=1, max=12, description="modes", continuous_update=False)
+        log = w.Checkbox(value=True, description="log scale")
+        out = w.Output()
 
-    for control in (variable, step, n_modes, log):
-        control.observe(redraw, names="value")
-    redraw()
-    return w.VBox([w.HBox([variable, step, n_modes, log]), out])
+        def redraw(*_):
+            _show(out, lambda: four_figure(run_dir, variable.value, step=step.value,
+                                           n_modes=n_modes.value, log=log.value))
+
+        for control in (variable, step, n_modes, log):
+            control.observe(redraw, names="value")
+        redraw()
+        return w.VBox([w.HBox([variable, step, n_modes, log]), out])
+
+    return _gathering(w, "Run analyse --diag four", lambda: run_analyse(run_dir, ["four"]), build)
 
 
 def profiles_view(run_dir: Path | str = "."):
-    """Cached radial profiles, with variable and step selectors."""
+    """Cached radial profiles, with variable and step selectors, under a
+    button that runs ``analyse --diag profiles`` for this run."""
     w = _widgets()
-    available = profiles_available(run_dir)
-    if not available:
-        return w.HTML("no cached profiles (run analyse --diag profiles)")
-    labels = {f"{k.var} vs {k.coords_var} ({k.tor_mode})": k for k in available}
-    which = w.Dropdown(options=list(labels), description="profile",
-                       layout=w.Layout(width="420px"))
-    first = available[labels[which.value]]
-    step = w.SelectionSlider(options=first, value=first[-1], description="step",
-                             continuous_update=False)
-    out = w.Output()
 
-    def redraw(*_):
-        _show(out, lambda: profiles_figure(run_dir, labels[which.value], step=step.value))
+    def build():
+        available = profiles_available(run_dir)
+        if not available:
+            return w.HTML("no cached profiles yet")
+        labels = {f"{k.var} vs {k.coords_var} ({k.tor_mode})": k for k in available}
+        which = w.Dropdown(options=list(labels), description="profile",
+                           layout=w.Layout(width="420px"))
+        first = available[labels[which.value]]
+        step = w.SelectionSlider(options=first, value=first[-1], description="step",
+                                 continuous_update=False)
+        out = w.Output()
 
-    def on_which(_):
-        steps = available[labels[which.value]]
-        step.options = steps
-        step.value = steps[-1]
+        def redraw(*_):
+            _show(out, lambda: profiles_figure(run_dir, labels[which.value], step=step.value))
+
+        def on_which(_):
+            steps = available[labels[which.value]]
+            step.options = steps
+            step.value = steps[-1]
+            redraw()
+
+        which.observe(on_which, names="value")
+        step.observe(redraw, names="value")
         redraw()
+        return w.VBox([w.HBox([which, step]), out])
 
-    which.observe(on_which, names="value")
-    step.observe(redraw, names="value")
-    redraw()
-    return w.VBox([w.HBox([which, step]), out])
+    return _gathering(
+        w, "Run analyse --diag profiles", lambda: run_analyse(run_dir, ["profiles"]), build
+    )
