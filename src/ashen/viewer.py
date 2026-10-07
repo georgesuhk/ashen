@@ -168,6 +168,24 @@ def _f0(run_dir: Path, site=None) -> float:
     )
 
 
+def _find_site(run_dir: Path):
+    """The campaign's site: the nearest site.toml above the run folder (a
+    notebook's own folder is rarely inside the campaign), else whatever
+    load_site finds from here. None if there is none."""
+    from ashen.config import load_site
+
+    for folder in (run_dir, *run_dir.parents):
+        if (folder / "site.toml").is_file():
+            try:
+                return load_site(folder / "site.toml")
+            except Exception:
+                return None
+    try:
+        return load_site(None)
+    except Exception:
+        return None
+
+
 def plasma_geometry(run_dir: Path | str, site=None, params=None) -> cur.PlasmaGeometry:
     """R0, a, kappa, B0 of the case's plasma: from ``original_bnd.dat``, or
     the shotfile's plasma boundary file before the run folder is prepared."""
@@ -513,12 +531,7 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
     shotfile = run_dir / "shotfile.py"
     params = load_shotfile(shotfile)
     if site is None:
-        try:
-            from ashen.config import load_site
-
-            site = load_site(None)
-        except Exception:
-            site = None
+        site = _find_site(run_dir)
     geometry = plasma_geometry(run_dir, site, params)
     paths = _paths(run_dir)
     try:

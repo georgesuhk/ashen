@@ -222,6 +222,15 @@ boundary file, before any restart exists.
   looking, not for measuring.
 - The viewer has not been run over Remote SSH on the HPC yet.
 
+**Trying it without JOREK.** `notebooks/case_viewer_demo.ipynb` writes a
+made-up campaign into `notebooks/demo_campaign/` (`ashen.demo.
+make_demo_campaign`) and shows every view on it. The run's inputs come from
+the real `run_jorek` code and a `"q_li"` shotfile, so Save and Regenerate
+work. Its "JOREK output" is invented: the cylinder model a little off the
+request, and modes that grow and saturate. It is for trying the interface,
+not for physics. Re-running the first cell rebuilds the outputs from the
+saved shotfile; delete the folder to start over.
+
 Each view is also a plain function returning a matplotlib Figure
 (`viewer.tuner_figure`, `boundary_figure`, `equilibrium_figure`,
 `four_figure`, `profiles_figure`), usable without a notebook.
@@ -2151,6 +2160,7 @@ src/ashen/
   profiles.py   CASTOR3D -> JOREK profile translation
   current_profile.py  current density -> JOREK's FFprime, r/a -> psi_N; q0/l_i/q_edge profiles
   viewer.py     notebook views of a run folder (notebooks/case_viewer.ipynb)
+  demo.py       a made-up campaign for trying the viewer (notebooks/case_viewer_demo.ipynb)
   shotfile.py   ShotParams dataclass + validating loader
   fs.py         copy/symlink helpers used when populating a run folder
   runner.py     prepare_run() + submit_*() -- what bin/run_jorek drives

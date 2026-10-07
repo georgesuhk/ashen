@@ -4,6 +4,23 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: a demo notebook for the viewer, on made-up files
+
+- `notebooks/case_viewer_demo.ipynb` runs every view of `ashen.viewer`
+  with no JOREK and no HPC. Its first cell calls
+  `ashen.demo.make_demo_campaign("demo_campaign")`, which writes a small
+  campaign (site.toml, template) and one run folder.
+- The run's inputs are prepared by the real `prepare_run` from a `"q_li"`
+  shotfile, so **Save to shotfile** and **Regenerate inputs** do what they
+  do on a real case.
+- The "JOREK output" is invented, not physics: an equilibrium that is the
+  cylinder model with q0, l_i, q_edge off the request by +0.05, +0.06,
+  -0.12, and five modes that grow and saturate.
+- The tuner now finds the campaign's `site.toml` by walking up from the
+  run folder, not from the notebook's folder.
+- `notebooks/demo_campaign/` is gitignored.
+- Checked by executing the notebook headless; not opened in VS Code.
+
 ## 2026-10-07: a notebook viewer for a case
 
 - `notebooks/case_viewer.ipynb`, backed by `ashen.viewer`. Five views of a
