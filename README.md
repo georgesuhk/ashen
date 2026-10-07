@@ -180,14 +180,33 @@ one (`rho_const = n0`).
 
 ## Looking at a case from a notebook
 
-`notebooks/case_viewer.ipynb` shows one run folder: its current profile,
-boundaries, equilibrium and diagnostics. Open it in VS Code (over Remote SSH
-on the HPC, or locally), set `RUN` in the first cell and run the cells. It
-needs `ipywidgets`, `matplotlib` and `h5py` in the notebook's Python:
+Each run folder has a `case_viewer.ipynb` that shows that run: its current
+profile, boundaries, equilibrium and diagnostics. Open it in VS Code (over
+Remote SSH on the HPC, or locally) and run the cells. It needs `ipywidgets`,
+`matplotlib` and `h5py` in the notebook's Python:
 
 ```bash
 pip install --user ipywidgets ipykernel h5py
 ```
+
+**Where the notebook comes from.** `run_jorek` writes it into a run folder
+when it prepares one, if the folder has none. It never overwrites one, so
+saved figures and edits survive `run_jorek` and the Regenerate button. For a
+folder prepared before this existed, run `run_jorek shotfile.py` there
+again, or:
+
+```python
+from ashen.case_notebook import write_case_notebook
+write_case_notebook("path/to/run_folder")           # overwrite=True to replace
+```
+
+The notebook shows the folder it sits in (`RUN = Path(".")`). Its first cell
+imports ashen; if the kernel cannot (a VS Code kernel does not always see
+the shell's `PYTHONPATH`), it falls back to the `src/` of the checkout that
+wrote it. That path is the one machine path in the notebook: after moving
+ashen, delete the notebook and let `run_jorek` write it again.
+`notebooks/case_viewer.ipynb` in the repository is the same notebook, kept
+for reference.
 
 Everything is drawn from files already in the folder. Nothing in it runs
 JOREK or a `jorek2_*` tool; a missing cache is named with the `analyse`
@@ -216,11 +235,34 @@ command that makes it.
 It works in a new run folder that has only `shotfile.py` and a plasma
 boundary file, before any restart exists.
 
+**Warnings.** A yellow band under the buttons says when things are out of
+step (`viewer.tuner_status`):
+- the sliders differ from `shotfile.py`: not saved;
+- `shotfile.py` differs from what `j_prof.dat` and `ffprime_prof.dat` were
+  made for: saved, but the inputs have not been regenerated;
+- the inputs have never been made from this shotfile;
+- the shotfile uses another `ffprime_method`, so the three values are not
+  what the run uses.
+
+The input files are judged by the `requested:` line at the top of
+`j_prof.dat`. `run_jorek shotfile.py` always regenerates before it submits,
+so stale inputs only reach JOREK if it is launched by hand. The band does
+not know whether the equilibrium shown was run from the current inputs.
+
 **Limits.**
 - `equilibrium_view` contours psi on the grid nodes, not on JOREK's Bezier
   elements, and takes the axis as the node of largest current: good for
   looking, not for measuring.
 - The viewer has not been run over Remote SSH on the HPC yet.
+
+**Trying it without JOREK.** `notebooks/case_viewer_demo.ipynb` writes a
+made-up campaign into `notebooks/demo_campaign/` (`ashen.demo.
+make_demo_campaign`) and shows every view on it. The run's inputs come from
+the real `run_jorek` code and a `"q_li"` shotfile, so Save and Regenerate
+work. Its "JOREK output" is invented: the cylinder model a little off the
+request, and modes that grow and saturate. It is for trying the interface,
+not for physics. Re-running the first cell rebuilds the outputs from the
+saved shotfile; delete the folder to start over.
 
 Each view is also a plain function returning a matplotlib Figure
 (`viewer.tuner_figure`, `boundary_figure`, `equilibrium_figure`,
@@ -2150,7 +2192,9 @@ src/ashen/
   boundary.py   plasma boundary geometry, psi-grid extension
   profiles.py   CASTOR3D -> JOREK profile translation
   current_profile.py  current density -> JOREK's FFprime, r/a -> psi_N; q0/l_i/q_edge profiles
-  viewer.py     notebook views of a run folder (notebooks/case_viewer.ipynb)
+  viewer.py     notebook views of a run folder
+  case_notebook.py  the case_viewer.ipynb run_jorek puts in each run folder
+  demo.py       a made-up campaign for trying the viewer (notebooks/case_viewer_demo.ipynb)
   shotfile.py   ShotParams dataclass + validating loader
   fs.py         copy/symlink helpers used when populating a run folder
   runner.py     prepare_run() + submit_*() -- what bin/run_jorek drives

@@ -9,3 +9,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Written by notebooks/case_viewer_demo.ipynb (ashen.demo)
+notebooks/demo_campaign/
+.ipynb_checkpoints/
