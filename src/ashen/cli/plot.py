@@ -53,6 +53,7 @@ from ashen.diagnostics.four_modes import (
     DELTA_B,
     DELTA_B_OVER_B,
     delta_b_series,
+    edge_minor_radius,
     format_growth_rates,
     growth_rate_series,
     max_amplitude_series,
@@ -907,6 +908,10 @@ def _plot_four_modes(
                 paths, steps, sorted(rational_modes), variables=fetch_vars
             )
 
+    # four_delta_b_at = "edge": delta_b at the outermost radial point rather
+    # than its largest value. Its figures get their own names and labels.
+    at_edge = case.four_delta_b_at == "edge"
+    edge_note = " @ domain edge" if at_edge else ""
     if requested_derived:
         remaining = set(requested_derived)
         try:
@@ -942,10 +947,15 @@ def _plot_four_modes(
             # from the step's q-profile and zeroD caches.
             _ensure_qprofile(case, paths, steps, n_workers=n_workers)
             _ensure_zero_d(case, paths, steps, n_workers=n_workers)
+            if at_edge:
+                r_edge = edge_minor_radius(paths, steps, f0=f0, r_axis=r0)
+                if r_edge is not None:
+                    edge_note = f" @ domain edge (r = {r_edge:.3f} m)"
             for name in sorted(remaining):
                 ref = b_ref if name == DELTA_B_OVER_B else None
                 converted = delta_b_series(
-                    paths, steps, r_axis=r0, f0=f0, modes=mode_filter, b_ref=ref
+                    paths, steps, r_axis=r0, f0=f0, modes=mode_filter, b_ref=ref,
+                    edge=at_edge,
                 )
                 if converted and all(np.all(np.isnan(v)) for v in converted.values()):
                     print(f"  {name}: needs {DELTA_B_NEEDS}; nothing to draw")
@@ -1043,10 +1053,13 @@ def _plot_four_modes(
         elif suffix == "time" and deconfinement_time_us is not None:
             vline = (deconfinement_time_us, "deconfinement time")
         for variable in sorted({var for var, _, _ in primary_series}):
-            out = paths.four_dir / f"{variable}_modes_{suffix}.png"
+            derived_at_edge = at_edge and want_max and variable in PSI_DERIVED
+            out_name = f"{variable}_edge" if derived_at_edge else variable
+            out = paths.four_dir / f"{out_name}_modes_{suffix}.png"
+            where = edge_note if derived_at_edge else ""
             caption_lines = []
             if variable == DELTA_B_OVER_B:
-                ylabel = f"\N{GREEK SMALL LETTER DELTA}B/B{ylabel_suffix or ''}"
+                ylabel = f"\N{GREEK SMALL LETTER DELTA}B/B{where}{ylabel_suffix or ''}"
                 peak = _peak_of_variable(primary_series, variable)
                 if case.four_max_delta_b and peak is not None:
                     caption_lines.append(f"max \N{GREEK SMALL LETTER DELTA}B/B = {peak:.3g}")
@@ -1060,7 +1073,7 @@ def _plot_four_modes(
                             f"{at_deconf / peak * 100:.3g}% of max"
                         )
             elif variable == DELTA_B:
-                ylabel = f"\N{GREEK SMALL LETTER DELTA}B [T]{ylabel_suffix or ''}"
+                ylabel = f"\N{GREEK SMALL LETTER DELTA}B [T]{where}{ylabel_suffix or ''}"
                 peak = _peak_of_variable(primary_series, variable)
                 if case.four_max_delta_b and peak is not None:
                     caption_lines.append(f"max \N{GREEK SMALL LETTER DELTA}B = {peak:.3g} T")
@@ -1810,8 +1823,11 @@ def _delta_b_xy(
         _ensure_qprofile(case, paths, case_steps)
         _ensure_zero_d(case, paths, case_steps)
         converted = delta_b_series(
-            paths, case_steps, r_axis=r0, f0=f0, modes=modes_filter, b_ref=b_ref
+            paths, case_steps, r_axis=r0, f0=f0, modes=modes_filter, b_ref=b_ref,
+            edge=case.four_delta_b_at == "edge",
         )
+        if case.four_delta_b_at == "edge":
+            print(f"  {case_name}: {variable} taken at the domain edge (four_delta_b_at)")
         if not converted:
             print(f"  {case_name}: no jorek2_four Psi cache found, skipped "
                   "(run analyse --diag four)")

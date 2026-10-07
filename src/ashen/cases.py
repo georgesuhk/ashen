@@ -24,6 +24,9 @@ __all__ = [
 #: |amp|(psi_n) eigenfunction and gets its own figure -- see Case.four_quantities.
 FOUR_QUANTITIES = ("max", "rational_surface", "radial")
 
+#: Accepted `four_delta_b_at` values -- see Case.four_delta_b_at.
+FOUR_DELTA_B_AT = ("max", "edge")
+
 #: Accepted `four_radial_quantity` values. Duplicates
 #: diagnostics.four_modes.RADIAL_QUANTITIES rather than importing it into TOML
 #: parsing; a unit test pins the two equal.
@@ -36,6 +39,7 @@ _CASE_KEYS = (
     "nstpts", "ntht", "nmaxsteps", "deltaphi", "nsmallsteps", "rad_range",
     "lc_psi_n_in", "four_vars", "modes", "mode_colors", "four_growth_rate", "four_growth_steps",
     "four_max_delta_b", "four_ylim", "four_radial_log", "four_radial_quantity",
+    "four_delta_b_at",
     "four_deconfinement_step", "four_deconfinement_caption",
     "profile_surfaces", "profile_rad_range", "profile_nmaxsteps", "profile_deltaphi",
     "profile_cmap", "profile_ylim", "animate",
@@ -141,6 +145,11 @@ class Case:
     #: regather, the four cache already holds real and imag.
     #: `--four-radial-quantity` overrides it for one invocation.
     four_radial_quantity: str = "abs"
+    #: Where delta_b and delta_b_over_b are taken. "max": the largest value
+    #: over the radial grid. "edge": the value at the outermost radial point,
+    #: the edge of JOREK's domain -- with an extended boundary, in the vacuum
+    #: outside the plasma, as a probe there would see it.
+    four_delta_b_at: str = "max"
     #: Step marked with a vline on four-mode figures: step-axis draws it
     #: directly, time-axis draws its real time from the zeroD cache
     #: (gathered on demand, same precedent as delta_b_over_b's Btor
@@ -858,6 +867,13 @@ def load_cases(path: Path | str, *, run_root: Path | str | None = None) -> dict[
                     f"{path}: case {name!r} four_quantities must not be empty"
                 )
             merged["four_quantities"] = quantities
+
+        if merged.get("four_delta_b_at", "max") not in FOUR_DELTA_B_AT:
+            raise CasesError(
+                f"{path}: case {name!r} has unknown four_delta_b_at "
+                f"{merged['four_delta_b_at']!r}; expected one of "
+                f"{', '.join(repr(q) for q in FOUR_DELTA_B_AT)}"
+            )
 
         if merged.get("four_radial_quantity", "abs") not in FOUR_RADIAL_QUANTITIES:
             raise CasesError(

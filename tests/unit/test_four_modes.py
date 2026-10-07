@@ -11,6 +11,7 @@ from ashen.diagnostics.four_modes import (
     DELTA_B,
     DELTA_B_OVER_B,
     delta_b_series,
+    edge_minor_radius,
     effective_minor_radius,
     fit_growth_rate,
     format_growth_rates,
@@ -354,6 +355,32 @@ def test_delta_b_at_the_rational_surface(paths):
     r = np.sqrt(0.5 + 0.5 * 0.5**2)          # r^2 = int_0^0.5 (1 + x) dx
     assert set(out) == {(DELTA_B, 2, 3)}      # n = 0 has no rational surface
     assert out[(DELTA_B, 2, 3)] == pytest.approx([3 * 2.0 / (2.0 * r)])
+
+
+def test_delta_b_at_the_domain_edge(paths):
+    """edge=True takes the outermost radial point, not the largest value."""
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=4.0)],
+    )
+    _radius_caches(paths, 100)
+
+    out = delta_b_series(paths, [100], r_axis=2.0, f0=4.0, edge=True)
+
+    # |Psi| = 0.05 at psi_n = 1, where r = 1: 2 * 0.05 / (2 * 1)
+    assert out[(DELTA_B, 1, 2)] == pytest.approx([0.05], rel=1e-6)
+    assert edge_minor_radius(paths, [100], f0=4.0, r_axis=2.0) == pytest.approx(1.0)
+
+
+def test_edge_minor_radius_skips_steps_without_caches(paths):
+    fc.write_cache(
+        paths.four_cache(200), step=200, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=4.0)],
+    )
+    _radius_caches(paths, 200, psi_bnd=4.0)
+
+    assert edge_minor_radius(paths, [100, 200], f0=4.0, r_axis=2.0) == pytest.approx(2.0)
+    assert edge_minor_radius(paths, [100], f0=4.0, r_axis=2.0) is None
 
 
 # --- fit_growth_rate / growth_rate_series / format_growth_rates ------------------

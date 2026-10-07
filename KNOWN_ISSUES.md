@@ -429,3 +429,37 @@ scan-map skip note) rather than silent.
 `q95` quantity, computed by JOREK's own method), or whether the axis label
 should say `q(\psi_n=0.999)` explicitly instead of `q_\mathrm{edge}`, is
 George's call to make -- not something the code can resolve on its own.
+
+---
+
+## 12. `four_delta_b_at = "edge"`: per-mode values are not what a probe array would measure
+
+**Status:** open, 2026-10-07. An interim option, kept with this caveat on
+George's instruction.
+
+**What happens:** `four_delta_b_at = "edge"` takes `delta_b` at the outermost
+radial point of the jorek2_four data (the edge of JOREK's domain; in the
+vacuum outside the plasma when `extend_bnd` is on). The `(m, n)` modes there
+are harmonics in jorek2_four's straight-field-line angle. Near the domain
+edge that angle is far from the geometric poloidal angle, so one physical
+perturbation is spread over several `m`.
+
+**Seen in `qa3.3_g3.2/eta1e-3_adv0.1`** (r = 0.447 m, peak over 43 steps):
+n = 1 is largest in m = 4 (0.84 mT), 3 (0.81), 5 (0.71) and 6 (0.53), while
+2/1 is 0.35 mT, against 8.2 mT at its peak inside the plasma.
+
+**Consequences:**
+- A real probe sees the sum over `m` at its own position. A poloidal probe
+  array resolves geometric-angle harmonics, not these. The per-mode lines
+  must not be read as Mirnov-array amplitudes.
+- Taken together across `m`, the values do show how much field of a given
+  `n` reaches the domain edge.
+- The radius is fixed by the run's domain. Extrapolating further out with a
+  cylindrical fall-off was tested and rejected: fitted exponents of |Psi_mn|
+  in the vacuum region were -3.8, -3.2, -1.6 for m = 2, 3, 4 (n = 1),
+  against -2, -3, -4.
+
+**Proper fix, not done:** JOREK's `jorek2_fields_xyz` computes the field of
+the plasma, wall and coils at any (x, y, z) per restart. It is not built in
+the campaign's `exe/`. A sum over `m` at the edge (one value per `n`) was
+offered as a smaller step and not yet asked for.

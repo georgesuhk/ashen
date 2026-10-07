@@ -3479,3 +3479,35 @@ def test_delta_b_without_f0_is_skipped_with_a_note(campaign, capsys):
 
     assert "skipping delta_b" in capsys.readouterr().out
     assert not (campaign / "four_dir" / "delta_b_modes_step.png").exists()
+
+
+@pytest.mark.real_minor_radius
+def test_four_delta_b_at_edge_draws_the_domain_edge_value(campaign, monkeypatch, capsys):
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+    _write_radius_inputs(campaign, [100, 200])
+    (campaign.parent.parent / "cases.toml").write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b"]\n'
+        'four_delta_b_at = "edge"\n',
+        encoding="utf-8",
+    )
+    captured = []
+    original = plot_cli.plot_mode_amplitudes
+
+    def spy(x, series, variable, out_path, **kwargs):
+        captured.append((series, kwargs))
+        return original(x, series, variable, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_mode_amplitudes", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    # outermost point: |Psi| = 0.05 at psi_n = 1, r = 1 -> 2 * 0.05 / (2 * 1)
+    series, kwargs = captured[0]
+    np.testing.assert_allclose(series[("delta_b", 1, 2)], [0.05, 0.05], rtol=1e-6)
+    assert "@ domain edge (r = 1.000 m)" in kwargs["ylabel"]
+    assert (campaign / "four_dir" / "delta_b_edge_modes_step.png").is_file()
+    assert not (campaign / "four_dir" / "delta_b_modes_step.png").exists()

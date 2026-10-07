@@ -1137,6 +1137,36 @@ four_vars = ["delta_b_over_b"]              # only the derived quantity
 four_vars = ["Psi", "delta_b_over_b"]       # raw flux amplitude alongside it
 ```
 
+**At the domain edge: `four_delta_b_at = "edge"`.** By default `delta_b`
+is the largest value over the radial grid, which is inside the plasma. With
+
+```toml
+four_vars       = ["delta_b"]
+four_delta_b_at = "edge"
+```
+
+it is the value at the outermost radial point instead: the edge of JOREK's
+domain. With `extend_bnd` that is in the vacuum outside the plasma (1.2 times
+the plasma's size by default), so it is what a probe there would see.
+
+- The figures are `delta_b_edge_modes_step.png` / `_time.png`, with the
+  radius in the y label, e.g. `@ domain edge (r = 0.447 m)`. The default
+  figures are not overwritten.
+- It applies wherever that case's `delta_b` is used: `delta_b_over_b`, the
+  `--compare ... --diag four` figures and the `delta_b_*` scan-map
+  quantities. Those print a line saying the edge value was taken.
+- The radius is fixed by the run's domain. For a probe further out, at the
+  wall say, the field does not follow a simple `r^-(m+1)` fall-off here
+  (tested on `qa3.3_g3.2/eta1e-3_adv0.1`); JOREK's `jorek2_fields_xyz`
+  computes it at any point.
+- The modes are harmonics in jorek2_four's straight-field-line angle. Near
+  the domain edge that angle is far from the geometric one, so one physical
+  perturbation is spread over several `m`: in the run above the n = 1 power
+  at the edge sits in m = 3 to 7, with 2/1 smaller. A real probe sees the
+  sum over `m` at its own position, and a poloidal probe array would not
+  measure these harmonics.
+- Without `extend_bnd` the domain edge is the plasma edge.
+
 **`delta_b`** is the same quantity un-normalised, in Tesla, with no division
 by `B_ref`. It does not need the `Btor` profile, so it still works on a run
 that hasn't gathered step-0 profiles; `delta_b_over_b` does not. The two can be
