@@ -1913,16 +1913,17 @@ row takes the room of 50000 particles however many are traced. A
 about 34 GB -- with 1000 markers, ~50 times its data. Repacked, that file
 is well under 1 GB.
 
-- **Lossless.** The new file is written beside the old one, compared value
-  by value, and only then put in its place; on any failure the original
+- **Lossless.** The new file is written beside the old one, read back and
+  checked against what was read from the original (a hash of every block
+  of values), and only then put in its place; on any failure the original
   stays. The plots read the repacked file exactly as before.
 - **Every layout:** `ptrace_diag.h5`, `part_diag.h5`, `diag.h5`, and the
   oldest `trace_diag.h5`.
 - **Left alone:** a file already compressed, one whose queued job may be
   running, and one written to in the last ten minutes (its trace may still
   be running and appending to it).
-- It reads the whole file to repack it, so a 34 GB file takes a minute or
-  two.
+- It reads the whole file to repack it -- once, padding included -- and
+  compresses on up to 8 cores, so a 34 GB file takes a minute or two.
 
 ## Simulation time at a restart step
 
