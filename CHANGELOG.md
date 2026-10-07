@@ -4,6 +4,18 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: the tuner warns in red when the folder name gives other values
+
+- A run folder named for one profile (`qa2.1_li1.0_q01.0/eta1e-3`) holding
+  another gets a red band in the tuner: "Folder name says l_i = 1.0 ...,
+  but the profile has l_i = 1.2." (`viewer.folder_name_mismatches`.)
+- It reads `qa<x>`, `li<x>`, `q0<x>` from the run folder's name and its
+  parent's, compares to the digits written, and follows the sliders.
+- The name is only checked. Nothing takes a run's settings from it.
+- It does not check `eta`, `g` or anything else in the name.
+- A third button, **Reset to shotfile**, puts the sliders back to the
+  values saved in `shotfile.py` (read afresh). It writes nothing.
+
 ## 2026-10-07: the viewer notebook is written before the shotfile is checked
 
 - `run_jorek shotfile.py` (and `--scan --apply`) now puts

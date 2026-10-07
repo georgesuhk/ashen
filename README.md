@@ -358,6 +358,8 @@ command that makes it.
 - **Save to shotfile** writes `current_q0`, `current_li`, `current_qa`
   and `ffprime_method = "q_li"` into `shotfile.py`
   (`set_shotfile_values`). A q0 outside the reachable window is not saved.
+- **Reset to shotfile** puts the three sliders back to the values saved in
+  `shotfile.py`, read afresh. It writes nothing.
 - **Regenerate inputs** prepares the run folder from the shotfile, exactly
   as `run_jorek shotfile.py` does, and submits nothing. It needs the
   campaign's `site.toml`. It rewrites `j_prof.dat`, `ffprime_prof.dat`, the
@@ -377,6 +379,13 @@ step (`viewer.tuner_status`):
 - the inputs have never been made from this shotfile;
 - the shotfile uses another `ffprime_method`, so the three values are not
   what the run uses.
+
+A **red** band appears when the folder's name gives other values than the
+profile: a run in `qa2.1_li1.0_q01.0/eta1e-3` whose l_i is 1.2 shows "Folder
+name says l_i = 1.0 ..., but the profile has l_i = 1.2." It looks for
+`qa<x>`, `li<x>` and `q0<x>` in the run folder's name and its parent's, and
+compares to the digits written (`li1.0` agrees with 1.04). It follows the
+sliders, so it shows before you save. The name is only checked, never used.
 
 The input files are judged by the `requested:` line at the top of
 `j_prof.dat`. `run_jorek shotfile.py` always regenerates before it submits,

@@ -41,6 +41,7 @@ __all__ = [
     "case_boundaries",
     "equilibrium_figure",
     "equilibrium_view",
+    "folder_name_mismatches",
     "four_figure",
     "four_steps",
     "four_view",
@@ -222,6 +223,37 @@ _REQUESTED = re.compile(
 
 def _same(a, b) -> bool:
     return all(abs(x - y) <= 5e-5 * max(1.0, abs(y)) for x, y in zip(a, b))
+
+
+#: A value written into a folder name: qa2.1, li1.25, q01.0, between "_" or
+#: at either end of a name ("qa2.1_li1.0_q01.0").
+_NAME_TOKEN = re.compile(r"(?:^|[_\-])(qa|li|q0)(\d+(?:\.\d+)?)(?=$|[_\-])")
+_NAME_LABELS = {"qa": "qa", "li": "l_i", "q0": "q0"}
+
+
+def folder_name_mismatches(run_dir: Path | str, q0: float, li: float, qa: float) -> list[str]:
+    """Where the run folder's name says one thing and the profile another.
+
+    Looks for qa<x>, li<x> and q0<x> in the run folder's name and its
+    parent's (``qa2.1_li1.0_q01.0/eta1e-3``). A value agrees with the name
+    if it rounds to what is written, to the digits written: li1.0 agrees
+    with 1.04, not with 1.06. A name with none of these says nothing.
+
+    The names are only ever checked here, never used: nothing in ashen
+    takes a run's settings from its folder name.
+    """
+    run_dir = Path(run_dir).resolve()
+    values = {"qa": qa, "li": li, "q0": q0}
+    notes = []
+    for folder in (run_dir.parent.name, run_dir.name):
+        for key, written in _NAME_TOKEN.findall(folder):
+            decimals = len(written.split(".")[1]) if "." in written else 0
+            if abs(values[key] - float(written)) > 0.5 * 10.0**-decimals + 1e-9:
+                notes.append(
+                    f"Folder name says {_NAME_LABELS[key]} = {written} ('{folder}'), "
+                    f"but the profile has {_NAME_LABELS[key]} = {values[key]:g}."
+                )
+    return notes
 
 
 def tuner_status(run_dir: Path | str, q0: float, li: float, q_edge: float) -> list[str]:
@@ -597,10 +629,12 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
     """Sliders for q0, l_i and qa (edge q) of the case's shotfile.
 
     **Save to shotfile** writes the three values (and ``ffprime_method =
-    "q_li"``) into ``shotfile.py``. **Regenerate inputs** then prepares the run
+    "q_li"``) into ``shotfile.py``. **Reset to shotfile** puts the sliders back
+    to the values saved there. **Regenerate inputs** then prepares the run
     folder from the shotfile, as ``run_jorek shotfile.py`` does, without
-    submitting anything. A warning band says when the sliders are not saved,
-    or the input files were made for other values (tuner_status). If the equilibrium at ``step`` has q-profile and
+    submitting anything. A yellow band says when the sliders are not saved,
+    or the input files were made for other values (tuner_status); a red one
+    when the folder's name gives other values (folder_name_mismatches). If the equilibrium at ``step`` has q-profile and
     zeroD caches, what JOREK achieved is drawn next to what is requested.
     """
     w = _widgets()
@@ -626,12 +660,19 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
     q_edge = _slider(w, start[2], 1.5, 10.0, 0.05, "qa")
     save = w.Button(description="Save to shotfile", button_style="primary")
     regenerate = w.Button(description="Regenerate inputs")
+    reset = w.Button(description="Reset to shotfile", tooltip="Put the sliders back to shotfile.py's values")
     figure_out, log_out = w.Output(), w.Output()
     status = w.HTML()
 
     def refresh_status():
+        # red: the folder is named for another profile; yellow: things not yet in step
+        wrong_name = folder_name_mismatches(run_dir, q0.value, li.value, q_edge.value)
         notes = tuner_status(run_dir, q0.value, li.value, q_edge.value)
         status.value = "".join(
+            '<div style="background:#f8d7da;border-left:4px solid #c8442f;color:#7a1f14;'
+            f'padding:6px 10px;margin:3px 0;font-weight:600">&#9888; {html.escape(note)}</div>'
+            for note in wrong_name
+        ) + "".join(
             '<div style="background:#fff3cd;border-left:4px solid #d98a1f;color:#52514e;'
             f'padding:6px 10px;margin:3px 0">&#9888; {html.escape(note)}</div>'
             for note in notes
@@ -678,12 +719,33 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
                   "Next, in the run folder:  run_jorek shotfile.py --run_eq")
         refresh_status()
 
+    def on_reset(_):
+        with log_out:
+            log_out.clear_output()
+            try:
+                now = load_shotfile(shotfile)
+            except ShotfileError as exc:
+                print(f"not reset: {exc}")
+                return
+            saved = (now.current_q0, now.current_li, now.current_qa)
+            if None in saved:
+                print("not reset: shotfile.py has no current_q0, current_li and current_qa yet")
+                return
+            for slider, value in zip((q0, li, q_edge), saved):
+                # a value outside the slider's travel would be clipped silently
+                slider.min, slider.max = min(slider.min, value), max(slider.max, value)
+                slider.value = value
+            print(f"sliders back to shotfile.py: q0 = {saved[0]:g}, l_i = {saved[1]:g}, "
+                  f"qa = {saved[2]:g}")
+        refresh_status()
+
     for slider in (q0, li, q_edge):
         slider.observe(redraw, names="value")
     save.on_click(on_save)
     regenerate.on_click(on_regenerate)
+    reset.on_click(on_reset)
     redraw()
-    return w.VBox([w.VBox([q0, li, q_edge]), w.HBox([save, regenerate]), status, log_out,
+    return w.VBox([w.VBox([q0, li, q_edge]), w.HBox([save, regenerate, reset]), status, log_out,
                    figure_out])
 
 
