@@ -27,6 +27,7 @@ rejecting legitimate scratch variables.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import difflib
 import importlib.util
@@ -36,7 +37,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-__all__ = ["ShotParams", "ShotfileError", "load_shotfile"]
+__all__ = ["ShotParams", "ShotfileError", "load_shotfile", "set_shotfile_values"]
 
 #: Fields the old shotfile.py sometimes set that are now supplied elsewhere:
 #: shot_folder is always the cwd, template_folder/castor_master_folder come
@@ -112,7 +113,15 @@ class ShotParams:
     #: ashen.current_profile.
     current_file: str | None = None
     current_coord: str = "psi_n"
+    #: Major radius the current is referred to [m]. None: the centre of the
+    #: plasma boundary.
     current_R0: float | None = None
+
+    #: ffprime_method="q_li": the current profile is built from these three
+    #: (ashen.current_profile.current_from_q_li) and written to j_prof.dat.
+    current_q0: float | None = None
+    current_li: float | None = None
+    current_q_edge: float | None = None
 
     #: T_method="const": Te + Ti [eV], flat.
     T_const: float | None = None
@@ -151,12 +160,16 @@ class ShotParams:
             raise ShotfileError("rho_const is required when rho_method='const'")
         if self.bnd_method == "file" and self.bnd_file is None:
             raise ShotfileError("bnd_file is required when bnd_method='file'")
-        if self.ffprime_method == "current":
-            missing = [f for f in ("current_file", "current_R0") if getattr(self, f) is None]
+        if self.ffprime_method == "q_li":
+            missing = [
+                f for f in ("current_q0", "current_li", "current_q_edge")
+                if getattr(self, f) is None
+            ]
             if missing:
-                raise ShotfileError(
-                    "ffprime_method='current' requires: " + ", ".join(missing)
-                )
+                raise ShotfileError("ffprime_method='q_li' requires: " + ", ".join(missing))
+        if self.ffprime_method == "current":
+            if self.current_file is None:
+                raise ShotfileError("ffprime_method='current' requires: current_file")
             if self.current_coord not in ("psi_n", "rho"):
                 raise ShotfileError(
                     f"current_coord={self.current_coord!r}; expected 'psi_n' or 'rho'"
@@ -246,3 +259,63 @@ def _from_module(module: types.ModuleType, source: Path) -> ShotParams:
         raise
     except TypeError as exc:
         raise ShotfileError(f"{source}: {exc}") from exc
+
+
+def _is_literal(source: str) -> bool:
+    try:
+        ast.literal_eval(source)
+    except (ValueError, SyntaxError):
+        return False
+    return True
+
+
+def set_shotfile_values(path: Path | str, values: dict[str, Any]) -> None:
+    """Set module-level ``name = value`` lines in a shotfile, in place.
+
+    A name already assigned on one line to a plain literal has that line
+    replaced (a trailing comment is kept); a name not assigned at all is
+    appended. Anything else -- a computed right-hand side such as
+    ``rho_const = n0``, a name assigned twice, a statement spanning lines --
+    raises ShotfileError and leaves the file untouched, so a hand-written
+    expression is never overwritten. Values are written with ``repr``.
+    """
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        raise ShotfileError(f"{path}: not valid Python ({exc})") from exc
+    lines = text.splitlines()
+
+    assigned: dict[str, list[ast.Assign]] = {name: [] for name in values}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in assigned:
+                    assigned[target.id].append(node)
+
+    appended: list[str] = []
+    for name, value in values.items():
+        nodes = assigned[name]
+        if not nodes:
+            appended.append(f"{name} = {value!r}")
+            continue
+        node = nodes[0]
+        rhs = ast.get_source_segment(text, node.value) or ""
+        if len(nodes) > 1 or len(node.targets) != 1 or node.lineno != node.end_lineno:
+            raise ShotfileError(
+                f"{path}: {name} is not a single one-line assignment; edit it by hand"
+            )
+        if not _is_literal(rhs):
+            raise ShotfileError(
+                f"{path}: {name} = {rhs} is computed, not a plain value; edit it by hand"
+            )
+        line = lines[node.lineno - 1]
+        tail = line[node.end_col_offset:]            # spaces and any comment
+        lines[node.lineno - 1] = f"{line[:node.value.col_offset]}{value!r}{tail}"
+
+    if appended:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(appended)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")

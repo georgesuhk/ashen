@@ -28,16 +28,27 @@ profiles of every existing run have.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 from scipy.interpolate import PchipInterpolator
+from scipy.optimize import brentq
 
 from ashen.castor_io import load_two_col_data
 from ashen.physics import ELEMENTARY_CHARGE, MU_0
 
 __all__ = [
+    "ALPHA_RANGE",
+    "PlasmaGeometry",
+    "QLiProfile",
+    "boundary_geometry",
     "current_from_ffprime",
+    "current_from_q_li",
+    "q0_window",
+    "shape_profile",
+    "solve_shape",
     "extend_psi_n",
     "ffprime_from_current",
     "load_current_profile",
@@ -132,3 +143,145 @@ def extend_psi_n(psi_n, extend_ratio: float, extend_reso: int) -> tuple[np.ndarr
 def temperature_to_jorek(T_eV, central_density: float) -> np.ndarray:
     """Te + Ti in eV -> JOREK's T, for n_0 = central_density * 1e20 m^-3."""
     return np.asarray(T_eV, dtype=float) * ELEMENTARY_CHARGE * MU_0 * central_density * 1e20
+
+
+# --- a current profile from q0, l_i and q_edge --------------------------------
+#
+# Circular cylinder, radius normalised to 1 (ported from q0_li_playground.ipynb):
+#
+#     j(rho) = j0 (1 - rho^alpha)^nu        I(rho) = int_0^rho j rho' drho'
+#     q(rho) = q_edge rho^2 I(1) / I(rho)   l_i = 2 / I(1)^2 int_0^1 I^2 / rho drho
+#
+# q_edge / q0 = j0 / <j>, so (alpha, nu) are fixed by l_i and q0 / q_edge; q0
+# then sets the size of j. alpha = 2 is the Wesson profile; larger alpha
+# flattens the core and steepens the edge.
+
+#: Range of the shape exponent alpha that solve_shape searches. The q0 window
+#: at a given l_i and q_edge belongs to this family and this range, not to
+#: physics. alpha < 2 gives a pointed peak on axis.
+ALPHA_RANGE = (1.0, 30.0)
+
+_RHO = np.linspace(0.0, 1.0, 2001)
+
+
+def shape_profile(alpha: float, nu: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """(rho, j / j0, q / q_edge, l_i) of j = j0 (1 - rho^alpha)^nu."""
+    rho = _RHO
+    j = np.exp(nu * np.log1p(-rho[:-1] ** alpha))
+    j = np.append(j, 0.0 if nu > 0 else 1.0)
+    enclosed = _cumtrapz(j * rho, rho)
+    q = np.empty_like(rho)
+    q[1:] = rho[1:] ** 2 * enclosed[-1] / enclosed[1:]
+    q[0] = 2.0 * enclosed[-1]                     # <j> / j0
+    g = np.zeros_like(rho)
+    g[1:] = enclosed[1:] ** 2 / rho[1:]
+    li = 2.0 * _cumtrapz(g, rho)[-1] / enclosed[-1] ** 2
+    return rho, j, q, float(li)
+
+
+def _nu_for_li(alpha: float, li: float) -> float:
+    # l_i rises from 0.5 (flat current, nu = 0) without limit as nu grows
+    def miss(log_nu: float) -> float:
+        return shape_profile(alpha, np.exp(log_nu))[3] - li
+
+    hi = 0.0
+    while miss(hi) < 0:
+        hi += 1.0
+    return float(np.exp(brentq(miss, np.log(1e-8), hi, xtol=1e-12)))
+
+
+def _q0_ratio(alpha: float, li: float) -> float:
+    """q0 / q_edge of the profile with this alpha and l_i."""
+    return float(shape_profile(alpha, _nu_for_li(alpha, li))[2][0])
+
+
+@lru_cache(maxsize=256)
+def _q0_curve(li: float) -> tuple[np.ndarray, np.ndarray]:
+    alphas = np.geomspace(*ALPHA_RANGE, 60)
+    return alphas, np.array([_q0_ratio(a, li) for a in alphas])
+
+
+def q0_window(li: float, q_edge: float) -> tuple[float, float]:
+    """The q0 this family can reach at this l_i and q_edge."""
+    if li <= 0.5:
+        raise ValueError("l_i must exceed 0.5, the value for a flat current")
+    _, ratio = _q0_curve(round(float(li), 6))
+    return float(q_edge * ratio.min()), float(q_edge * ratio.max())
+
+
+def solve_shape(q0: float, li: float, q_edge: float) -> tuple[float, float]:
+    """(alpha, nu) giving this l_i and q0 / q_edge.
+
+    Raises ValueError, naming the reachable q0 window, if there is none.
+    """
+    lo, hi = q0_window(li, q_edge)
+    alphas, ratio = _q0_curve(round(float(li), 6))
+    d = ratio - q0 / q_edge
+    crossings = np.nonzero(d[:-1] * d[1:] <= 0)[0]
+    if len(crossings) == 0:
+        raise ValueError(
+            f"q0 = {q0:g} is outside what l_i = {li:g} and q_edge = {q_edge:g} "
+            f"allow for this profile family: {lo:.3f} to {hi:.3f}"
+        )
+    k = crossings[0]
+    alpha = brentq(
+        lambda a: _q0_ratio(a, li) - q0 / q_edge, alphas[k], alphas[k + 1], xtol=1e-10
+    )
+    return float(alpha), _nu_for_li(alpha, li)
+
+
+@dataclass(frozen=True)
+class PlasmaGeometry:
+    """What the q0/l_i/q_edge model needs to know about the plasma."""
+
+    R0: float      #: major radius of the boundary's centre [m]
+    a: float       #: minor radius, half the boundary's width in R [m]
+    kappa: float   #: elongation, height / width
+    B0: float      #: toroidal field at R0 [T]
+
+
+def boundary_geometry(bnd: np.ndarray, F0: float) -> PlasmaGeometry:
+    """R0, a and kappa from a plasma boundary's extents; B0 = |F0| / R0."""
+    bnd = np.asarray(bnd, dtype=float)
+    r_min, r_max = bnd[:, 0].min(), bnd[:, 0].max()
+    R0 = 0.5 * (r_min + r_max)
+    a = 0.5 * (r_max - r_min)
+    kappa = (bnd[:, 1].max() - bnd[:, 1].min()) / (2.0 * a)
+    return PlasmaGeometry(R0=float(R0), a=float(a), kappa=float(kappa), B0=abs(F0) / float(R0))
+
+
+@dataclass(frozen=True)
+class QLiProfile:
+    """A current profile made from q0, l_i and q_edge."""
+
+    rho: np.ndarray     #: r / a
+    psi_n: np.ndarray   #: psi_N at each rho (circular cylinder)
+    j: np.ndarray       #: j_phi at R = R0 [A/m^2]
+    q: np.ndarray       #: the cylinder's q at each rho
+    alpha: float
+    nu: float
+    li: float           #: l_i of the profile as built
+    j0: float           #: j on axis [A/m^2]
+    Ip: float           #: total current [A], for an ellipse of this a, kappa
+
+
+def current_from_q_li(q0: float, li: float, q_edge: float, geometry: PlasmaGeometry) -> QLiProfile:
+    """The current profile with this q0, l_i and q_edge, in A/m^2.
+
+    The shape is the cylinder's. The size is set by q0 on the axis of an
+    ellipse: q0 = B0 (1 + kappa^2) / (mu_0 R0 kappa j0), which for a circle is
+    2 B0 / (mu_0 R0 j0). The same factor relates q_edge to the mean current,
+    so q_edge / q0 keeps its cylinder value. No triangularity, Shafranov shift
+    or toroidicity: JOREK's equilibrium will miss the targets by some percent.
+    """
+    alpha, nu = solve_shape(q0, li, q_edge)
+    rho, shape, q_norm, li_built = shape_profile(alpha, nu)
+    g = geometry
+    j0 = g.B0 * (1.0 + g.kappa**2) / (MU_0 * g.R0 * g.kappa * q0)
+    j = j0 * shape
+    mean_j = j0 * q_norm[0]
+    return QLiProfile(
+        rho=rho, psi_n=psi_n_from_rho(rho, j), j=j, q=q_edge * q_norm,
+        alpha=alpha, nu=nu, li=li_built, j0=float(j0),
+        Ip=float(mean_j * np.pi * g.a**2 * g.kappa),
+    )

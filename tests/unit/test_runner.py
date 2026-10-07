@@ -761,7 +761,111 @@ def test_bad_current_file_is_a_shotfile_error(synthetic_campaign, tmp_path):
 
 def test_current_method_fields_are_required(synthetic_campaign):
     site, template_dir, params = synthetic_campaign
-    with pytest.raises(ShotfileError, match="current_file, current_R0"):
+    with pytest.raises(ShotfileError, match="current_file"):
         dataclasses.replace(params, ffprime_method="current")
+    with pytest.raises(ShotfileError, match="current_q0, current_li, current_q_edge"):
+        dataclasses.replace(params, ffprime_method="q_li")
     with pytest.raises(ShotfileError, match="T_const"):
         dataclasses.replace(params, T_method="const")
+
+
+# --- current profile from q0, l_i, q_edge ---------------------------------------
+
+
+def _q_li_params(params, run_dir, template_dir, *, f0=3.0, **changes):
+    """_current_params, with the profile made from q0/l_i/q_edge and F0 in
+    the template's in_eq (the boundary is an ellipse: R0 1.5, a 0.5, kappa 1.2)."""
+    in_eq = template_dir / "copy" / "in_eq"
+    text = in_eq.read_text()
+    if "F0" not in text:
+        in_eq.write_text(text.replace("&end", f" F0 = {f0}\n&end", 1))
+    fields = dict(
+        ffprime_method="q_li", current_file=None, current_R0=None,
+        current_q0=1.1, current_li=1.2, current_q_edge=3.0,
+    )
+    return _current_params(params, run_dir, **(fields | changes))
+
+
+def test_q_li_writes_the_profile_it_was_asked_for(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    from ashen import current_profile as cur
+    from ashen.physics import MU_0
+
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _q_li_params(params, run_dir, template_dir)
+
+    result = prepare_run(params, site, run_dir)
+
+    # j0 from q0 on the axis of the ellipse
+    j0 = (3.0 / 1.5) * (1 + 1.2**2) / (MU_0 * 1.5 * 1.2 * 1.1)
+    ffprime = np.loadtxt(run_dir / "ffprime_prof.dat")
+    assert ffprime[0, 1] == pytest.approx(-MU_0 * 1.5 * j0, rel=1e-6)
+    assert np.all(ffprime[ffprime[:, 0] >= result.real_psi_edge, 1] == pytest.approx(0.0, abs=1e-9))
+
+    # j_prof.dat records it, and reads back as a "current" profile
+    text = (run_dir / "j_prof.dat").read_text()
+    assert "q0 = 1.1, l_i = 1.2, q_edge = 3" in text
+    psi_n, j = cur.load_current_profile(run_dir / "j_prof.dat")
+    assert j[0] == pytest.approx(j0, rel=1e-9) and j[-1] == 0.0
+    assert psi_n[0] == 0.0 and psi_n[-1] == pytest.approx(1.0)
+
+
+def test_q_li_profile_is_reusable_as_a_current_file(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    """ffprime_method="current" on the j_prof.dat that "q_li" wrote gives the
+    same ffprime_prof.dat."""
+    site, template_dir, params = synthetic_campaign
+    first = tmp_path / "first"
+    prepare_run(_q_li_params(params, first, template_dir), site, first)
+
+    second = tmp_path / "second"
+    again = _current_params(params, second, current_R0=None)
+    (second / "j_prof.dat").write_text((first / "j_prof.dat").read_text())
+    prepare_run(again, site, second)
+
+    np.testing.assert_allclose(
+        np.loadtxt(second / "ffprime_prof.dat"), np.loadtxt(first / "ffprime_prof.dat"),
+        rtol=1e-9, atol=1e-12,
+    )
+
+
+def test_q_li_out_of_window_is_a_shotfile_error(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _q_li_params(params, run_dir, template_dir, current_q0=0.2)
+
+    with pytest.raises(ShotfileError, match="outside what l_i"):
+        prepare_run(params, site, run_dir, dry_run=True)
+
+
+def test_q_li_needs_a_plasma_boundary(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _q_li_params(params, run_dir, template_dir, bnd_file_is_plasma=False)
+
+    with pytest.raises(ShotfileError, match="plasma boundary"):
+        prepare_run(params, site, run_dir, dry_run=True)
+
+
+def test_q_li_without_f0_says_so(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _q_li_params(params, run_dir, template_dir)
+    in_eq = template_dir / "copy" / "in_eq"
+    in_eq.write_text("\n".join(l for l in in_eq.read_text().splitlines() if "F0" not in l) + "\n")
+
+    with pytest.raises(ShotfileError, match="needs F0"):
+        prepare_run(params, site, run_dir, dry_run=True)
+
+
+def test_q_li_with_castor_boundary_and_psi(synthetic_campaign, tmp_path):
+    """Only the current comes from q0/l_i/q_edge; grid, T and boundary stay CASTOR3D's."""
+    site, template_dir, params = synthetic_campaign
+    in_eq = template_dir / "copy" / "in_eq"
+    in_eq.write_text(in_eq.read_text().replace("&end", " F0 = 3.0\n&end", 1))
+    params = dataclasses.replace(
+        params, ffprime_method="q_li", current_q0=1.1, current_li=1.2, current_q_edge=3.0,
+    )
+
+    result = prepare_run(params, site, tmp_path / "rundir", dry_run=True)
+
+    assert any("j_prof.dat" in a for a in result.actions)

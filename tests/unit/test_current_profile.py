@@ -87,3 +87,64 @@ def test_temperature_to_jorek():
     assert cur.temperature_to_jorek(1000.0, 0.5) == pytest.approx(
         1000.0 * 1.602176634e-19 * MU_0 * 0.5e20
     )
+
+
+# --- q0, l_i, q_edge ---------------------------------------------------------------
+
+
+def test_wesson_profile_has_its_known_q_ratio_and_li():
+    """j = j0 (1 - rho^2)^nu: q_edge / q0 = nu + 1; nu = 2 gives l_i = 1.2167."""
+    for nu in (1.0, 2.0, 3.0):
+        _, _, q, _ = cur.shape_profile(2.0, nu)
+        assert 1 / q[0] == pytest.approx(nu + 1, rel=1e-5)
+    assert cur.shape_profile(2.0, 2.0)[3] == pytest.approx(1.21667, abs=1e-4)
+
+
+def test_flat_current_has_li_one_half_and_flat_q():
+    _, _, q, li = cur.shape_profile(2.0, 1e-9)
+    assert li == pytest.approx(0.5, abs=1e-3)
+    assert q[0] == pytest.approx(1.0, abs=1e-3)
+
+
+@pytest.mark.parametrize("q0, li, q_edge", [(1.0, 1.2, 3.0), (1.6, 0.9, 3.3), (1.05, 1.5, 4.5)])
+def test_solve_shape_round_trips(q0, li, q_edge):
+    alpha, nu = cur.solve_shape(q0, li, q_edge)
+    _, _, q, li_built = cur.shape_profile(alpha, nu)
+    assert li_built == pytest.approx(li, abs=1e-6)
+    assert q_edge * q[0] == pytest.approx(q0, abs=1e-6)
+    assert q[-1] == pytest.approx(1.0)
+    assert np.all(np.diff(q) >= -1e-12)          # q rises monotonically
+
+
+def test_solve_shape_names_the_window_when_q0_is_out_of_reach():
+    lo, hi = cur.q0_window(1.2, 3.0)
+    assert lo < 1.0 < hi
+    with pytest.raises(ValueError, match=f"{lo:.3f} to {hi:.3f}"):
+        cur.solve_shape(0.2, 1.2, 3.0)
+    with pytest.raises(ValueError, match="0.5"):
+        cur.solve_shape(1.0, 0.4, 3.0)
+
+
+def test_boundary_geometry_of_an_ellipse():
+    theta = np.linspace(0, 2 * np.pi, 400, endpoint=False)
+    bnd = np.column_stack((1.7 + 0.5 * np.cos(theta), 0.1 + 0.8 * np.sin(theta)))
+    g = cur.boundary_geometry(bnd, F0=-3.4)
+    assert (g.R0, g.a, g.kappa, g.B0) == pytest.approx((1.7, 0.5, 1.6, 2.0), rel=1e-4)
+
+
+def test_current_from_q_li_sets_the_size_from_q0():
+    g = cur.PlasmaGeometry(R0=1.5, a=0.5, kappa=1.0, B0=2.0)
+    made = cur.current_from_q_li(1.0, 1.2, 3.0, g)
+    assert made.j0 == pytest.approx(2 * 2.0 / (MU_0 * 1.5 * 1.0))     # circle
+    assert made.j[0] == made.j0 and made.j[-1] == 0.0
+    assert made.q[0] == pytest.approx(1.0, abs=1e-6) and made.q[-1] == pytest.approx(3.0)
+    # the cylinder's edge q from the total current: q_a = 2 pi a^2 B0 / (mu_0 R0 Ip)
+    assert 2 * np.pi * 0.5**2 * 2.0 / (MU_0 * 1.5 * made.Ip) == pytest.approx(3.0, rel=1e-5)
+    assert made.psi_n[0] == 0.0 and made.psi_n[-1] == pytest.approx(1.0)
+
+
+def test_current_from_q_li_elongation_raises_the_current():
+    circle = cur.current_from_q_li(1.0, 1.2, 3.0, cur.PlasmaGeometry(1.5, 0.5, 1.0, 2.0))
+    ellipse = cur.current_from_q_li(1.0, 1.2, 3.0, cur.PlasmaGeometry(1.5, 0.5, 1.6, 2.0))
+    assert ellipse.j0 / circle.j0 == pytest.approx((1 + 1.6**2) / (2 * 1.6))
+    np.testing.assert_allclose(ellipse.q, circle.q)
