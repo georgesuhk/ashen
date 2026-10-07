@@ -45,14 +45,13 @@ from ashen.cli._common import (
     show_config,
 )
 from ashen.castor_io import load_two_col_data
-from ashen.namelist import read_boundary_points
+from ashen.namelist import NamelistError, read_boundary_points
 from ashen.comparisons import Comparison, Dataset, load_comparisons
 from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics.connection_length import connection_length_matrix
 from ashen.diagnostics.four_modes import (
     DELTA_B,
     DELTA_B_OVER_B,
-    delta_b_over_b_series,
     delta_b_series,
     format_growth_rates,
     growth_rate_series,
@@ -126,6 +125,7 @@ from ashen.plotting.theta_histogram import plot_theta_histogram_grid
 from ashen.plotting.wetted_fraction import plot_wetted_fraction_datasets, plot_wetted_fraction_vs_x
 from ashen.postproc import read_zeroD, zero_d_is_usable
 from ashen.quantities import (
+    DELTA_B_NEEDS,
     ZEROD_PREFIX,
     QuantityContext,
     _peak_of_variable,
@@ -133,6 +133,7 @@ from ashen.quantities import (
     describe_quantities,
     is_known_quantity,
     quantity,
+    toroidal_f0,
 )
 from ashen.particle_programs import DIAG_FILES, SETTINGS_FILE, find_diag_file
 from ashen.ptracing import LOG_FILE, other_traces, ptrace_dir, ptrace_label, traced_start
@@ -865,11 +866,8 @@ def _plot_four_modes(
     # only the variable/mode selection with the amplitude-vs-time plots below
     # -- drawn first so a "radial"-only case never reaches the time-series
     # path's zeroD requirement. fetch_vars, not requested_vars: delta_b and
-    # delta_b_over_b are scalar-vs-time quantities only -- _b_r_from_psi scales
-    # |Psi_mn| by a constant m/R_axis**2, so a radial delta_b curve would be
-    # the Psi eigenfunction with a relabelled y-axis. Asking for one here
-    # therefore falls back to that eigenfunction rather than inventing a
-    # rescaling that adds no information.
+    # delta_b_over_b are drawn as scalar-vs-time quantities only, so asking
+    # for one here falls back to the Psi eigenfunction.
     if want_radial:
         _plot_four_radial(
             case, paths, steps,
@@ -913,7 +911,8 @@ def _plot_four_modes(
         remaining = set(requested_derived)
         try:
             r0 = r_axis(paths.log)
-        except LogfileError as exc:
+            f0 = toroidal_f0(case, paths)
+        except (LogfileError, NamelistError, OSError, TypeError, ValueError) as exc:
             print(f"  skipping {', '.join(sorted(remaining))}: {exc}")
             remaining = set()
 
@@ -939,21 +938,23 @@ def _plot_four_modes(
                     remaining.discard(DELTA_B_OVER_B)
 
         if remaining:
-            psi_keys = {k for k in series if k[0] == "Psi"}
-            psi_only = {k: series[k] for k in psi_keys}
-            if DELTA_B in remaining:
-                series.update(delta_b_series(psi_only, r_axis=r0))
-            if DELTA_B_OVER_B in remaining:
-                series.update(delta_b_over_b_series(psi_only, r_axis=r0, b_ref=b_ref))
-            if rational:
-                psi_rational_keys = {k for k in rational if k[0] == "Psi"}
-                psi_rational_only = {k: rational[k] for k in psi_rational_keys}
-                if DELTA_B in remaining:
-                    rational.update(delta_b_series(psi_rational_only, r_axis=r0))
-                if DELTA_B_OVER_B in remaining:
-                    rational.update(
-                        delta_b_over_b_series(psi_rational_only, r_axis=r0, b_ref=b_ref)
-                    )
+            # delta_b divides by each surface's minor radius, which comes
+            # from the step's q-profile and zeroD caches.
+            _ensure_qprofile(case, paths, steps, n_workers=n_workers)
+            _ensure_zero_d(case, paths, steps, n_workers=n_workers)
+            for name in sorted(remaining):
+                ref = b_ref if name == DELTA_B_OVER_B else None
+                converted = delta_b_series(
+                    paths, steps, r_axis=r0, f0=f0, modes=mode_filter, b_ref=ref
+                )
+                if converted and all(np.all(np.isnan(v)) for v in converted.values()):
+                    print(f"  {name}: needs {DELTA_B_NEEDS}; nothing to draw")
+                series.update(converted)
+                if rational:
+                    rational.update(delta_b_series(
+                        paths, steps, r_axis=r0, f0=f0, modes=sorted(rational_modes),
+                        b_ref=ref, rational=True,
+                    ))
 
         # Drop the raw Psi keys unless Psi itself was explicitly requested --
         # they were only fetched as the input to the conversion above.
@@ -1786,21 +1787,14 @@ def _delta_b_xy(
             [(mode[1], mode[0])] if mode is not None
             else ([(n, m) for m, n in case.modes] if case.modes else None)
         )
-        series = max_amplitude_series(
-            paths, case_steps, variables=["Psi"], modes=modes_filter,
-        )
-        psi_only = {k: v for k, v in series.items() if k[0] == "Psi"}
-        if not psi_only:
-            print(f"  {case_name}: no jorek2_four Psi cache found, skipped "
-                  "(run analyse --diag four)")
-            continue
-
         try:
             r0 = r_axis(paths.log)
-        except LogfileError as exc:
+            f0 = toroidal_f0(case, paths)
+        except (LogfileError, NamelistError, OSError, TypeError, ValueError) as exc:
             print(f"  {case_name}: skipping ({exc})")
             continue
 
+        b_ref = None
         if variable == DELTA_B_OVER_B:
             jrun = _jorek2_run(case, paths)
             try:
@@ -1812,9 +1806,19 @@ def _delta_b_xy(
                 print(f"  {case_name}: skipping {DELTA_B_OVER_B} (could not gather "
                       "the Btor profile at the plasma edge for step 0)")
                 continue
-            converted = delta_b_over_b_series(psi_only, r_axis=r0, b_ref=b_ref)
-        else:
-            converted = delta_b_series(psi_only, r_axis=r0)
+
+        _ensure_qprofile(case, paths, case_steps)
+        _ensure_zero_d(case, paths, case_steps)
+        converted = delta_b_series(
+            paths, case_steps, r_axis=r0, f0=f0, modes=modes_filter, b_ref=b_ref
+        )
+        if not converted:
+            print(f"  {case_name}: no jorek2_four Psi cache found, skipped "
+                  "(run analyse --diag four)")
+            continue
+        if all(np.all(np.isnan(v)) for v in converted.values()):
+            print(f"  {case_name}: {variable} needs {DELTA_B_NEEDS}, skipped")
+            continue
 
         if quantity == "max":
             value = _peak_of_variable(converted, variable)

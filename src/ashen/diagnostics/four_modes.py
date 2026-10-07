@@ -17,19 +17,21 @@ import numpy as np
 from ashen.diagnostics import four_cache as fc
 from ashen.diagnostics.qprofile import find_rational_surfaces, read_qprofile
 from ashen.paths import RunPaths
+from ashen.postproc import read_zeroD, zero_d_is_usable
 
 __all__ = [
     "ModeKey", "max_amplitude_series", "radial_amplitude_series",
     "RADIAL_QUANTITIES", "radial_values",
     "rational_surface_series",
-    "DELTA_B", "delta_b_series", "DELTA_B_OVER_B", "delta_b_over_b_series",
+    "DELTA_B", "DELTA_B_OVER_B", "delta_b_series",
+    "effective_minor_radius", "minor_radius_profile",
     "GrowthFit", "fit_growth_rate", "growth_rate_series", "format_growth_rates",
 ]
 
 #: (variable, toroidal mode n, poloidal mode m).
 ModeKey = tuple[str, int, int]
 
-#: Pseudo-variable names delta_b_series/delta_b_over_b_series's output is
+#: Pseudo-variable names delta_b_series's output is
 #: keyed under -- neither is a real jorek2_four cache variable, so callers
 #: gate on these names to request a derived quantity rather than a raw one.
 DELTA_B = "delta_b"
@@ -238,65 +240,106 @@ def rational_surface_series(
     return series
 
 
-def _b_r_from_psi(
-    psi_series: Mapping[ModeKey, np.ndarray],
-    *,
-    r_axis: float,
-    b_ref: float | None,
-    target_name: str,
-) -> dict[ModeKey, np.ndarray]:
-    """Shared conversion behind delta_b_series/delta_b_over_b_series -- see
-    either for the physics. b_ref controls normalised (Tesla/Tesla,
-    dimensionless) vs. raw field magnitude (Tesla)."""
-    out: dict[ModeKey, np.ndarray] = {}
-    for (variable, n, m) in psi_series:
-        if variable != "Psi" or m == 0:
-            continue
-        scale = abs(m) / r_axis**2
-        if b_ref is not None:
-            scale /= b_ref
-        out[(target_name, n, m)] = psi_series[(variable, n, m)] * scale
-    return out
+def effective_minor_radius(
+    psi_n: np.ndarray, q: np.ndarray, *, delta_psi: float, f0: float, r_axis: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """(psi_n, r) with r the radius of the circle that holds each surface's
+    toroidal flux: pi r^2 B0 = 2 pi int q dpsi, B0 = f0 / r_axis.
+
+    psi is per radian (JOREK's), delta_psi = |psi_bnd - psi_axis|. For a
+    shaped surface r is sqrt(area / pi) to leading order in aspect ratio,
+    e.g. a sqrt(kappa) for an ellipse. The q-profile starts just off the
+    axis; q is held flat from there to psi_n = 0, where r = 0.
+    """
+    psi_n = np.asarray(psi_n, dtype=float)
+    q = np.abs(np.asarray(q, dtype=float))
+    if psi_n[0] > 0:
+        psi_n = np.concatenate(([0.0], psi_n))
+        q = np.concatenate(([q[0]], q))
+    flux = np.concatenate(([0.0], np.cumsum(0.5 * (q[1:] + q[:-1]) * np.diff(psi_n))))
+    return psi_n, np.sqrt(2.0 * r_axis * abs(delta_psi) * flux / abs(f0))
+
+
+def minor_radius_profile(
+    paths: RunPaths, step: int, *, f0: float, r_axis: float
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """effective_minor_radius for one step, from its q-profile and zeroD
+    caches. None if either is missing or unreadable."""
+    q_path = paths.qprofile(step)
+    zero_d = paths.zero_d(step)
+    if not q_path.is_file() or not zero_d_is_usable(zero_d):
+        return None
+    values = read_zeroD(zero_d)
+    if "psi_axis" not in values or "psi_bnd" not in values:
+        return None
+    psi_n, q = read_qprofile(q_path)
+    if psi_n.size < 2:
+        return None
+    return effective_minor_radius(
+        psi_n, q, delta_psi=values["psi_bnd"] - values["psi_axis"], f0=f0, r_axis=r_axis
+    )
 
 
 def delta_b_series(
-    psi_series: Mapping[ModeKey, np.ndarray], *, r_axis: float
+    paths: RunPaths,
+    steps: Sequence[int],
+    *,
+    r_axis: float,
+    f0: float,
+    modes: Sequence[tuple[int, int]] | None = None,
+    b_ref: float | None = None,
+    rational: bool = False,
 ) -> dict[ModeKey, np.ndarray]:
-    """Convert a Psi-variable amplitude series (from max_amplitude_series
-    or rational_surface_series, filtered to variable=="Psi") into an
-    approximate perturbed radial field, in Tesla, keyed under DELTA_B
-    instead of "Psi".
+    """Perturbed radial field of each Psi mode, one value per `steps` entry.
 
-    Tearing-mode shorthand: b_r^(m,n) ~ (m/R^2)*|Psi_mn| -- see
-    delta_b_over_b_series for the normalised version and the approximation
-    this makes (r_axis standing in for the true local minor radius).
+    A flux perturbation Psi_mn exp(i m theta) has a field normal to the
+    surface of (1/R) dPsi/dl_pol, so
 
-    m=0 modes carry no helical radial-field content in this shorthand (the
-    m factor vanishes) and are dropped, not shown as a flat zero line --
-    mirrors n=0 being dropped from rational-surface data.
+        delta_b(psi_n) = |m| |Psi_mn(psi_n)| / (r_axis * r(psi_n))   [T]
+
+    with r the surface's effective minor radius (effective_minor_radius).
+    The value kept per step is the largest over the radial grid, or, with
+    `rational`, the largest over the mode's q = m/n surfaces (as
+    rational_surface_series). Keys are (DELTA_B, n, m); with `b_ref` the
+    values are divided by it and keyed (DELTA_B_OVER_B, n, m).
+
+    Approximations: r_axis stands for R everywhere on the surface, and the
+    poloidal angle advances evenly along the surface (a circle of radius r).
+
+    m = 0 modes carry no radial field in this form and are left out, as are
+    n = 0 modes when `rational`. A step without a four cache, or without the
+    q-profile and zeroD caches r needs, is nan.
     """
-    return _b_r_from_psi(psi_series, r_axis=r_axis, b_ref=None, target_name=DELTA_B)
+    target = DELTA_B if b_ref is None else DELTA_B_OVER_B
+    per_step = [fc.read_cache(paths.four_cache(step)) for step in steps]
+    radii = [minor_radius_profile(paths, step, f0=f0, r_axis=r_axis) for step in steps]
+    keys = _select_keys(per_step, ["Psi"], modes)
 
-
-def delta_b_over_b_series(
-    psi_series: Mapping[ModeKey, np.ndarray], *, r_axis: float, b_ref: float
-) -> dict[ModeKey, np.ndarray]:
-    """Convert a Psi-variable amplitude series into an approximate
-    perturbed-field fraction, keyed under DELTA_B_OVER_B instead of "Psi".
-
-    Tearing-mode shorthand normalised by a reference field:
-    delta_b_over_b = (m/r_axis**2)*|Psi_mn|/b_ref. Approximation: the exact
-    relation uses the local minor radius and true |grad Psi|, not the
-    constant major radius at the axis -- but the four cache only carries
-    |Psi_mn| on a psi_n grid, so r_axis stands in for it everywhere.
-
-    b_ref is caller-supplied, not interpreted here -- see
-    profiles.edge_toroidal_field for the reference cli.plot actually feeds
-    in (Btor at the plasma edge, initial-equilibrium step).
-
-    m=0 modes dropped -- see delta_b_series.
-    """
-    return _b_r_from_psi(psi_series, r_axis=r_axis, b_ref=b_ref, target_name=DELTA_B_OVER_B)
+    series: dict[ModeKey, np.ndarray] = {}
+    for _, n, m in keys:
+        if m == 0 or (rational and n == 0):
+            continue
+        values = np.full(len(steps), np.nan)
+        for i, (records, radius, step) in enumerate(zip(per_step, radii, steps)):
+            record = records.get(("Psi", n, m))
+            if record is None or radius is None or not record.abs.size:
+                continue
+            if rational:
+                psi_n_q, q = read_qprofile(paths.qprofile(step))
+                at = np.asarray(find_rational_surfaces(psi_n_q, q, m / n), dtype=float)
+                amp = np.interp(at, record.psi_n, record.abs)
+            else:
+                at, amp = record.psi_n, record.abs
+            # r^2 is the toroidal flux, smooth in psi_n; r itself is a
+            # square root at the axis and interpolates badly there.
+            r = np.sqrt(np.interp(at, radius[0], radius[1] ** 2))
+            ok = r > 0
+            if not np.any(ok):
+                continue
+            field = abs(m) * amp[ok] / (r_axis * r[ok])
+            values[i] = float(np.max(field)) / (b_ref if b_ref is not None else 1.0)
+        series[(target, n, m)] = values
+    return series
 
 
 @dataclass(frozen=True)

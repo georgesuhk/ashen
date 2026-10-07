@@ -167,3 +167,9 @@ def synthetic_campaign(tmp_path):
     )
 
     return site, template_dir, params
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "real_minor_radius: use the real delta_b geometry, not the r = r_axis stub"
+    )

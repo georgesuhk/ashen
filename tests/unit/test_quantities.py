@@ -397,6 +397,28 @@ def test_missing_data_reports_exactly_once(tmp_path, name):
 
 h5py = pytest.importorskip("h5py")
 
+import ashen.quantities as quantities_mod  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _surfaces_at_r_axis(request, monkeypatch):
+    """delta_b is |m| |Psi| / (r_axis * r), with r from each step's q-profile
+    and zeroD caches. These tests are about selection, captions and wiring,
+    so r is pinned to r_axis and F0 to 1: delta_b = |m| |Psi| / r_axis**2,
+    the arithmetic their comments use. The real r is tested in
+    test_four_modes.py, and end to end by tests marked real_minor_radius.
+    """
+    if request.node.get_closest_marker("real_minor_radius"):
+        return
+    from ashen.diagnostics import four_modes
+
+    def flat(paths, step, *, f0, r_axis):
+        return np.array([0.0, 1.0]), np.array([r_axis, r_axis])
+
+    monkeypatch.setattr(four_modes, "minor_radius_profile", flat)
+    for module in (quantities_mod,):
+        monkeypatch.setattr(module, "toroidal_f0", lambda case, paths: 1.0)
+
 from ashen.diagnostics import four_cache as fc  # noqa: E402
 
 
@@ -726,3 +748,34 @@ def test_lc_finite_psi_n_at_deconfinement_step_must_be_a_traced_step(tmp_path):
 
 def test_lc_finite_psi_n_uses_connection_length_step_override():
     assert quantity("lc_finite_psi_n_min").steps_diag == "connection_length"
+
+
+@pytest.mark.real_minor_radius
+def test_delta_b_max_uses_the_surface_s_minor_radius(tmp_path):
+    """Flat q = 1, psi_bnd - psi_axis = 1, F0 = 4, R_axis = 2: r = sqrt(psi_n)."""
+    paths = _paths(tmp_path)
+    _write_log(paths, r_axis=2.0)
+    _write_namelist(paths, F0=4.0)
+    _write_qprofile(paths, 100, [0.0, 0.5, 1.0], [1.0, 1.0, 1.0])
+    _write_zerod(paths, 100, psi_axis=0.0, psi_bnd=1.0)
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_four_record("Psi", n=1, m=2, real_peak=3.0)],
+    )
+    value = quantity("delta_b_max").extract(_ctx(_case(steps=[100]), paths))
+    assert value == pytest.approx(2 * 3.0 / (2.0 * np.sqrt(1 / 3)), rel=1e-6)
+
+
+@pytest.mark.real_minor_radius
+def test_delta_b_max_without_the_radius_caches_is_reported(tmp_path):
+    paths = _paths(tmp_path)
+    _write_log(paths, r_axis=2.0)
+    _write_namelist(paths, F0=4.0)
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_four_record("Psi", n=1, m=2, real_peak=3.0)],
+    )
+    notes = []
+    value = quantity("delta_b_max").extract(_ctx(_case(steps=[100]), paths, report=notes.append))
+    assert value is None
+    assert any("q-profile and zeroD" in n for n in notes)

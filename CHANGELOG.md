@@ -4,6 +4,32 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: `delta_b` divides by the surface's minor radius
+
+- `delta_b` was `(m / R_axis^2) |Psi_mn|`. The field of a flux
+  perturbation is `m |Psi_mn| / (R r)`, with `r` the minor radius of the
+  surface, so the old value was too small by about `R_axis / r`.
+- Now `delta_b = |m| |Psi_mn| / (R_axis r)`, with `r` from the toroidal
+  flux inside each surface (`pi r^2 B0 = 2 pi int q dpsi`). The largest
+  value over the radial grid is kept. `delta_b_over_b`, the rational-surface
+  values, the `--compare ... --diag four` figures and the `delta_b_*` and
+  `energy_32_over_21_*` scan-map quantities all use it.
+- It needs each step's q-profile and zeroD caches and `F0` from the
+  namelist. `plot` gathers a missing q-profile or zeroD on demand.
+- On `qa3.3_g3.2/eta1e-3_adv0.1` (43 steps): the 2/1 peak goes from 1.2 mT
+  to 8.2 mT, 3/1 from 0.76 to 3.4 mT. `r` at the plasma edge comes out
+  0.3737 m; the CASTOR3D boundary's `sqrt(area / pi)` is 0.3733 m.
+- `m = 1` now peaks at the axis (2.0 mT, was 0.06 mT): `Psi` goes as `r`
+  there, so `Psi / r` stays finite.
+- **Every delta_b figure and number made before this is too small** by a
+  factor that differs per mode. Replot to update; nothing needs
+  re-gathering beyond the q-profile and zeroD.
+- `energy_32_over_21` changes too: each mode is now weighted by the radius
+  of the surface it peaks on.
+- Tests: most plot and quantity tests pin `r = r_axis` (an autouse fixture)
+  to keep their arithmetic; `test_four_modes.py` and the tests marked
+  `real_minor_radius` use the real `r`.
+
 ## 2026-10-06: repacking a trace's diagnostics faster
 
 Measured on a 10000-marker file in JOREK's layout (3.3 GB on disk, 660 MB
