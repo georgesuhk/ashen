@@ -196,6 +196,16 @@ def plasma_geometry(run_dir: Path | str, site=None, params=None) -> cur.PlasmaGe
         bnd = load_two_col_data(run_dir / "original_bnd.dat")
     elif params is not None and params.bnd_method == "file" and params.bnd_file_is_plasma:
         bnd = load_two_col_data(run_dir / params.bnd_file)
+    elif params is not None and params.bnd_method == "template" and (
+        (run_dir / params.bnd_file).is_file() or site is not None
+    ):
+        linked = run_dir / params.bnd_file          # the symlink, once prepared
+        if linked.is_file():
+            bnd = load_two_col_data(linked)
+        else:
+            from ashen.runner import boundary_template
+
+            bnd = load_two_col_data(boundary_template(site, params.bnd_file))
     else:
         raise ShotfileError(
             f"{run_dir}: no plasma boundary to take R0, a and kappa from "

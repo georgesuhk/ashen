@@ -4,6 +4,28 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: a campaign boundary in the template; STARWALL response named after it
+
+- `bnd_method = "template"`, `bnd_file = "boundary1.dat"`: the plasma
+  boundary is `template/symlink/boundary/boundary1.dat`, symlinked into
+  each run folder. Expanded by `extend_ratio` with `extend_bnd`, like a
+  CASTOR3D boundary.
+- Such a run's STARWALL response is
+  `starwall-response_boundary1_ext1.2.dat`, or `..._noext.dat` without
+  `extend_bnd`, both for the lookup and for the archive after `--run_sw`
+  (`runner.starwall_response_name`). One response serves every current
+  profile on that boundary: the response depends on the domain boundary
+  and the wall, not on the plasma.
+- `qa` and `g` are not required in such a shotfile; the batch job is
+  `<boundary>_<eta>` (`runner.job_name`).
+- Other runs keep `starwall-response_qa<qa>_g<g>.dat` and `<g>_<eta>`.
+- Found while checking: JOREK verifies only the number of boundary
+  elements when reading a response (`vacuum_response.f90`), so a response
+  for another boundary shape is accepted silently. That includes the old
+  responses made with the 1 cm-rounded boundary.
+- The demo campaign uses a campaign boundary.
+- Unverified: no `--run_sw` has been run under the new name.
+
 ## 2026-10-07: scan files: several runs from one base shotfile
 
 - A scan file (TOML, in the campaign) names a base shotfile, a parent

@@ -65,8 +65,6 @@ class ShotParams:
     """Validated shotfile parameters. See the module docstring for loading."""
 
     # --- required -------------------------------------------------------
-    qa: float
-    g: float
     eta: float
     tstep_n: list
     nstep_n: list
@@ -77,6 +75,14 @@ class ShotParams:
     T_method: str
     rho_method: str
     bnd_method: str
+
+    # --- required unless bnd_method = "template" ---------------------------
+    #: CASTOR3D's edge q and peaking parameter. They name the STARWALL
+    #: response and the batch job. A run on a campaign boundary
+    #: (bnd_method="template") is named by that boundary instead
+    #: (runner.starwall_response_name) and needs neither.
+    qa: float | None = None
+    g: float | None = None
 
     # --- defaults ---------------------------------------------------------
     extend_bnd: bool = True
@@ -127,6 +133,9 @@ class ShotParams:
     #: T_method="const": Te + Ti [eV], flat.
     T_const: float | None = None
 
+    #: bnd_method="template": bnd_file names a plasma boundary shared by the
+    #: campaign, template/symlink/boundary/<bnd_file>. The run folder gets a
+    #: symlink to it, and the STARWALL response is named after it.
     #: bnd_method="file": True means bnd_file is the plasma boundary, to be
     #: expanded by extend_ratio like a CASTOR3D one when extend_bnd is on.
     #: False (as before) uses bnd_file as the domain boundary as it stands.
@@ -143,6 +152,10 @@ class ShotParams:
     Dre_par: float | None = None
 
     def __post_init__(self) -> None:
+        if self.bnd_method != "template":
+            missing = [name for name in ("qa", "g") if getattr(self, name) is None]
+            if missing:
+                raise ShotfileError("missing required field(s): " + ", ".join(missing))
         uses_castor = "castor" in (
             self.ffprime_method, self.T_method, self.rho_method, self.bnd_method
         )
@@ -159,8 +172,13 @@ class ShotParams:
             )
         if self.rho_method == "const" and self.rho_const is None:
             raise ShotfileError("rho_const is required when rho_method='const'")
-        if self.bnd_method == "file" and self.bnd_file is None:
-            raise ShotfileError("bnd_file is required when bnd_method='file'")
+        if self.bnd_method in ("file", "template") and self.bnd_file is None:
+            raise ShotfileError(f"bnd_file is required when bnd_method={self.bnd_method!r}")
+        if self.bnd_method == "template" and Path(self.bnd_file).name != self.bnd_file:
+            raise ShotfileError(
+                "bnd_method='template' takes a file name in the template's "
+                f"symlink/boundary/ folder, not a path: {self.bnd_file!r}"
+            )
         if self.ffprime_method == "q_li":
             missing = [
                 f for f in ("current_q0", "current_li", "current_q_edge")

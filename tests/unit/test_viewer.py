@@ -224,6 +224,7 @@ nstep_n = [10]
 nout = 1
 exe = "jorek_test_exe"
 jobscript = "23h"
+freeboundary = False
 rho_const = 1e18
 ffprime_method = "q_li"
 T_method = "const"
@@ -356,3 +357,33 @@ def test_tuner_status_other_ffprime_method(tmp_path):
     )
     notes = viewer.tuner_status(run, 1.1, 1.2, 3.0)
     assert len(notes) == 1 and "ffprime_method = 'current'" in notes[0]
+
+
+def test_profile_tuner_on_a_campaign_boundary_before_anything_is_prepared(
+    synthetic_campaign, tmp_path, symlinks_maybe_bypassed
+):
+    pytest.importorskip("ipywidgets")
+    from ashen.shotfile import load_shotfile
+
+    site, template_dir, _ = synthetic_campaign
+    in_eq = template_dir / "copy" / "in_eq"
+    in_eq.write_text(in_eq.read_text().replace("&end", " F0 = 3.0\n&end", 1))
+    (template_dir / "symlink" / "boundary").mkdir(parents=True)
+    np.savetxt(template_dir / "symlink" / "boundary" / "boundary1.dat", _ellipse())
+    run = tmp_path / "newrun"
+    run.mkdir()
+    (run / "shotfile.py").write_text(
+        SHOTFILE.replace('bnd_method = "file"\nbnd_file = "bnd.dat"\nbnd_file_is_plasma = True',
+                         'bnd_method = "template"\nbnd_file = "boundary1.dat"')
+        .replace("qa = 2.1\ng = 2.3\n", "")
+    )
+    assert "qa" not in (run / "shotfile.py").read_text()
+
+    g = viewer.plasma_geometry(run, site, load_shotfile(run / "shotfile.py"))
+    assert (g.R0, g.a, g.kappa) == pytest.approx((1.5, 0.5, 1.2), rel=1e-3)
+
+    box = viewer.profile_tuner(run, site=site)
+    (_, _, _), (_, regenerate) = _tuner_children(box)
+    regenerate.click()
+    assert (run / "ffprime_prof.dat").is_file() and (run / "boundary1.dat").is_file()
+    assert box.children[2].value == ""

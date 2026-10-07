@@ -90,8 +90,6 @@ n_starwall          = 1
 
 _SHOTFILE = """\
 # A made-up shot written by ashen.demo, for trying the viewer.
-qa = 3.3
-g = 3.2
 n0 = 1e18
 eta = 1e-3
 tstep_n = [0.03]
@@ -114,9 +112,9 @@ T_const = 100.0
 rho_method = "const"
 rho_const = n0
 
-bnd_method = "file"
-bnd_file = "plasma_bnd.dat"
-bnd_file_is_plasma = True
+# the campaign's boundary: template/symlink/boundary/boundary1.dat
+bnd_method = "template"
+bnd_file = "boundary1.dat"
 """
 
 
@@ -130,7 +128,8 @@ def _plasma_boundary(n: int = 180) -> np.ndarray:
 def _write_campaign(root: Path) -> Path:
     for sub in ("exe", "jobscripts", "jorek/util", "jorek_RE/util", "castor3d",
                 "template/copy", "template/symlink/base", "template/symlink/RE",
-                "template/symlink/standard", "template/symlink/starwall"):
+                "template/symlink/standard", "template/symlink/starwall",
+                "template/symlink/boundary"):
         (root / sub).mkdir(parents=True, exist_ok=True)
     (root / "site.toml").write_text(_SITE, encoding="utf-8")
     (root / "exe" / "jorek_model600_demo").write_text("#!/bin/sh\necho 'demo: not JOREK'\n")
@@ -265,7 +264,7 @@ def make_demo_campaign(root: Path | str) -> Path:
     if not shotfile.is_file():
         shotfile.write_text(_SHOTFILE, encoding="utf-8")
     bnd = _plasma_boundary()
-    np.savetxt(run_dir / "plasma_bnd.dat", bnd)
+    np.savetxt(root / "template" / "symlink" / "boundary" / "boundary1.dat", bnd)
 
     params = load_shotfile(shotfile)
     prepare_run(params, load_site(root / "site.toml"), run_dir)
