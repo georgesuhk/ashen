@@ -235,7 +235,7 @@ bnd_file = "bnd.dat"
 bnd_file_is_plasma = True
 current_q0 = 1.1
 current_li = 1.2
-current_q_edge = 3.0
+current_qa = 3.0
 """
 
 
@@ -312,7 +312,7 @@ def _status_folder(tmp_path, *, method="q_li", generated=(1.1, 1.2, 3.0)):
     if generated is not None:
         (run / "j_prof.dat").write_text(
             "# made by run_jorek\n"
-            f"# requested: q0 = {generated[0]:g}, l_i = {generated[1]:g}, q_edge = {generated[2]:g}\n"
+            f"# requested: q0 = {generated[0]:g}, l_i = {generated[1]:g}, qa = {generated[2]:g}\n"
             "0.0 1.0\n1.0 0.0\n"
         )
     return run
@@ -377,7 +377,8 @@ def test_profile_tuner_on_a_campaign_boundary_before_anything_is_prepared(
                          'bnd_method = "template"\nbnd_file = "boundary1.dat"')
         .replace("qa = 2.1\ng = 2.3\n", "")
     )
-    assert "qa" not in (run / "shotfile.py").read_text()
+    lines = (run / "shotfile.py").read_text().splitlines()
+    assert not any(line.startswith(("qa =", "g =")) for line in lines)
 
     g = viewer.plasma_geometry(run, site, load_shotfile(run / "shotfile.py"))
     assert (g.R0, g.a, g.kappa) == pytest.approx((1.5, 0.5, 1.2), rel=1e-3)
@@ -387,3 +388,12 @@ def test_profile_tuner_on_a_campaign_boundary_before_anything_is_prepared(
     regenerate.click()
     assert (run / "ffprime_prof.dat").is_file() and (run / "boundary1.dat").is_file()
     assert box.children[2].value == ""
+
+
+def test_tuner_status_reads_a_j_prof_written_before_the_rename(tmp_path):
+    """j_prof.dat headers used to say q_edge; they still count."""
+    run = _status_folder(tmp_path, generated=None)
+    (run / "j_prof.dat").write_text(
+        "# requested: q0 = 1.1, l_i = 1.2, q_edge = 3\n0.0 1.0\n1.0 0.0\n"
+    )
+    assert viewer.tuner_status(run, 1.1, 1.2, 3.0) == []

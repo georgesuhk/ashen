@@ -249,7 +249,7 @@ def _j_prof_text(params: ShotParams, geometry, made, current_R0: float) -> str:
     head = [
         "# made by run_jorek from ffprime_method = \"q_li\"; rewritten on every run",
         f"# requested: q0 = {params.current_q0:g}, l_i = {params.current_li:g}, "
-        f"q_edge = {params.current_q_edge:g}",
+        f"qa = {params.current_qa:g}",
         f"# shape: j = j0 (1 - rho^alpha)^nu, alpha = {made.alpha:.6g}, nu = {made.nu:.6g}",
         f"# j0 = {made.j0:.6e} A/m^2, Ip = {made.Ip:.6e} A, l_i as built = {made.li:.6f}",
         f"# geometry: R0 = {geometry.R0:.6f} m, a = {geometry.a:.6f} m, "
@@ -497,7 +497,7 @@ def prepare_run(
         if params.ffprime_method == "q_li":
             try:
                 made = cur_mod.current_from_q_li(
-                    params.current_q0, params.current_li, params.current_q_edge, geometry
+                    params.current_q0, params.current_li, params.current_qa, geometry
                 )
             except ValueError as exc:
                 raise ShotfileError(str(exc)) from exc

@@ -216,7 +216,7 @@ def plasma_geometry(run_dir: Path | str, site=None, params=None) -> cur.PlasmaGe
 
 
 _REQUESTED = re.compile(
-    r"requested:\s*q0\s*=\s*([-\d.eE+]+),\s*l_i\s*=\s*([-\d.eE+]+),\s*q_edge\s*=\s*([-\d.eE+]+)"
+    r"requested:\s*q0\s*=\s*([-\d.eE+]+),\s*l_i\s*=\s*([-\d.eE+]+),\s*(?:qa|q_edge)\s*=\s*([-\d.eE+]+)"
 )
 
 
@@ -237,7 +237,7 @@ def tuner_status(run_dir: Path | str, q0: float, li: float, q_edge: float) -> li
         params = load_shotfile(run_dir / "shotfile.py")
     except (ShotfileError, OSError) as exc:
         return [f"shotfile.py could not be read: {exc}"]
-    saved = (params.current_q0, params.current_li, params.current_q_edge)
+    saved = (params.current_q0, params.current_li, params.current_qa)
     is_q_li = params.ffprime_method == "q_li" and None not in saved
 
     if not is_q_li:
@@ -248,7 +248,7 @@ def tuner_status(run_dir: Path | str, q0: float, li: float, q_edge: float) -> li
     elif not _same((q0, li, q_edge), saved):
         warnings.append(
             "Sliders differ from shotfile.py "
-            f"(q0 = {saved[0]:g}, l_i = {saved[1]:g}, q_edge = {saved[2]:g}): not saved."
+            f"(q0 = {saved[0]:g}, l_i = {saved[1]:g}, qa = {saved[2]:g}): not saved."
         )
 
     if is_q_li:
@@ -268,8 +268,8 @@ def tuner_status(run_dir: Path | str, q0: float, li: float, q_edge: float) -> li
                 warnings.append(
                     "Input files are out of date: j_prof.dat and ffprime_prof.dat were "
                     f"made for q0 = {generated[0]:g}, l_i = {generated[1]:g}, "
-                    f"q_edge = {generated[2]:g}, but shotfile.py now has "
-                    f"q0 = {saved[0]:g}, l_i = {saved[1]:g}, q_edge = {saved[2]:g}. "
+                    f"qa = {generated[2]:g}, but shotfile.py now has "
+                    f"q0 = {saved[0]:g}, l_i = {saved[1]:g}, qa = {saved[2]:g}. "
                     "Regenerate inputs before running JOREK."
                 )
     return warnings
@@ -310,7 +310,7 @@ def tuner_figure(
     try:
         made = cur.current_from_q_li(q0, li, q_edge, geometry)
         message = (
-            f"q0 = {made.q[0]:.3f}   l_i = {made.li:.3f}   q_edge = {made.q[-1]:.3f}   |   "
+            f"q0 = {made.q[0]:.3f}   l_i = {made.li:.3f}   qa = {made.q[-1]:.3f}   |   "
             f"j0 = {made.j0 / 1e6:.2f} MA/m²   Ip = {made.Ip / 1e3:.0f} kA   "
             f"alpha = {made.alpha:.2f}   nu = {made.nu:.3g}"
         )
@@ -329,7 +329,7 @@ def tuner_figure(
         )
         message += (
             f"\nJOREK:  q0 = {achieved.q0:.3f}   l_i = {achieved.li:.3f}   "
-            f"q_edge = {achieved.q_edge:.3f}   (plasma only; a = {achieved.a:.3f} m)"
+            f"qa = {achieved.q_edge:.3f}   (plasma only; a = {achieved.a:.3f} m)"
         )
         whole = [f"{k} = {achieved.zero_d[k]:.3f}" for k in ("li3", "q95") if k in achieved.zero_d]
         if whole:
@@ -594,7 +594,7 @@ def _slider(w, value, lo, hi, step, name):
 
 
 def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
-    """Sliders for q0, l_i and q_edge of the case's shotfile.
+    """Sliders for q0, l_i and qa (edge q) of the case's shotfile.
 
     **Save to shotfile** writes the three values (and ``ffprime_method =
     "q_li"``) into ``shotfile.py``. **Regenerate inputs** then prepares the run
@@ -619,11 +619,11 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
     start = (
         params.current_q0 or (achieved.q0 if achieved else 1.0),
         params.current_li or (achieved.li if achieved else 1.2),
-        params.current_q_edge or (achieved.q_edge if achieved else 3.0),
+        params.current_qa or (achieved.q_edge if achieved else 3.0),
     )
     q0 = _slider(w, start[0], 0.3, 4.0, 0.01, "q0")
     li = _slider(w, start[1], 0.55, 2.5, 0.01, "l_i")
-    q_edge = _slider(w, start[2], 1.5, 10.0, 0.05, "q_edge")
+    q_edge = _slider(w, start[2], 1.5, 10.0, 0.05, "qa")
     save = w.Button(description="Save to shotfile", button_style="primary")
     regenerate = w.Button(description="Regenerate inputs")
     figure_out, log_out = w.Output(), w.Output()
@@ -651,13 +651,13 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
                     "ffprime_method": "q_li",
                     "current_q0": round(q0.value, 4),
                     "current_li": round(li.value, 4),
-                    "current_q_edge": round(q_edge.value, 4),
+                    "current_qa": round(q_edge.value, 4),
                 })
             except (ShotfileError, ValueError) as exc:
                 print(f"not saved: {exc}")
                 return
             print(f"saved to {shotfile}: q0 = {q0.value:.4g}, l_i = {li.value:.4g}, "
-                  f"q_edge = {q_edge.value:.4g}.")
+                  f"qa = {q_edge.value:.4g}.")
         refresh_status()
 
     def on_regenerate(_):

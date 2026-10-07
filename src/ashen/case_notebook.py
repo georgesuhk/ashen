@@ -63,7 +63,7 @@ def case_notebook(ashen_src: str | None = None) -> dict:
             "print(RUN)"
         ),
         _markdown(
-            "## Current profile from q0, l_i, q_edge\n\n"
+            "## Current profile from q0, l_i, qa\n\n"
             "**Save to shotfile** writes the three values and `ffprime_method = \"q_li\"` into\n"
             "`shotfile.py`; **Regenerate inputs** then rewrites this folder's input files from the\n"
             "shotfile. A yellow band says when the two are out of step. `step` is the restart whose\n"

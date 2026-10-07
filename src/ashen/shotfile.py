@@ -46,6 +46,10 @@ __all__ = ["ShotParams", "ShotfileError", "load_shotfile", "set_shotfile_values"
 #: keep loading rather than breaking outright.
 _DEPRECATED_FIELDS = {"shot_folder", "template_folder", "castor_master_folder"}
 
+#: Fields that were renamed: old name -> new name. An old one is an error
+#: that names the new one, not a silent alias.
+_RENAMED_FIELDS = {"current_q_edge": "current_qa"}
+
 _RE_FIELDS = (
     "re_initialize",
     "initial_re_current_fraction",
@@ -126,9 +130,10 @@ class ShotParams:
 
     #: ffprime_method="q_li": the current profile is built from these three
     #: (ashen.current_profile.current_from_q_li) and written to j_prof.dat.
+    #: current_qa is q at the plasma edge (called q_edge in the model).
     current_q0: float | None = None
     current_li: float | None = None
-    current_q_edge: float | None = None
+    current_qa: float | None = None
 
     #: T_method="const": Te + Ti [eV], flat.
     T_const: float | None = None
@@ -181,7 +186,7 @@ class ShotParams:
             )
         if self.ffprime_method == "q_li":
             missing = [
-                f for f in ("current_q0", "current_li", "current_q_edge")
+                f for f in ("current_q0", "current_li", "current_qa")
                 if getattr(self, f) is None
             ]
             if missing:
@@ -242,6 +247,11 @@ def _from_module(module: types.ModuleType, source: Path) -> ShotParams:
             stacklevel=2,
         )
         del provided[deprecated]
+
+    renamed = sorted(_RENAMED_FIELDS.keys() & provided.keys())
+    if renamed:
+        detail = ", ".join(f"{old} is now {_RENAMED_FIELDS[old]}" for old in renamed)
+        raise ShotfileError(f"{source}: renamed shotfile field(s): {detail}")
 
     # Extra names are allowed (scratch/intermediate variables, e.g. `n0` used
     # only to compute `rho_const = n0`), UNLESS one is a close spelling match

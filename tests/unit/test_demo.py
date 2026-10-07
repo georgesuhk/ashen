@@ -34,7 +34,7 @@ def test_demo_equilibrium_is_a_little_off_the_request(demo_run):
     got = achieved_q_li(RunPaths.detect(demo_run), 0, f0=3.7)
     assert got.q0 == pytest.approx(params.current_q0 + 0.05, abs=5e-3)
     assert got.li == pytest.approx(params.current_li + 0.06, abs=1e-2)
-    assert got.q_edge == pytest.approx(params.current_q_edge - 0.12, abs=1e-2)
+    assert got.q_edge == pytest.approx(params.current_qa - 0.12, abs=1e-2)
     assert got.real_psi_edge == pytest.approx(1 / 1.2)
 
 
