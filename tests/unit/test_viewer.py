@@ -241,7 +241,7 @@ current_qa = 3.0
 
 def _tuner_children(box):
     sliders, buttons = box.children[0].children, box.children[1].children
-    return sliders, buttons
+    return sliders, buttons[:2]              # save, regenerate; the third is reset
 
 
 def test_profile_tuner_saves_and_regenerates(synthetic_campaign, tmp_path, symlinks_maybe_bypassed, capsys):
@@ -397,3 +397,108 @@ def test_tuner_status_reads_a_j_prof_written_before_the_rename(tmp_path):
         "# requested: q0 = 1.1, l_i = 1.2, q_edge = 3\n0.0 1.0\n1.0 0.0\n"
     )
     assert viewer.tuner_status(run, 1.1, 1.2, 3.0) == []
+
+
+# --- folder_name_mismatches -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("folder, values, expected", [
+    ("qa2.1_li1.0_q01.0/eta1e-3", (1.0, 1.0, 2.1), []),
+    ("qa2.1_li1.0_q01.0/eta1e-3", (1.04, 0.96, 2.14), []),              # round to the name
+    ("qa2.1_li1.0_q01.0/eta1e-3", (1.0, 1.2, 2.1), ["l_i = 1.0", ]),
+    ("qa2.1_li1.0_q01.0/eta1e-3", (1.3, 1.2, 2.8), ["qa = 2.1", "l_i = 1.0", "q0 = 1.0"]),
+    ("qa2.1_li1.25_q01/eta1e-3", (1.4, 1.25, 2.1), []),                 # q01: no decimals
+    ("qa2.1_li1.25_q01/eta1e-3", (1.6, 1.254, 2.1), ["q0 = 1"]),
+    ("scan/qa2.8_li0.85", (1.5, 0.85, 2.8), []),                        # in the run folder's own name
+    ("scan/qa2.8_li0.85", (1.5, 0.95, 2.8), ["l_i = 0.85"]),
+    ("demo_shot/q_li_demo", (1.0, 1.2, 3.0), []),                       # q_li_demo names no value
+    ("equality/quality0.5", (1.0, 1.2, 3.0), []),
+    ("qa3.3_g3.2/eta1e-3_adv0.1", (0.9, 1.4, 3.3), []),                 # g is not a profile value
+])
+def test_folder_name_mismatches(tmp_path, folder, values, expected):
+    q0, li, qa = values
+    notes = viewer.folder_name_mismatches(tmp_path / folder, q0, li, qa)
+    assert len(notes) == len(expected)
+    for note, fragment in zip(notes, expected):
+        assert f"says {fragment} " in note and "but the profile has" in note
+
+
+def test_profile_tuner_shows_a_red_band_for_a_misnamed_folder(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    pytest.importorskip("ipywidgets")
+    site, template_dir, _ = synthetic_campaign
+    in_eq = template_dir / "copy" / "in_eq"
+    in_eq.write_text(in_eq.read_text().replace("&end", " F0 = 3.0\n&end", 1))
+    run = tmp_path / "qa3.0_li1.2_q01.1" / "eta1e-3"
+    run.mkdir(parents=True)
+    (run / "shotfile.py").write_text(SHOTFILE)
+    np.savetxt(run / "bnd.dat", _ellipse())
+
+    box = viewer.profile_tuner(run, site=site)
+    (q0, li, qa), _ = _tuner_children(box)
+    status = box.children[2]
+    assert "Folder name says" not in status.value               # 1.1, 1.2, 3.0 match the name
+
+    li.value = 1.45
+    assert "#f8d7da" in status.value                            # red
+    assert "Folder name says l_i = 1.2" in status.value and "l_i = 1.45" in status.value
+    assert status.value.index("Folder name says") < status.value.index("not saved")   # red first
+
+    li.value = 1.2
+    assert "Folder name says" not in status.value
+
+
+def test_profile_tuner_reset_puts_the_sliders_back_to_the_shotfile(
+    synthetic_campaign, tmp_path, symlinks_maybe_bypassed, capsys
+):
+    pytest.importorskip("ipywidgets")
+    from ashen.shotfile import set_shotfile_values
+
+    site, template_dir, _ = synthetic_campaign
+    in_eq = template_dir / "copy" / "in_eq"
+    in_eq.write_text(in_eq.read_text().replace("&end", " F0 = 3.0\n&end", 1))
+    run = tmp_path / "newrun"
+    run.mkdir()
+    (run / "shotfile.py").write_text(SHOTFILE)
+    np.savetxt(run / "bnd.dat", _ellipse())
+
+    box = viewer.profile_tuner(run, site=site)
+    (q0, li, qa), _ = _tuner_children(box)
+    reset = box.children[1].children[2]
+    status = box.children[2]
+    assert reset.description == "Reset to shotfile"
+
+    q0.value, li.value, qa.value = 1.4, 1.0, 4.5
+    assert "not saved" in status.value
+    reset.click()
+    assert (q0.value, li.value, qa.value) == (1.1, 1.2, 3.0)
+    assert "not saved" not in status.value
+    assert "sliders back to shotfile.py" in capsys.readouterr().out
+    assert (run / "shotfile.py").read_text() == SHOTFILE          # reset writes nothing
+
+    # it reads the file as it is now, even a value beyond the slider's travel
+    set_shotfile_values(run / "shotfile.py", {"current_qa": 12.0, "current_li": 2.3})
+    reset.click()
+    assert (qa.value, li.value) == (12.0, 2.3)
+
+
+def test_profile_tuner_reset_without_saved_values_says_so(synthetic_campaign, tmp_path, capsys):
+    pytest.importorskip("ipywidgets")
+    site, template_dir, _ = synthetic_campaign
+    in_eq = template_dir / "copy" / "in_eq"
+    in_eq.write_text(in_eq.read_text().replace("&end", " F0 = 3.0\n&end", 1))
+    run = tmp_path / "newrun"
+    run.mkdir()
+    np.savetxt(run / "bnd.dat", _ellipse())
+    np.savetxt(run / "j.dat", np.column_stack(([0.0, 1.0], [1e6, 0.0])))
+    (run / "shotfile.py").write_text(
+        SHOTFILE.replace('ffprime_method = "q_li"', 'ffprime_method = "current"\ncurrent_file = "j.dat"')
+        .replace("current_q0 = 1.1\ncurrent_li = 1.2\ncurrent_qa = 3.0\n", "")
+    )
+
+    box = viewer.profile_tuner(run, site=site)
+    (q0, _, _), _ = _tuner_children(box)
+    q0.value = 1.3
+    box.children[1].children[2].click()
+
+    assert q0.value == 1.3
+    assert "not reset" in capsys.readouterr().out
