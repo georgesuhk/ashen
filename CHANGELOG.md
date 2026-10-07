@@ -4,6 +4,50 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: `four_delta_b_at = "edge"`: delta_b at the domain edge
+
+- A case key. `"max"` (default) keeps the largest `delta_b` over the
+  radial grid. `"edge"` takes the value at the outermost radial point, the
+  edge of JOREK's domain: with `extend_bnd`, in the vacuum outside the
+  plasma, as a probe there would see it.
+- Figures: `four_dir/delta_b_edge_modes_step.png` and `_time.png`, labelled
+  with the radius. Also used by `delta_b_over_b`, `--compare ... --diag
+  four` and the `delta_b_*` scan-map quantities for that case.
+- On `qa3.3_g3.2/eta1e-3_adv0.1`, step 26000, at r = 0.447 m: 2/1 is
+  0.35 mT (8.2 mT at its peak inside), 3/1 is 0.80 mT.
+- The radius cannot be chosen. A fall-off law to reach further out was
+  tried and dropped: the fitted exponents in the run's vacuum region were
+  -3.8, -3.2 and -1.6 for m = 2, 3, 4, against -2, -3, -4 expected.
+- Caveat: the modes are straight-field-line harmonics. At the domain edge
+  one perturbation spreads over several `m` (here n = 1 is largest in
+  m = 3 to 7), which is not what a probe array would resolve.
+- Unverified: not compared with `jorek2_fields_xyz`, which is not built.
+
+## 2026-10-07: `delta_b` divides by the surface's minor radius
+
+- `delta_b` was `(m / R_axis^2) |Psi_mn|`. The field of a flux
+  perturbation is `m |Psi_mn| / (R r)`, with `r` the minor radius of the
+  surface, so the old value was too small by about `R_axis / r`.
+- Now `delta_b = |m| |Psi_mn| / (R_axis r)`, with `r` from the toroidal
+  flux inside each surface (`pi r^2 B0 = 2 pi int q dpsi`). The largest
+  value over the radial grid is kept. `delta_b_over_b`, the rational-surface
+  values, the `--compare ... --diag four` figures and the `delta_b_*` and
+  `energy_32_over_21_*` scan-map quantities all use it.
+- It needs each step's q-profile and zeroD caches and `F0` from the
+  namelist. `plot` gathers a missing q-profile or zeroD on demand.
+- On `qa3.3_g3.2/eta1e-3_adv0.1` (43 steps): the 2/1 peak goes from 1.2 mT
+  to 8.2 mT, 3/1 from 0.76 to 3.4 mT. `r` at the plasma edge comes out
+  0.3737 m; the CASTOR3D boundary's `sqrt(area / pi)` is 0.3733 m.
+- `m = 1` now peaks at the axis (2.0 mT, was 0.06 mT): `Psi` goes as `r`
+  there, so `Psi / r` stays finite.
+- **Every delta_b figure and number made before this is too small** by a
+  factor that differs per mode. Replot to update; nothing needs
+  re-gathering beyond the q-profile and zeroD.
+- `energy_32_over_21` changes too: each mode is now weighted by the radius
+  of the surface it peaks on.
+- Tests: most plot and quantity tests pin `r = r_axis` (an autouse fixture)
+  to keep their arithmetic; `test_four_modes.py` and the tests marked
+  `real_minor_radius` use the real `r`.
 ## 2026-10-07: current profile and boundary from files, without CASTOR3D
 
 - `ffprime_method = "current"` reads `current_file` (x, j in A/m^2) and

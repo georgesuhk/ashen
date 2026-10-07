@@ -1111,11 +1111,8 @@ each goes to its own `<var>_eigenfunction_real_psin.png` /
 `<var>_eigenfunction_phase_psin.png` so the `|c|` figure is never
 overwritten.
 
-`delta_b`/`delta_b_over_b` have no radial form here: `b_r ~ (m/R_axis^2)
-|Psi_mn|` scales by a **constant**, so a radial `delta_b` curve would be the
-`Psi` eigenfunction with a relabelled y-axis. Requesting one under `radial`
-falls back to that `Psi` eigenfunction rather than drawing a rescaling that
-carries no extra information.
+`delta_b`/`delta_b_over_b` are not drawn as radial curves. Requesting one
+under `radial` falls back to the `Psi` eigenfunction.
 
 **Growth rate.** `four_growth_rate = true` (case field, plot-time only) fits
 each drawn mode's exponential growth rate -- `gamma` [1/s], the slope of
@@ -1142,23 +1139,37 @@ four_growth_steps = [1000, 3000]   # inclusive; omit to fit every step
 
 **`delta_b_over_b`.** A pseudo-variable for `four_vars` -- not a raw
 `jorek2_four` output (there is no `B` primitive in JOREK's restart file, only
-`Psi`, the poloidal flux), so it's derived from `Psi`'s amplitude using the
-standard tearing-mode shorthand:
+`Psi`, the poloidal flux), so it's derived from `Psi`'s amplitude. A flux
+perturbation `Psi_mn exp(i m theta)` has a field normal to the surface of
+`(1/R) dPsi/dl_pol`:
 
 ```
-delta_b_over_b(m,n) = (m / R_axis^2) * |Psi_mn| / B_ref
+delta_b(m,n)(psi_n) = |m| * |Psi_mn(psi_n)| / (R_axis * r(psi_n))
+delta_b_over_b      = delta_b / B_ref
 ```
+
+`r` is the surface's effective minor radius, the radius of the circle that
+holds its toroidal flux: `pi r^2 B0 = 2 pi * integral of q dpsi`, with
+`B0 = F0 / R_axis`. For a shaped surface that is `sqrt(area / pi)`.
+
+- It needs each step's q-profile and zeroD caches (`psi_axis`, `psi_bnd`)
+  and `F0` from the case's namelist. `plot` gathers a missing q-profile or
+  zeroD on demand. A step still without them is a gap in the line.
+- The value per step is the largest `delta_b` over the radial grid, so the
+  `1/r` is applied before the maximum is taken. For `m = 1`, `Psi` goes as
+  `r` at the axis, so `delta_b` is finite there and often largest there.
+- Approximations: `R_axis` stands for `R` everywhere on the surface, and the
+  poloidal angle is taken to advance evenly along it.
+- Until 2026-10-07 this was `(m / R_axis^2) |Psi_mn|`, with `R_axis` in
+  place of `r`: too small by about `R_axis / r`, a factor of 4 to 7 for the
+  2/1 and 3/2 modes of `qa3.3_g3.2/eta1e-3_adv0.1`.
 
 `R_axis` is read from the run's `log` (`ashen.logfile.r_axis`). `B_ref` is
 `Btor` interpolated to the plasma edge (`psi_n = 1`) from the cached
 step-0 (initial-equilibrium) midplane profile
 (`ashen.diagnostics.profiles.edge_toroidal_field`) -- a fixed reference
-field, not the perturbed run's own evolving field. This is an approximation:
-the exact relation uses the true local minor radius and `|grad Psi|`, not
-the (constant) major radius at the magnetic axis, but the four cache only
-carries `|Psi_mn|` on a `psi_n` grid, not real-space geometry, so `R_axis`
-stands in for it everywhere. `m = 0` modes are dropped (no helical
-radial-field content in this shorthand) rather than drawn as a flat zero line.
+field, not the perturbed run's own evolving field. `m = 0` modes are dropped
+(no radial field in this form) rather than drawn as a flat zero line.
 
 `B_ref` needs `Btor` at step 0 (`"midplane outer"`, not bare `"midplane"`,
 which is double-valued in `Psi_N`) -- `plot` gathers this one profile itself
@@ -1176,17 +1187,46 @@ other missing input this section describes -- rather than aborting the whole
 Only computed when explicitly requested -- an empty/unset `four_vars` never
 picks it up, since it isn't "everything found in the cache". Works with
 either `four_quantities` selection (whole-domain max or rational-surface
-value), since it's a post-conversion of whichever `Psi` series was computed:
+value). At a rational surface, `r` is that surface's:
 
 ```toml
 four_vars = ["delta_b_over_b"]              # only the derived quantity
 four_vars = ["Psi", "delta_b_over_b"]       # raw flux amplitude alongside it
 ```
 
-**`delta_b`** is the same quantity un-normalised -- `(m / R_axis^2) *
-|Psi_mn|`, in Tesla, with no division by `B_ref`. It only needs `R_axis`
-from the log, not the `Btor` profile, so it still works on a run that hasn't
-gathered step-0 profiles; `delta_b_over_b` does not. The two can be
+**At the domain edge: `four_delta_b_at = "edge"`.** By default `delta_b`
+is the largest value over the radial grid, which is inside the plasma. With
+
+```toml
+four_vars       = ["delta_b"]
+four_delta_b_at = "edge"
+```
+
+it is the value at the outermost radial point instead: the edge of JOREK's
+domain. With `extend_bnd` that is in the vacuum outside the plasma (1.2 times
+the plasma's size by default), so it is what a probe there would see.
+
+- The figures are `delta_b_edge_modes_step.png` / `_time.png`, with the
+  radius in the y label, e.g. `@ domain edge (r = 0.447 m)`. The default
+  figures are not overwritten.
+- It applies wherever that case's `delta_b` is used: `delta_b_over_b`, the
+  `--compare ... --diag four` figures and the `delta_b_*` scan-map
+  quantities. Those print a line saying the edge value was taken.
+- The radius is fixed by the run's domain. For a probe further out, at the
+  wall say, the field does not follow a simple `r^-(m+1)` fall-off here
+  (tested on `qa3.3_g3.2/eta1e-3_adv0.1`); JOREK's `jorek2_fields_xyz`
+  computes it at any point.
+- The modes are harmonics in jorek2_four's straight-field-line angle. Near
+  the domain edge that angle is far from the geometric one, so one physical
+  perturbation is spread over several `m`: in the run above the n = 1 power
+  at the edge sits in m = 3 to 7, with 2/1 smaller. A real probe sees the
+  sum over `m` at its own position, and a poloidal probe array would not
+  measure these harmonics.
+- Without `extend_bnd` the domain edge is the plasma edge.
+
+**`delta_b`** is the same quantity un-normalised, in Tesla, with no division
+by `B_ref`. It does not need the `Btor` profile, so it still works on a run
+that hasn't gathered step-0 profiles; `delta_b_over_b` does not. The two can be
 requested together (`four_vars = ["delta_b", "delta_b_over_b"]`) and are
 computed independently, so a missing `Btor` profile skips only
 `delta_b_over_b`.

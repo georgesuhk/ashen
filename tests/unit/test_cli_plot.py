@@ -17,11 +17,32 @@ import pytest
 from ashen.cases import CasesError
 from ashen.cli import plot as plot_cli
 from ashen.diagnostics import four_cache as four_cache_mod
+from ashen import quantities as quantities_mod
 from ashen.diagnostics import poincare_cache as pc
 from ashen.diagnostics import profiles as profiles_mod
 from ashen.paths import RunPaths, write_float
 
 pytest.importorskip("h5py")
+
+
+@pytest.fixture(autouse=True)
+def _surfaces_at_r_axis(request, monkeypatch):
+    """delta_b is |m| |Psi| / (r_axis * r), with r from each step's q-profile
+    and zeroD caches. These tests are about selection, captions and wiring,
+    so r is pinned to r_axis and F0 to 1: delta_b = |m| |Psi| / r_axis**2,
+    the arithmetic their comments use. The real r is tested in
+    test_four_modes.py, and end to end by tests marked real_minor_radius.
+    """
+    if request.node.get_closest_marker("real_minor_radius"):
+        return
+    from ashen.diagnostics import four_modes
+
+    def flat(paths, step, *, f0, r_axis):
+        return np.array([0.0, 1.0]), np.array([r_axis, r_axis])
+
+    monkeypatch.setattr(four_modes, "minor_radius_profile", flat)
+    for module in (plot_cli, quantities_mod):
+        monkeypatch.setattr(module, "toroidal_f0", lambda case, paths: 1.0)
 
 
 def _write_four_cache(run_dir, step, *, records):
@@ -3397,3 +3418,96 @@ def test_compare_wetted_fraction_still_works_after_scan_map_added(
     assert (
         delta_b_comparison_campaign / "figures" / "eta_scan_delta_b_max.png"
     ).is_file()
+
+
+# --- delta_b with the real surface radius ------------------------------------
+
+
+def _write_radius_inputs(run_dir, steps, *, f0=4.0, psi_bnd=1.0):
+    """F0 in in_main, and per step a flat q = 1 profile and a zeroD cache
+    with psi_axis/psi_bnd: with R_axis = 2 that makes r = sqrt(psi_bnd * psi_n)."""
+    (run_dir / "in_main").write_text(f" &in1\n F0 = {f0}\n&end\n", encoding="utf-8")
+    for i, step in enumerate(steps):
+        _write_qprofile_cache(run_dir, step, psi_n=[0.0, 0.5, 1.0], q=[1.0, 1.0, 1.0])
+        (run_dir / "postproc" / f"zeroD_quantities_s{step:06d}.dat").write_text(
+            f"Time psi_axis psi_bnd\n{(i + 1) * 1e-4} 0.0 {psi_bnd}\n", encoding="utf-8"
+        )
+
+
+@pytest.mark.real_minor_radius
+def test_delta_b_divides_by_the_surface_s_own_minor_radius(campaign, monkeypatch):
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+    _write_radius_inputs(campaign, [100, 200])
+    (campaign.parent.parent / "cases.toml").write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b"]\n',
+        encoding="utf-8",
+    )
+    captured = []
+    original = plot_cli.plot_mode_amplitudes
+
+    def spy(x, series, variable, out_path, **kwargs):
+        captured.append(series)
+        return original(x, series, variable, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_mode_amplitudes", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    # peak at psi_n = 1/3, r = sqrt(1/3): |m| Psi / (R_axis r) = 2 * Psi / (2 r)
+    series = captured[0]
+    np.testing.assert_allclose(
+        series[("delta_b", 1, 2)], np.array([4.0, 8.0]) / np.sqrt(1 / 3), rtol=1e-6
+    )
+
+
+@pytest.mark.real_minor_radius
+def test_delta_b_without_f0_is_skipped_with_a_note(campaign, capsys):
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    (campaign.parent.parent / "cases.toml").write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\n'
+        'four_vars = ["delta_b"]\n',
+        encoding="utf-8",
+    )
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    assert "skipping delta_b" in capsys.readouterr().out
+    assert not (campaign / "four_dir" / "delta_b_modes_step.png").exists()
+
+
+@pytest.mark.real_minor_radius
+def test_four_delta_b_at_edge_draws_the_domain_edge_value(campaign, monkeypatch, capsys):
+    (campaign / "log").write_text("R_axis = 2.0\n", encoding="utf-8")
+    _write_four_cache(campaign, 100, records=[_four_record("Psi", 1, 2, real_peak=4.0)])
+    _write_four_cache(campaign, 200, records=[_four_record("Psi", 1, 2, real_peak=8.0)])
+    _write_radius_inputs(campaign, [100, 200])
+    (campaign.parent.parent / "cases.toml").write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100, 200]\n'
+        'four_vars = ["delta_b"]\n'
+        'four_delta_b_at = "edge"\n',
+        encoding="utf-8",
+    )
+    captured = []
+    original = plot_cli.plot_mode_amplitudes
+
+    def spy(x, series, variable, out_path, **kwargs):
+        captured.append((series, kwargs))
+        return original(x, series, variable, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_mode_amplitudes", spy)
+
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "four"]) == 0
+
+    # outermost point: |Psi| = 0.05 at psi_n = 1, r = 1 -> 2 * 0.05 / (2 * 1)
+    series, kwargs = captured[0]
+    np.testing.assert_allclose(series[("delta_b", 1, 2)], [0.05, 0.05], rtol=1e-6)
+    assert "@ domain edge (r = 1.000 m)" in kwargs["ylabel"]
+    assert (campaign / "four_dir" / "delta_b_edge_modes_step.png").is_file()
+    assert not (campaign / "four_dir" / "delta_b_modes_step.png").exists()

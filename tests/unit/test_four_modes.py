@@ -10,8 +10,9 @@ from ashen.diagnostics import four_cache as fc
 from ashen.diagnostics.four_modes import (
     DELTA_B,
     DELTA_B_OVER_B,
-    delta_b_over_b_series,
     delta_b_series,
+    edge_minor_radius,
+    effective_minor_radius,
     fit_growth_rate,
     format_growth_rates,
     growth_rate_series,
@@ -201,66 +202,185 @@ def test_reversed_shear_takes_the_strongest_crossing(paths):
     assert series[("Psi", 1, 2)] == pytest.approx([expected])
 
 
-# --- delta_b_over_b_series ---------------------------------------------------------
+# --- effective_minor_radius / delta_b_series ---------------------------------------
 
 
-def test_delta_b_over_b_scales_psi_amplitude_by_m_over_r_squared_b_ref():
-    psi_series = {("Psi", 1, 2): np.array([4.0, 8.0])}
-    out = delta_b_over_b_series(psi_series, r_axis=2.0, b_ref=1.0)
-    # m=2, r_axis=2 -> scale = 2 / (2**2 * 1.0) = 0.5
-    assert out[("delta_b_over_b", 1, 2)] == pytest.approx([2.0, 4.0])
+def _write_zero_d(paths, step, *, psi_axis=0.0, psi_bnd=1.0):
+    path = paths.zero_d(step)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"psi_axis psi_bnd\n{psi_axis:.6e} {psi_bnd:.6e}\n", encoding="utf-8")
 
 
-def test_delta_b_over_b_key_is_renamed_from_psi():
-    out = delta_b_over_b_series({("Psi", 3, 1): np.array([1.0])}, r_axis=1.0, b_ref=1.0)
-    assert set(out) == {(DELTA_B_OVER_B, 3, 1)}
+def _radius_caches(paths, step, *, q0=1.0, psi_bnd=1.0):
+    """Flat q = q0, so with r_axis=2, f0=4: r = sqrt(q0 * psi_bnd * psi_n)."""
+    _write_qprofile(paths, step, [0.0, 0.5, 1.0], [q0, q0, q0])
+    _write_zero_d(paths, step, psi_bnd=psi_bnd)
 
 
-def test_delta_b_over_b_uses_abs_of_m():
-    """A negative poloidal mode number still scales the amplitude up, not
-    down or negative -- b_r depends on |m|, not its sign."""
-    out = delta_b_over_b_series({("Psi", 1, -2): np.array([4.0])}, r_axis=2.0, b_ref=1.0)
-    assert out[("delta_b_over_b", 1, -2)] == pytest.approx([2.0])
+def test_effective_minor_radius_holds_the_toroidal_flux():
+    """pi r^2 B0 = 2 pi int q dpsi, B0 = f0 / r_axis."""
+    psi_n = np.linspace(0.0, 1.0, 201)
+    q = 1.0 + 2.0 * psi_n
+    grid, r = effective_minor_radius(psi_n, q, delta_psi=0.3, f0=3.7, r_axis=1.4)
+    flux = 2 * np.pi * 0.3 * (psi_n + psi_n**2)
+    np.testing.assert_allclose(np.pi * r**2 * 3.7 / 1.4, flux, rtol=1e-4, atol=1e-12)
+    np.testing.assert_allclose(grid, psi_n)
 
 
-def test_delta_b_over_b_drops_m_zero_modes():
-    out = delta_b_over_b_series({("Psi", 1, 0): np.array([4.0])}, r_axis=2.0, b_ref=1.0)
-    assert out == {}
+def test_effective_minor_radius_starts_from_the_axis():
+    """A q-profile that begins off the axis is carried flat back to r = 0."""
+    grid, r = effective_minor_radius([0.25, 1.0], [2.0, 2.0], delta_psi=1.0, f0=4.0, r_axis=2.0)
+    np.testing.assert_allclose(grid, [0.0, 0.25, 1.0])
+    np.testing.assert_allclose(r, np.sqrt(2.0 * np.array([0.0, 0.25, 1.0])))
 
 
-def test_delta_b_over_b_ignores_non_psi_keys():
-    out = delta_b_over_b_series({("T", 1, 2): np.array([4.0])}, r_axis=2.0, b_ref=1.0)
-    assert out == {}
+def test_effective_minor_radius_ignores_signs():
+    _, plus = effective_minor_radius([0.0, 1.0], [2.0, 2.0], delta_psi=1.0, f0=4.0, r_axis=2.0)
+    _, minus = effective_minor_radius([0.0, 1.0], [-2.0, -2.0], delta_psi=-1.0, f0=-4.0, r_axis=2.0)
+    np.testing.assert_allclose(plus, minus)
 
 
-# --- delta_b_series -----------------------------------------------------------------
+def test_delta_b_is_m_psi_over_R_r(paths):
+    """|m| |Psi| / (r_axis r), largest over the radial grid; the record's
+    psi_n = 0 point (r = 0) is left out."""
+    for step, peak in ((100, 4.0), (200, 8.0)):
+        fc.write_cache(
+            paths.four_cache(step), step=step, pad_width=6,
+            records=[_record("Psi", 1, 2, real_peak=peak)],
+        )
+        _radius_caches(paths, step)
+
+    out = delta_b_series(paths, [100, 200], r_axis=2.0, f0=4.0)
+
+    # peak sits at psi_n = 1/3, r = sqrt(1/3): 2 * peak / (2 * r)
+    expected = np.array([4.0, 8.0]) / np.sqrt(1 / 3)
+    assert set(out) == {(DELTA_B, 1, 2)}
+    np.testing.assert_allclose(out[(DELTA_B, 1, 2)], expected, rtol=1e-6)
 
 
-def test_delta_b_scales_psi_amplitude_by_m_over_r_squared_only():
-    psi_series = {("Psi", 1, 2): np.array([4.0, 8.0])}
-    out = delta_b_series(psi_series, r_axis=2.0)
-    # m=2, r_axis=2 -> scale = 2 / 2**2 = 0.5, no b_ref division.
-    assert out[("delta_b", 1, 2)] == pytest.approx([2.0, 4.0])
+def test_delta_b_weights_the_radial_maximum_by_one_over_r(paths):
+    """A small amplitude near the axis can outrank a larger one further out."""
+    psi_n = np.array([0.01, 0.5, 1.0])
+    record = fc.FourRecord(
+        variable="Psi", n=1, m=1, psi_n=psi_n,
+        real=np.array([0.3, 1.0, 0.0]), imag=np.zeros(3),
+    )
+    fc.write_cache(paths.four_cache(100), step=100, pad_width=6, records=[record])
+    _radius_caches(paths, 100)
+
+    out = delta_b_series(paths, [100], r_axis=2.0, f0=4.0)
+
+    assert out[(DELTA_B, 1, 1)] == pytest.approx([0.3 / (2.0 * 0.1)])
 
 
-def test_delta_b_key_is_renamed_from_psi():
-    out = delta_b_series({("Psi", 3, 1): np.array([1.0])}, r_axis=1.0)
-    assert set(out) == {(DELTA_B, 3, 1)}
+def test_delta_b_over_b_divides_by_b_ref(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=4.0)],
+    )
+    _radius_caches(paths, 100)
+
+    plain = delta_b_series(paths, [100], r_axis=2.0, f0=4.0)
+    over = delta_b_series(paths, [100], r_axis=2.0, f0=4.0, b_ref=2.5)
+
+    assert set(over) == {(DELTA_B_OVER_B, 1, 2)}
+    np.testing.assert_allclose(over[(DELTA_B_OVER_B, 1, 2)], plain[(DELTA_B, 1, 2)] / 2.5)
 
 
-def test_delta_b_uses_abs_of_m():
-    out = delta_b_series({("Psi", 1, -2): np.array([4.0])}, r_axis=2.0)
-    assert out[("delta_b", 1, -2)] == pytest.approx([2.0])
+def test_delta_b_uses_abs_of_m(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, -2, real_peak=4.0), _record("Psi", 1, 2, real_peak=4.0)],
+    )
+    _radius_caches(paths, 100)
+
+    out = delta_b_series(paths, [100], r_axis=2.0, f0=4.0)
+
+    np.testing.assert_allclose(out[(DELTA_B, 1, -2)], out[(DELTA_B, 1, 2)])
+    assert out[(DELTA_B, 1, -2)][0] > 0
 
 
-def test_delta_b_drops_m_zero_modes():
-    out = delta_b_series({("Psi", 1, 0): np.array([4.0])}, r_axis=2.0)
-    assert out == {}
+def test_delta_b_drops_m_zero_and_non_psi(paths):
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, 0, real_peak=4.0), _record("T", 1, 2, real_peak=4.0)],
+    )
+    _radius_caches(paths, 100)
+
+    assert delta_b_series(paths, [100], r_axis=2.0, f0=4.0) == {}
 
 
-def test_delta_b_ignores_non_psi_keys():
-    out = delta_b_series({("T", 1, 2): np.array([4.0])}, r_axis=2.0)
-    assert out == {}
+def test_delta_b_scales_with_the_run_s_flux_and_field(paths):
+    """r ~ sqrt(delta_psi / f0), so delta_b ~ sqrt(f0 / delta_psi)."""
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=4.0)],
+    )
+    _radius_caches(paths, 100, psi_bnd=4.0)
+
+    out = delta_b_series(paths, [100], r_axis=2.0, f0=4.0)
+
+    assert out[(DELTA_B, 1, 2)] == pytest.approx([4.0 / np.sqrt(1 / 3) / 2.0])
+
+
+def test_delta_b_is_nan_without_the_radius_caches(paths):
+    for step in (100, 200, 300):
+        fc.write_cache(
+            paths.four_cache(step), step=step, pad_width=6,
+            records=[_record("Psi", 1, 2, real_peak=4.0)],
+        )
+    _radius_caches(paths, 100)
+    _write_qprofile(paths, 200, [0.0, 0.5, 1.0], [1.0, 1.0, 1.0])   # no zeroD
+    _write_zero_d(paths, 300)                                        # no q-profile
+
+    values = delta_b_series(paths, [100, 200, 300], r_axis=2.0, f0=4.0)[(DELTA_B, 1, 2)]
+
+    assert np.isfinite(values[0]) and np.isnan(values[1]) and np.isnan(values[2])
+
+
+def test_delta_b_at_the_rational_surface(paths):
+    """q = 1 + psi_n crosses 3/2 at psi_n = 0.5; r there is from int q dpsi."""
+    psi_n = np.linspace(0.0, 1.0, 5)
+    record = fc.FourRecord(
+        variable="Psi", n=2, m=3, psi_n=psi_n,
+        real=np.array([0.0, 1.0, 2.0, 9.0, 0.0]), imag=np.zeros(5),
+    )
+    zero = fc.FourRecord(variable="Psi", n=0, m=3, psi_n=psi_n, real=np.ones(5), imag=np.zeros(5))
+    fc.write_cache(paths.four_cache(100), step=100, pad_width=6, records=[record, zero])
+    _write_qprofile(paths, 100, psi_n, 1.0 + psi_n)
+    _write_zero_d(paths, 100)
+
+    out = delta_b_series(paths, [100], r_axis=2.0, f0=4.0, rational=True)
+
+    r = np.sqrt(0.5 + 0.5 * 0.5**2)          # r^2 = int_0^0.5 (1 + x) dx
+    assert set(out) == {(DELTA_B, 2, 3)}      # n = 0 has no rational surface
+    assert out[(DELTA_B, 2, 3)] == pytest.approx([3 * 2.0 / (2.0 * r)])
+
+
+def test_delta_b_at_the_domain_edge(paths):
+    """edge=True takes the outermost radial point, not the largest value."""
+    fc.write_cache(
+        paths.four_cache(100), step=100, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=4.0)],
+    )
+    _radius_caches(paths, 100)
+
+    out = delta_b_series(paths, [100], r_axis=2.0, f0=4.0, edge=True)
+
+    # |Psi| = 0.05 at psi_n = 1, where r = 1: 2 * 0.05 / (2 * 1)
+    assert out[(DELTA_B, 1, 2)] == pytest.approx([0.05], rel=1e-6)
+    assert edge_minor_radius(paths, [100], f0=4.0, r_axis=2.0) == pytest.approx(1.0)
+
+
+def test_edge_minor_radius_skips_steps_without_caches(paths):
+    fc.write_cache(
+        paths.four_cache(200), step=200, pad_width=6,
+        records=[_record("Psi", 1, 2, real_peak=4.0)],
+    )
+    _radius_caches(paths, 200, psi_bnd=4.0)
+
+    assert edge_minor_radius(paths, [100, 200], f0=4.0, r_axis=2.0) == pytest.approx(2.0)
+    assert edge_minor_radius(paths, [100], f0=4.0, r_axis=2.0) is None
 
 
 # --- fit_growth_rate / growth_rate_series / format_growth_rates ------------------

@@ -969,3 +969,16 @@ def test_theta_hist_steps_override(tmp_path):
     case = load_cases(path)["a"]
     assert case.steps_for("theta_hist") == [200]
     assert case.steps_for("poincare") == [100, 200, 300]
+
+
+def test_four_delta_b_at_defaults_to_max_and_accepts_edge(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\n[cases.b]\nsteps = [1]\nfour_delta_b_at = "edge"\n')
+    cases = load_cases(path)
+    assert cases["a"].four_delta_b_at == "max"
+    assert cases["b"].four_delta_b_at == "edge"
+
+
+def test_four_delta_b_at_rejects_unknown(tmp_path):
+    path = _write(tmp_path, '[cases.a]\nsteps = [1]\nfour_delta_b_at = "wall"\n')
+    with pytest.raises(CasesError, match="four_delta_b_at"):
+        load_cases(path)
