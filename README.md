@@ -178,6 +178,54 @@ and switch to `ffprime_method = "current"`.
 lines in a shotfile. It only replaces plain values and refuses a computed
 one (`rho_const = n0`).
 
+## Looking at a case from a notebook
+
+`notebooks/case_viewer.ipynb` shows one run folder: its current profile,
+boundaries, equilibrium and diagnostics. Open it in VS Code (over Remote SSH
+on the HPC, or locally), set `RUN` in the first cell and run the cells. It
+needs `ipywidgets`, `matplotlib` and `h5py` in the notebook's Python:
+
+```bash
+pip install --user ipywidgets ipykernel h5py
+```
+
+Everything is drawn from files already in the folder. Nothing in it runs
+JOREK or a `jorek2_*` tool; a missing cache is named with the `analyse`
+command that makes it.
+
+| Cell | Shows | Reads |
+|---|---|---|
+| `viewer.profile_tuner(RUN, step=0)` | sliders for q0, l_i, q_edge; j, q and FF' of that profile; JOREK's q-profile and achieved q0, l_i, q_edge beside them | `shotfile.py`, the plasma boundary, `F0`; the step's q-profile and zeroD caches |
+| `viewer.boundary_view(RUN)` | plasma boundary, domain boundary, JOREK's grid boundary, STARWALL's wall | `original_bnd.dat`, `in_bnd`, `boundary.txt`, `input_starwall` |
+| `viewer.equilibrium_view(RUN)` | psi_N contours of a restart with the plasma edge marked, q, and j_phi on the nodes | `jorek<step>.h5`, the q-profile cache |
+| `viewer.four_view(RUN)` | mode amplitudes against step and their radial structure at one step | the `four` caches |
+| `viewer.profiles_view(RUN)` | a cached radial profile at every gathered step | the `profiles` caches |
+
+**The tuner's buttons.**
+- **Save to shotfile** writes `current_q0`, `current_li`, `current_q_edge`
+  and `ffprime_method = "q_li"` into `shotfile.py`
+  (`set_shotfile_values`). A q0 outside the reachable window is not saved.
+- **Regenerate inputs** prepares the run folder from the shotfile, exactly
+  as `run_jorek shotfile.py` does, and submits nothing. It needs the
+  campaign's `site.toml`. It rewrites `j_prof.dat`, `ffprime_prof.dat`, the
+  T and rho profiles, the boundary and the namelists.
+- Then run the equilibrium yourself (`run_jorek shotfile.py --run_eq`) and
+  gather step 0's q-profile and zeroD; re-running the cell shows what JOREK
+  achieved against what was asked.
+
+It works in a new run folder that has only `shotfile.py` and a plasma
+boundary file, before any restart exists.
+
+**Limits.**
+- `equilibrium_view` contours psi on the grid nodes, not on JOREK's Bezier
+  elements, and takes the axis as the node of largest current: good for
+  looking, not for measuring.
+- The viewer has not been run over Remote SSH on the HPC yet.
+
+Each view is also a plain function returning a matplotlib Figure
+(`viewer.tuner_figure`, `boundary_figure`, `equilibrium_figure`,
+`four_figure`, `profiles_figure`), usable without a notebook.
+
 ## Gathering analysis data for a case
 
 Copy `cases.example.toml` to a campaign folder as `cases.toml` and define a
@@ -2101,7 +2149,8 @@ src/ashen/
   castor_io.py  shared CASTOR3D two-column file parser
   boundary.py   plasma boundary geometry, psi-grid extension
   profiles.py   CASTOR3D -> JOREK profile translation
-  current_profile.py  current density -> JOREK's FFprime, r/a -> psi_N
+  current_profile.py  current density -> JOREK's FFprime, r/a -> psi_N; q0/l_i/q_edge profiles
+  viewer.py     notebook views of a run folder (notebooks/case_viewer.ipynb)
   shotfile.py   ShotParams dataclass + validating loader
   fs.py         copy/symlink helpers used when populating a run folder
   runner.py     prepare_run() + submit_*() -- what bin/run_jorek drives
