@@ -50,6 +50,7 @@ from pathlib import Path
 import numpy as np
 
 from ashen import boundary as bnd_mod
+from ashen import case_notebook
 from ashen import current_profile as cur_mod
 from ashen import fs
 from ashen import namelist as nml
@@ -153,6 +154,17 @@ class _Disk:
         self._log(f"write_float {path} = {value}")
         if not self.dry_run:
             write_float(path, value)
+
+    def case_notebook(self, run_dir: Path) -> None:
+        """The viewer notebook, only if the folder has none: an existing one
+        holds the user's figures and edits (and may be the one open now)."""
+        path = run_dir / case_notebook.NOTEBOOK_NAME
+        if path.exists():
+            self._log(f"keep {path} (already there)")
+            return
+        self._log(f"write {path}")
+        if not self.dry_run:
+            case_notebook.write_case_notebook(run_dir)
 
     def write_text(self, path: Path, text: str) -> None:
         self._log(f"write {path}")
@@ -481,6 +493,7 @@ def prepare_run(
     disk.mkdir(run_dir, exist_ok=True)
 
     disk.copy_all_files(site.template / "copy", run_dir)
+    disk.case_notebook(run_dir)
 
     if params.starwall_options:
         # No create_missing: input_starwall closes each namelist group with a
