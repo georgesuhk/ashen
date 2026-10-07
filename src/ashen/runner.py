@@ -31,6 +31,10 @@ Fixes applied vs. run_jorek.py (confirmed with George; refactor plan's
   "DIIID_low_pres") joins onto site.toml's castor_root. "machine_folder"
   still wins if a shotfile sets it explicitly (backward compat).
 
+Added since: ffprime_method="current", T_method="const" and a
+bnd_method="file" that needs no CASTOR3D psi -- see ashen.current_profile
+and the README's "Profiles and boundary without CASTOR3D".
+
 Not fixed (see KNOWN_ISSUES.md): profiles.get_t_profile_from_castor's
 T-profile grid and density-independence issues are reproduced exactly.
 """
@@ -39,12 +43,14 @@ from __future__ import annotations
 
 import re
 import subprocess
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from ashen import boundary as bnd_mod
+from ashen import current_profile as cur_mod
 from ashen import fs
 from ashen import namelist as nml
 from ashen import profiles as prof_mod
@@ -148,6 +154,11 @@ class _Disk:
         if not self.dry_run:
             write_float(path, value)
 
+    def write_text(self, path: Path, text: str) -> None:
+        self._log(f"write {path}")
+        if not self.dry_run:
+            path.write_text(text, encoding="utf-8")
+
     def savetxt(self, path: Path, data: np.ndarray) -> None:
         self._log(f"savetxt {path} ({data.shape[0]} rows)")
         if not self.dry_run:
@@ -160,6 +171,37 @@ def _uses_castor(params: ShotParams) -> bool:
     return "castor" in (
         params.ffprime_method, params.T_method, params.rho_method, params.bnd_method
     )
+
+
+def _toroidal_f0(params: ShotParams, site: Site) -> float:
+    """F0 = R B_phi the run will use: namelist_options, else the template's in_eq."""
+    for key, value in params.namelist_options.items():
+        if nml.normalise_key(key) == "f0":
+            return float(str(value).lower().replace("d", "e"))
+    try:
+        return float(nml.read_field(site.template / "copy" / "in_eq", "F0", float))
+    except (nml.NamelistError, OSError) as exc:
+        raise ShotfileError(
+            f"the current profile needs F0, and it could not be read ({exc}); "
+            "set it in namelist_options"
+        ) from exc
+
+
+def _j_prof_text(params: ShotParams, geometry, made, current_R0: float) -> str:
+    """j_prof.dat for a q_li profile: psi_N and j [A/m^2], readable back with
+    ffprime_method="current", headed by how it was made."""
+    head = [
+        "# made by run_jorek from ffprime_method = \"q_li\"; rewritten on every run",
+        f"# requested: q0 = {params.current_q0:g}, l_i = {params.current_li:g}, "
+        f"q_edge = {params.current_q_edge:g}",
+        f"# shape: j = j0 (1 - rho^alpha)^nu, alpha = {made.alpha:.6g}, nu = {made.nu:.6g}",
+        f"# j0 = {made.j0:.6e} A/m^2, Ip = {made.Ip:.6e} A, l_i as built = {made.li:.6f}",
+        f"# geometry: R0 = {geometry.R0:.6f} m, a = {geometry.a:.6f} m, "
+        f"kappa = {geometry.kappa:.6f}, B0 = {geometry.B0:.6f} T; j is at R = {current_R0:.6f} m",
+        "# columns: psi_N   j [A/m^2]",
+    ]
+    rows = [f"{x:.18e} {y:.18e}" for x, y in zip(made.psi_n, made.j)]
+    return "\n".join(head + rows) + "\n"
 
 
 _MODEL_NUMBER = re.compile(r"model(\d+)")
@@ -295,6 +337,15 @@ def prepare_run(
             real_psi_edge = extended.real_psi_edge
             real_psi_edge_psi = extended.psi
             extended_idx_range = extended.extended_idx_range
+    else:
+        # No CASTOR3D grid: profiles are laid on a plain psi_N grid, and the
+        # plasma edge sits at 1/extend_ratio of an extended domain.
+        psi_n = np.linspace(0.0, 1.0, PROFILE_POINTS)
+        psi_n_export = psi_n
+        if params.extend_bnd:
+            psi_n_export, extended_idx_range, real_psi_edge = cur_mod.extend_psi_n(
+                psi_n, params.extend_ratio, params.extend_reso
+            )
 
     # ---- rho -------------------------------------------------------------
     if params.rho_method == "const":
@@ -306,18 +357,99 @@ def prepare_run(
         prof_mod.resample_profile(psi_n_export, rho_prof_export, PROFILE_POINTS)
     )
 
+    # ---- boundary (before ffprime: a current profile takes its geometry
+    # from the plasma boundary) ------------------------------------------------
+    plasma_bnd = None
+    if params.bnd_method == "castor":
+        raw = bnd_mod.read_boundary_from_castor(castor_dir, params.castor_suffix)
+        if params.extend_bnd:
+            R0, Z0 = bnd_mod.boundary_center(raw)
+            expanded = bnd_mod.expand_boundary(raw, R0, Z0, scale=params.extend_ratio)
+        else:
+            expanded = raw
+        bnd = bnd_mod.downsample_boundary(expanded, BOUNDARY_POINTS)
+        original_bnd = raw
+        plasma_bnd = raw
+        psi_bnd = np.full(
+            len(bnd), real_psi_edge_psi[-1] if params.extend_bnd else psi[-1]
+        )
+    elif params.bnd_method == "file":
+        bnd_path = run_dir / params.bnd_file
+        bnd = load_two_col_data(bnd_path)
+        original_bnd = bnd
+        if len(bnd) < 3:
+            raise ShotfileError(f"{bnd_path}: needs at least three (R, Z) rows")
+        if params.bnd_file_is_plasma:
+            plasma_bnd = bnd
+            if params.extend_bnd:
+                R0, Z0 = bnd_mod.boundary_center(bnd)
+                bnd = bnd_mod.expand_boundary(bnd, R0, Z0, scale=params.extend_ratio)
+            bnd = bnd_mod.downsample_boundary(bnd, BOUNDARY_POINTS)
+        # With a CASTOR3D psi the old value is kept; without one, psi_bnd.
+        psi_bnd = np.full(len(bnd), params.psi_bnd if psi is None else psi[-1])
+    else:
+        raise NotImplementedError(f"bnd_method={params.bnd_method!r} not implemented")
+
     # ---- ffprime -----------------------------------------------------------
+    j_prof_text = None
     if params.ffprime_method == "castor":
         ffprime_prof = prof_mod.get_ffprime_profile_from_castor(
             psi, cotrans_dir, params.castor_suffix
         )
         if params.extend_bnd:
             ffprime_prof = bnd_mod.extend_prof(ffprime_prof, extended_idx_range)
+        ffprime_data = np.column_stack(
+            prof_mod.resample_profile(psi_n_export, ffprime_prof, PROFILE_POINTS)
+        )
+    elif params.ffprime_method in ("current", "q_li"):
+        geometry = None
+        if params.ffprime_method == "q_li" or params.current_R0 is None:
+            if plasma_bnd is None:
+                raise ShotfileError(
+                    f"ffprime_method={params.ffprime_method!r} takes R0, a and kappa "
+                    "from the plasma boundary: use bnd_method='castor', or "
+                    "bnd_method='file' with bnd_file_is_plasma=True"
+                    + ("" if params.ffprime_method == "q_li" else ", or set current_R0")
+                )
+            geometry = cur_mod.boundary_geometry(plasma_bnd, _toroidal_f0(params, site))
+        current_R0 = params.current_R0 if params.current_R0 is not None else geometry.R0
+
+        if params.ffprime_method == "q_li":
+            try:
+                made = cur_mod.current_from_q_li(
+                    params.current_q0, params.current_li, params.current_q_edge, geometry
+                )
+            except ValueError as exc:
+                raise ShotfileError(str(exc)) from exc
+            current_psi_n, current_j, current_name = made.psi_n, made.j, "j_prof.dat"
+            j_prof_text = _j_prof_text(params, geometry, made, current_R0)
+        else:
+            current_name = params.current_file
+            try:
+                current_psi_n, current_j = cur_mod.load_current_profile(
+                    run_dir / params.current_file, params.current_coord
+                )
+            except ValueError as exc:
+                raise ShotfileError(str(exc)) from exc
+        j_prof = cur_mod.resample_monotone(current_psi_n, current_j, psi_n)
+        ffprime_prof = cur_mod.ffprime_from_current(j_prof, current_R0)
+        if params.extend_bnd:
+            # The added region is vacuum: no current there, whatever j(1) is.
+            if abs(current_j[-1]) > 1e-3 * np.max(np.abs(current_j)):
+                warnings.warn(
+                    f"{current_name}: j at the plasma edge is "
+                    f"{current_j[-1]:.3g} A/m^2, not 0; it drops to 0 in one "
+                    "grid interval of the extended region",
+                    stacklevel=2,
+                )
+            ffprime_prof = np.concatenate([ffprime_prof, np.zeros(len(extended_idx_range))])
+        # No overshoot at the edge kink, unlike the cubic resample above.
+        x_out = np.linspace(psi_n_export.min(), psi_n_export.max(), PROFILE_POINTS)
+        ffprime_data = np.column_stack(
+            (x_out, cur_mod.resample_monotone(psi_n_export, ffprime_prof, x_out))
+        )
     else:
         raise NotImplementedError(f"ffprime_method={params.ffprime_method!r} not implemented")
-    ffprime_data = np.column_stack(
-        prof_mod.resample_profile(psi_n_export, ffprime_prof, PROFILE_POINTS)
-    )
 
     # ---- T -----------------------------------------------------------------
     if params.T_method == "castor":
@@ -328,37 +460,15 @@ def prepare_run(
         )
         if params.extend_bnd:
             t_prof = bnd_mod.extend_prof(t_prof, extended_idx_range)
+    elif params.T_method == "const":
+        t_prof = np.full(
+            len(psi_n_export), cur_mod.temperature_to_jorek(params.T_const, rho_const_jorek)
+        )
     else:
         raise NotImplementedError(f"T_method={params.T_method!r} not implemented")
     t_data = np.column_stack(
         prof_mod.resample_profile(psi_n_export, t_prof, PROFILE_POINTS)
     )
-
-    # ---- boundary ------------------------------------------------------------
-    if params.bnd_method == "castor":
-        raw = bnd_mod.read_boundary_from_castor(castor_dir, params.castor_suffix)
-        if params.extend_bnd:
-            R0, Z0 = bnd_mod.boundary_center(raw)
-            expanded = bnd_mod.expand_boundary(raw, R0, Z0, scale=params.extend_ratio)
-        else:
-            expanded = raw
-        bnd = bnd_mod.downsample_boundary(expanded, BOUNDARY_POINTS)
-        original_bnd = raw
-        psi_bnd = np.full(
-            len(bnd), real_psi_edge_psi[-1] if params.extend_bnd else psi[-1]
-        )
-    elif params.bnd_method == "file":
-        bnd_path = run_dir / params.bnd_file
-        bnd = load_two_col_data(bnd_path)
-        if psi is None:
-            raise ShotfileError(
-                "bnd_method='file' needs psi from a castor-sourced ffprime/T/"
-                "rho method, matching the old code's coupling"
-            )
-        psi_bnd = np.full(len(bnd), psi[-1])
-        original_bnd = bnd
-    else:
-        raise NotImplementedError(f"bnd_method={params.bnd_method!r} not implemented")
 
     # =========================================================================
     # From here on: side effects. Everything above was pure computation, so a
@@ -439,6 +549,8 @@ def prepare_run(
         disk.set_fields(paths.namelists, params.namelist_options, create_missing=True)
 
     disk.write_float(paths.real_psi_edge, real_psi_edge)
+    if j_prof_text is not None:
+        disk.write_text(run_dir / "j_prof.dat", j_prof_text)
     disk.savetxt(run_dir / "ffprime_prof.dat", ffprime_data)
     disk.savetxt(run_dir / "T_prof.dat", t_data)
     disk.savetxt(run_dir / "rho_prof.dat", rho_data)

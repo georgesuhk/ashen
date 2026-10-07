@@ -301,3 +301,73 @@ def test_shotparams_validates_even_when_constructed_directly():
             exe="x", jobscript="y", ffprime_method="file", T_method="file",
             rho_method="const", bnd_method="file", bnd_file="b.dat",
         )
+
+
+# --- set_shotfile_values ----------------------------------------------------------
+
+from ashen.shotfile import set_shotfile_values  # noqa: E402
+
+_SHOT = '''qa = 3.3
+n0 = 1e18
+rho_const = n0
+current_q0 = 1.0   # on axis
+current_li = 1.2
+castor_params = {}
+castor_params["qa"] = qa
+'''
+
+
+def test_set_shotfile_values_replaces_literals_and_keeps_comments(tmp_path):
+    path = tmp_path / "shotfile.py"
+    path.write_text(_SHOT)
+
+    set_shotfile_values(path, {"current_q0": 1.15, "current_li": 0.9})
+
+    lines = path.read_text().splitlines()
+    assert "current_q0 = 1.15   # on axis" in lines
+    assert "current_li = 0.9" in lines
+    assert "rho_const = n0" in lines and 'castor_params["qa"] = qa' in lines
+
+
+def test_set_shotfile_values_appends_a_new_name(tmp_path):
+    path = tmp_path / "shotfile.py"
+    path.write_text(_SHOT)
+
+    set_shotfile_values(path, {"current_q_edge": 3.3, "ffprime_method": "q_li"})
+
+    text = path.read_text()
+    assert text.endswith("\ncurrent_q_edge = 3.3\nffprime_method = 'q_li'\n")
+    assert text.startswith(_SHOT)
+
+
+def test_set_shotfile_values_refuses_a_computed_value(tmp_path):
+    path = tmp_path / "shotfile.py"
+    path.write_text(_SHOT)
+
+    with pytest.raises(ShotfileError, match="rho_const = n0 is computed"):
+        set_shotfile_values(path, {"current_q0": 2.0, "rho_const": 1e19})
+
+    assert path.read_text() == _SHOT          # nothing written, not even current_q0
+
+
+def test_set_shotfile_values_refuses_a_name_assigned_twice(tmp_path):
+    path = tmp_path / "shotfile.py"
+    path.write_text("eta = 1e-3\neta = 1e-4\n")
+
+    with pytest.raises(ShotfileError, match="single one-line assignment"):
+        set_shotfile_values(path, {"eta": 1e-5})
+
+
+def test_set_shotfile_values_result_still_loads(tmp_path):
+    path = tmp_path / "shotfile.py"
+    path.write_text(
+        "qa = 2.1\ng = 2.3\neta = 1e-3\ntstep_n = [0.03]\nnstep_n = [10]\nnout = 1\n"
+        "exe = 'jorek_model600'\njobscript = '2h'\nffprime_method = 'q_li'\n"
+        "T_method = 'const'\nT_const = 100.0\nrho_method = 'const'\nrho_const = 1e18\n"
+        "bnd_method = 'file'\nbnd_file = 'b.dat'\n"
+        "current_q0 = 1.0\ncurrent_li = 1.2\ncurrent_q_edge = 3.0\n"
+    )
+
+    set_shotfile_values(path, {"current_q0": 1.25})
+
+    assert load_shotfile(path).current_q0 == 1.25

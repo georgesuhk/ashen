@@ -79,6 +79,105 @@ current directory → `~/.config/ashen/site.toml`.
 
 `site.toml` is gitignored; only `site.example.toml` is tracked.
 
+## Profiles and boundary without CASTOR3D
+
+A shotfile can give the current profile and the boundary as files in the run
+folder, with no `castor_params`:
+
+```python
+ffprime_method = "current"
+current_file   = "j_prof.dat"   # two columns: x, j [A/m^2]
+current_coord  = "psi_n"        # or "rho": x is r/a
+current_R0     = 1.37           # m; optional with a plasma boundary
+
+T_method = "const"
+T_const  = 100.0                # Te + Ti, eV
+
+bnd_method         = "file"
+bnd_file           = "bnd.dat"  # two columns: R, Z [m]
+bnd_file_is_plasma = True
+```
+
+`qa` and `g` are still required: they name the STARWALL response.
+
+**The current.** `j` is the toroidal current density at `R = current_R0` on
+each flux surface, positive in the direction the CASTOR3D-sourced runs carry
+theirs. `x` runs from 0 (axis) to 1 (plasma edge). `run_jorek` writes
+
+    FFprime = -mu_0 * current_R0 * j
+
+to `ffprime_prof.dat`. That is JOREK's `FFprime`: SI units, and minus the
+textbook F dF/dpsi, since JOREK solves `Delta* psi = FFprime - R^2 dp/dpsi`
+and `j_phi = -Delta* psi / (R mu_0)`.
+
+- On a flux surface `j_phi` goes as `1/R`, so it equals `j` only at
+  `R = current_R0`.
+- The pressure-gradient part of the current is left out. With `T_method =
+  "const"` and a flat density there is none and the conversion is exact.
+  Otherwise the error is of order beta.
+- With `freeboundary = True` JOREK scales a profile read from a file so the
+  total current matches the fixed-boundary equilibrium it solved first. The
+  profile's size is therefore set by that first solve.
+- `current_coord = "rho"` maps r/a to psi_N as a circular cylinder would.
+  Shaping and toroidicity move the surfaces, so give `psi_n` when you have it.
+
+**Extension.** With `extend_bnd` the plasma edge sits at `1/extend_ratio` of
+the domain's psi_N (written to `real_psi_edge.dat`), and `FFprime` is 0
+beyond it. A `j` that is not 0 at `x = 1` drops to 0 within one grid interval
+there, and `run_jorek` warns.
+
+**The boundary.** `bnd_file_is_plasma = True` treats the file as the plasma
+boundary: with `extend_bnd` it is scaled by `extend_ratio`, as a CASTOR3D
+boundary is, and the file's own points go to `original_bnd.dat`. It is
+resampled to 50 points. `False` (the default, as before) writes the file's
+points as the domain boundary unchanged. `psi_bnd` (default 0) is the psi
+written on the boundary when no CASTOR3D psi supplies it.
+
+`current_R0` may be left out when the boundary is the plasma's (CASTOR3D, or
+`bnd_file_is_plasma = True`): it is then the centre of that boundary.
+
+The conversions are in `ashen.current_profile`: `ffprime_from_current`,
+`current_from_ffprime`, `psi_n_from_rho`, `temperature_to_jorek`.
+
+### The current from q0, l_i and q_edge
+
+```python
+ffprime_method = "q_li"
+current_q0     = 1.05
+current_li     = 1.2
+current_q_edge = 3.3
+```
+
+`run_jorek` builds the profile, writes it to `j_prof.dat` (psi_N, j in A/m^2,
+headed by how it was made) and converts it to `ffprime_prof.dat` as above.
+`j_prof.dat` is rewritten on every run; to edit a profile by hand, copy it
+and switch to `ffprime_method = "current"`.
+
+- **Shape.** `j = j0 (1 - rho^alpha)^nu` on a circular cylinder. `alpha` and
+  `nu` are solved so that the cylinder's l_i and q0/q_edge are the ones asked
+  for. `alpha = 2` is the Wesson profile.
+- **Size.** `j0 = B0 (1 + kappa^2) / (mu_0 R0 kappa q0)`, q0 on the axis of an
+  ellipse. `R0`, `a` and `kappa` come from the plasma boundary's extents,
+  `B0 = F0 / R0`, and `F0` from `namelist_options` or the template's `in_eq`.
+- **It needs the plasma boundary**: `bnd_method = "castor"`, or `"file"` with
+  `bnd_file_is_plasma = True`.
+- **Not every combination exists.** At a given l_i and q_edge the family
+  reaches a window of q0 (for l_i = 1.2, q_edge = 3: 0.76 to 1.48).
+  Outside it `run_jorek` stops and states the window. The window belongs
+  to this family (`alpha` from 1 to 30), not to physics.
+- **JOREK will not hit the targets exactly.** The model has no
+  triangularity, Shafranov shift or toroidicity. To see what the
+  equilibrium has, `ashen.diagnostics.equilibrium.achieved_q_li(paths, step,
+  f0=...)` gives q0, q at the plasma edge and l_i from the step's q-profile
+  and zeroD caches, defined as the model defines them. JOREK's own `li3`
+  and `q95` cover the whole domain, vacuum region included: in
+  `qa3.3_g3.2/eta1e-3_adv0.1` the plasma has l_i = 1.39 and edge q = 3.23,
+  against `li3` = 1.64 and `q95` = 4.46.
+
+`ashen.shotfile.set_shotfile_values(path, {"current_q0": 1.1})` rewrites such
+lines in a shotfile. It only replaces plain values and refuses a computed
+one (`rho_const = n0`).
+
 ## Gathering analysis data for a case
 
 Copy `cases.example.toml` to a campaign folder as `cases.toml` and define a
@@ -2002,6 +2101,7 @@ src/ashen/
   castor_io.py  shared CASTOR3D two-column file parser
   boundary.py   plasma boundary geometry, psi-grid extension
   profiles.py   CASTOR3D -> JOREK profile translation
+  current_profile.py  current density -> JOREK's FFprime, r/a -> psi_N
   shotfile.py   ShotParams dataclass + validating loader
   fs.py         copy/symlink helpers used when populating a run folder
   runner.py     prepare_run() + submit_*() -- what bin/run_jorek drives

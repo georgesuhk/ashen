@@ -4,6 +4,29 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: current profile from q0, l_i and q_edge
+
+- `ffprime_method = "q_li"` with `current_q0`, `current_li`,
+  `current_q_edge` in the shotfile. `run_jorek` builds
+  `j = j0 (1 - rho^alpha)^nu`, writes it to `j_prof.dat` and converts it
+  to `ffprime_prof.dat`. The solver is the one from
+  `q0_li_playground.ipynb`, now in `ashen.current_profile`.
+- Size from q0 on the axis of an ellipse; `R0`, `a`, `kappa` from the
+  plasma boundary, `F0` from `namelist_options` or the template's `in_eq`.
+- A q0 the family cannot reach at that l_i and q_edge stops `run_jorek`
+  with the reachable window.
+- `current_R0` is now optional (centre of the plasma boundary).
+- `ashen.diagnostics.equilibrium.achieved_q_li`: q0, plasma-edge q and l_i
+  of a JOREK equilibrium, from its q-profile and zeroD caches. On
+  `qa3.3_g3.2/eta1e-3_adv0.1`: q0 = 0.93, edge q = 3.23, l_i = 1.39
+  (zeroD `li3` = 1.64 and `q95` = 4.46 include the vacuum region).
+- `ashen.shotfile.set_shotfile_values` rewrites plain `name = value` lines
+  in a shotfile and refuses computed ones.
+- In `prepare_run` the boundary is now worked out before ffprime. Output
+  for existing methods is unchanged.
+- Unverified: no JOREK equilibrium has been run from a `"q_li"` profile,
+  so how far JOREK lands from the three targets is not yet known.
+
 ## 2026-10-07: `four_delta_b_at = "edge"`: delta_b at the domain edge
 
 - A case key. `"max"` (default) keeps the largest `delta_b` over the
@@ -48,6 +71,24 @@ and flag named here.
 - Tests: most plot and quantity tests pin `r = r_axis` (an autouse fixture)
   to keep their arithmetic; `test_four_modes.py` and the tests marked
   `real_minor_radius` use the real `r`.
+## 2026-10-07: current profile and boundary from files, without CASTOR3D
+
+- `ffprime_method = "current"` reads `current_file` (x, j in A/m^2) and
+  writes JOREK's `FFprime = -mu_0 * current_R0 * j`. `current_coord` is
+  `"psi_n"` or `"rho"` (r/a, mapped as a circular cylinder).
+- `T_method = "const"` with `T_const` (Te + Ti in eV) gives a flat T.
+- `bnd_method = "file"` no longer needs a CASTOR3D psi. `bnd_file_is_plasma
+  = True` expands the file's boundary by `extend_ratio` and resamples it to
+  50 points. `psi_bnd` sets the boundary psi (default 0).
+- Without CASTOR3D the plasma edge is at `1/extend_ratio` of the extended
+  psi_N, and `FFprime` is 0 beyond it.
+- Runs that use CASTOR3D are prepared exactly as before.
+- The README section "Profiles and boundary without CASTOR3D" has the
+  conventions and the limits (j at `R = current_R0`; pressure-gradient
+  current left out).
+- Unverified: no JOREK equilibrium has been run from these files yet. The
+  sign and size were checked against JOREK's source, the wiki's
+  normalization page and an existing run's `ffprime_prof.dat`.
 
 ## 2026-10-06: repacking a trace's diagnostics faster
 
