@@ -157,6 +157,25 @@ and flag named here.
   sign and size were checked against JOREK's source, the wiki's
   normalization page and an existing run's `ffprime_prof.dat`.
 
+## 2026-10-07: `rho_prof.dat` now gives the density the shotfile asks for
+
+- `run_jorek` wrote `rho_const / 1e20` into both `central_density` and
+  `rho_prof.dat`. JOREK's rho is in units of `central_density * 1e20`, so
+  the density was normalised twice: `rho_const = 1e18` ran at 1e16 m^-3,
+  with 1% of the CASTOR3D pressure.
+- `rho_prof.dat` now holds 1. `central_density` and `T_prof.dat` are
+  unchanged. Density is `rho_const` and pressure is CASTOR3D's.
+- Seen in `qa3.3_g3.2/eta1e-3_adv0.1`: rho = 0.01 in the restarts, and
+  `Part_tot / volume` = 1.000e16 in the zeroD output.
+- **Runs prepared before this are 1e16-type plasmas** (for `rho_const =
+  1e18`): Alfven speed 10 times the intended one. Their time axis in
+  seconds is right for the plasma that was simulated.
+- A new run differs from an old one with the same shotfile. To reproduce
+  an old run, edit its `rho_prof.dat` back to `rho_const / 1e20`.
+- The golden `rho_prof.dat` was rewritten by hand to 1 (the golden test
+  needs the real CASTOR3D tree, which this machine lacks).
+- Unverified: no JOREK run with the corrected file yet.
+
 ## 2026-10-06: repacking a trace's diagnostics faster
 
 Measured on a 10000-marker file in JOREK's layout (3.3 GB on disk, 660 MB

@@ -69,7 +69,15 @@ regression test:
 **Consequence:** whatever `rho_const` a shotfile sets has never affected the T
 profile JOREK actually receives.
 
-**Status:** open, unconfirmed whether bug or intentional. Two readings:
+**Status:** settled 2026-10-07 as intentional; kept here for the record.
+JOREK's `T` is such that `p_SI = rho * T / mu_0`, with `rho` in units of
+`n_0 = central_density * 1e20`. The T file is `p * mu_0`, which is right
+when `rho = 1`. The actual fault was in `rho_prof.dat`, which held
+`rho_const / 1e20` instead of 1, so the density and pressure of every run
+were `rho_const / 1e20` times the intended ones (1e16 m^-3 for
+`rho_const = 1e18`). Fixed in `runner.py`; see CHANGELOG 2026-10-07.
+
+The two readings considered before:
 
 - **Bug** -- an earlier version of the formula may have used density
   meaningfully, and it was refactored into this cancelling form by accident.

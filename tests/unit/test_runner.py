@@ -869,3 +869,18 @@ def test_q_li_with_castor_boundary_and_psi(synthetic_campaign, tmp_path):
     result = prepare_run(params, site, tmp_path / "rundir", dry_run=True)
 
     assert any("j_prof.dat" in a for a in result.actions)
+
+def test_rho_profile_is_in_units_of_central_density(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    """JOREK's rho is n / (central_density * 1e20): rho_const everywhere is 1,
+    not rho_const / 1e20 a second time."""
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+
+    prepare_run(params, site, run_dir)
+
+    rho = np.loadtxt(run_dir / "rho_prof.dat")
+    np.testing.assert_allclose(rho[:, 1], 1.0, rtol=1e-12)
+    fields = effective_fields(run_dir / "in_eq")
+    assert float(str(fields["central_density"]).lower().replace("d", "e")) == pytest.approx(
+        params.rho_const / 1e20
+    )

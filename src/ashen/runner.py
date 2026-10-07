@@ -361,8 +361,10 @@ def prepare_run(
 
     # ---- rho -------------------------------------------------------------
     if params.rho_method == "const":
-        rho_const_jorek = params.rho_const / 1e20  # JOREK normalisation
-        rho_prof_export = [rho_const_jorek] * len(psi_n_export)
+        # central_density is n_0 in 1e20 m^-3; the rho profile is in units
+        # of n_0, so a plasma at rho_const everywhere is 1 there.
+        rho_const_jorek = params.rho_const / 1e20
+        rho_prof_export = [1.0] * len(psi_n_export)
     else:
         raise NotImplementedError(f"rho_method={params.rho_method!r} not implemented")
     rho_data = np.column_stack(
