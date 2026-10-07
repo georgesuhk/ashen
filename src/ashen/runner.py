@@ -544,11 +544,28 @@ def prepare_run(
         t_prof = np.full(
             len(psi_n_export), cur_mod.temperature_to_jorek(params.T_const, rho_const_jorek)
         )
+    elif params.T_method == "file":
+        try:
+            t_psi_n, t_eV = cur_mod.load_temperature_profile(run_dir / params.T_file)
+        except ValueError as exc:
+            raise ShotfileError(str(exc)) from exc
+        t_prof = cur_mod.temperature_to_jorek(
+            cur_mod.resample_monotone(t_psi_n, t_eV, psi_n), rho_const_jorek
+        )
+        if params.extend_bnd:
+            t_prof = bnd_mod.extend_prof(t_prof, extended_idx_range)   # edge value outside
     else:
         raise NotImplementedError(f"T_method={params.T_method!r} not implemented")
-    t_data = np.column_stack(
-        prof_mod.resample_profile(psi_n_export, t_prof, PROFILE_POINTS)
-    )
+    if params.T_method == "file":
+        # as for the current: no overshoot where the profile meets the vacuum
+        x_out = np.linspace(psi_n_export.min(), psi_n_export.max(), PROFILE_POINTS)
+        t_data = np.column_stack(
+            (x_out, cur_mod.resample_monotone(psi_n_export, t_prof, x_out))
+        )
+    else:
+        t_data = np.column_stack(
+            prof_mod.resample_profile(psi_n_export, t_prof, PROFILE_POINTS)
+        )
 
     # =========================================================================
     # From here on: side effects. Everything above was pure computation, so a

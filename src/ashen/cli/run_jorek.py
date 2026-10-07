@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ashen.case_notebook import NOTEBOOK_NAME, write_case_notebook
 from ashen.cli._common import error, show_config
 from ashen.config import SiteConfigError, load_site
 from ashen.runner import (
@@ -75,6 +76,17 @@ def _submit(args, paths, site, params, *, dry_run: bool) -> None:
         submit_starwall(paths, site, params, dry_run=dry_run)
 
 
+def _ensure_notebook(run_dir: Path) -> None:
+    """Put the viewer notebook in the run folder if it has none, before the
+    shotfile is even read: a shotfile that run_jorek refuses (a q0 outside
+    the reachable window, say) is exactly what the viewer helps to fix."""
+    try:
+        if write_case_notebook(run_dir) is not None:
+            print(f"viewer notebook written: {run_dir / NOTEBOOK_NAME}")
+    except OSError as exc:
+        error(f"could not write {NOTEBOOK_NAME}: {exc}")
+
+
 def _run_scan(args) -> int:
     """--scan: list what a scan file would create, or with --apply create,
     prepare and (with a stage flag) launch each run."""
@@ -104,6 +116,7 @@ def _run_scan(args) -> int:
     written = apply_plan(scan, site.root, plan, force=args.force)
     failed = 0
     for run in written:
+        _ensure_notebook(run.run_dir)
         try:
             params = load_shotfile(run.run_dir / "shotfile.py")
             result = prepare_run(params, site, run.run_dir, run_sw=args.run_sw)
@@ -148,6 +161,10 @@ def main(argv: list[str] | None = None) -> int:
         build_parser().print_help()
         return 0
 
+    run_dir = Path.cwd()
+    if not args.dry_run:
+        _ensure_notebook(run_dir)
+
     try:
         params = load_shotfile(args.shot_file)
     except ShotfileError as exc:
@@ -159,8 +176,6 @@ def main(argv: list[str] | None = None) -> int:
     except SiteConfigError as exc:
         error(str(exc))
         return 1
-
-    run_dir = Path.cwd()
 
     try:
         result = prepare_run(

@@ -4,6 +4,25 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: the viewer notebook is written before the shotfile is checked
+
+- `run_jorek shotfile.py` (and `--scan --apply`) now puts
+  `case_viewer.ipynb` in the run folder first, so it is there even when
+  the shotfile is then refused. Before, a refused shotfile left no
+  notebook. `--dry-run` still writes nothing.
+- The message for an unreachable q0 says `qa`, not `q_edge`, and reads
+  "... allow for this profile family: q0 from 0.757 to 1.480".
+
+## 2026-10-07: `T_method = "file"`
+
+- `T_file` names a two-column file in the run folder: psi_N of the plasma
+  (0 to 1) and Te + Ti in eV. Converted to JOREK's units, held at its edge
+  value through the vacuum extension, written to `T_prof.dat`.
+- A file that does not run from 0 to 1, does not increase, or has T <= 0
+  stops `run_jorek` with the reason.
+- `T_method` now takes `"castor"`, `"const"` or `"file"`.
+- Unverified: no JOREK run with a T profile from a file.
+
 ## 2026-10-07: `current_q_edge` renamed `current_qa`
 
 - The shotfile field for the edge q of a `"q_li"` profile is now

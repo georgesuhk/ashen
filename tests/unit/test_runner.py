@@ -1022,3 +1022,62 @@ def test_starwall_run_archives_under_the_boundary_s_name(synthetic_campaign, tmp
     commands = submit_starwall(result.paths, site, params, dry_run=True)
 
     assert "starwall-response_boundary1_ext1.2.dat" in commands[-1]
+
+
+# --- T from a file -------------------------------------------------------------------
+
+
+def _t_file_params(params, run_dir, template_dir, **changes):
+    run_dir.mkdir(parents=True, exist_ok=True)
+    x = np.linspace(0, 1, 41)
+    np.savetxt(run_dir / "T.dat", np.column_stack((x, 20.0 + 480.0 * (1 - x) ** 2)))
+    fields = dict(T_method="file", T_file="T.dat", T_const=None)
+    return _q_li_params(params, run_dir, template_dir, **(fields | changes))
+
+
+def test_t_file_is_converted_and_held_flat_in_the_vacuum(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    from ashen.physics import MU_0
+
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    result = prepare_run(_t_file_params(params, run_dir, template_dir), site, run_dir)
+
+    to_jorek = 1.602176634e-19 * MU_0 * 1e18            # eV -> JOREK, n_0 = rho_const = 1e18
+    t_prof = np.loadtxt(run_dir / "T_prof.dat")
+    assert t_prof.shape == (200, 2)
+    assert t_prof[0, 1] == pytest.approx(500.0 * to_jorek, rel=1e-9)
+    outside = t_prof[:, 0] >= result.real_psi_edge
+    np.testing.assert_allclose(t_prof[outside, 1], 20.0 * to_jorek, rtol=1e-9)
+    x = t_prof[~outside, 0] / result.real_psi_edge       # the plasma's own psi_N
+    np.testing.assert_allclose(
+        t_prof[~outside, 1], (20.0 + 480.0 * (1 - x) ** 2) * to_jorek, rtol=2e-3
+    )
+    assert np.all(t_prof[:, 1] > 0)
+
+
+def test_t_file_without_extension(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    prepare_run(_t_file_params(params, run_dir, template_dir, extend_bnd=False), site, run_dir)
+    t_prof = np.loadtxt(run_dir / "T_prof.dat")
+    assert t_prof[0, 1] / t_prof[-1, 1] == pytest.approx(500.0 / 20.0, rel=1e-9)
+
+
+@pytest.mark.parametrize("rows, message", [
+    ([(0.0, 100.0), (0.5, 50.0), (0.9, 10.0)], "0 to 1"),
+    ([(0.0, 100.0), (0.5, 0.0), (1.0, 10.0)], "positive"),
+    ([(0.0, 100.0), (0.6, 50.0), (0.5, 40.0), (1.0, 10.0)], "increase"),
+])
+def test_bad_t_file_is_a_shotfile_error(synthetic_campaign, tmp_path, rows, message):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _t_file_params(params, run_dir, template_dir)
+    np.savetxt(run_dir / "T.dat", np.array(rows))
+    with pytest.raises(ShotfileError, match=message):
+        prepare_run(params, site, run_dir, dry_run=True)
+
+
+def test_t_file_is_required_for_the_method(synthetic_campaign):
+    site, template_dir, params = synthetic_campaign
+    with pytest.raises(ShotfileError, match="T_file"):
+        dataclasses.replace(params, T_method="file")
