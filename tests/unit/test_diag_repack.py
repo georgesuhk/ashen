@@ -91,11 +91,85 @@ def test_a_copy_that_does_not_match_is_never_put_in_place(tmp_path, monkeypatch)
 
     path = write_like_jorek(tmp_path / "a.h5")
     size = path.stat().st_size
-    monkeypatch.setattr(module, "_same", lambda a, b: "R: values differ")
+    monkeypatch.setattr(module, "_same", lambda copied, path, pool: "R: values differ")
     with pytest.raises(ValueError, match="not identical"):
         repack(path)
     assert path.stat().st_size == size and not is_compressed(path)
     assert not list(tmp_path.glob(".*repack"))
+
+
+@pytest.mark.parametrize("workers", [1, 4])
+def test_many_chunks_and_blocks_with_a_padded_edge_keep_every_value(tmp_path, monkeypatch, workers):
+    """Small chunks and blocks: 40 rows in chunks of 3 (the last one
+    padded) and blocks of 6, compressed on one thread or several."""
+    import ashen.diag_repack as module
+
+    original = write_like_jorek(tmp_path / "a.h5")
+    copy = tmp_path / "b.h5"
+    copy.write_bytes(original.read_bytes())
+    monkeypatch.setattr(module, "_CHUNK_BYTES", 3 * N * 4)     # 3 rows of f4
+    monkeypatch.setattr(module, "_BLOCK_BYTES", 7 * N * 4)     # 7 rows: 6, a whole 2 chunks
+    monkeypatch.setattr(module, "_MAX_WORKERS", workers)
+    assert repack(copy).skipped is None
+    with h5py.File(original) as a, h5py.File(copy) as b:
+        assert b["groups/001/R"].chunks == (3, N)
+        assert b["groups/001/e"].chunks == (1, N)              # f8: a row is over the size
+        for name in ("groups/001/psi_n", "groups/001/R", "groups/001/e", "groups/001/lost",
+                     "groups/001/t", "psi_axis"):
+            assert a[name][()].tobytes() == b[name][()].tobytes()
+            assert b[name].compression == "gzip" and b[name].shuffle
+        # still extensible, and what is appended reads back
+        b.close()
+    with h5py.File(copy, "a") as b:
+        d = b["groups/001/R"]
+        d.resize((ROWS + 1, N))
+        d[ROWS] = 7.0
+    with h5py.File(original) as a, h5py.File(copy) as b:
+        np.testing.assert_array_equal(b["groups/001/R"][:ROWS], a["groups/001/R"][()])
+        assert (b["groups/001/R"][ROWS] == 7.0).all()
+
+
+@pytest.mark.parametrize("flip", ["first", "last"])
+def test_a_chunk_that_went_wrong_is_caught_by_the_read_back(tmp_path, monkeypatch, flip):
+    """The check is of the finished file, read back through HDF5: one value
+    off in one chunk -- here as it is packed -- and the original stays."""
+    import ashen.diag_repack as module
+
+    path = write_like_jorek(tmp_path / "a.h5")
+    size = path.stat().st_size
+    monkeypatch.setattr(module, "_CHUNK_BYTES", 3 * N * 4)
+    real, calls = module._packed, []
+
+    def packed(rows, chunk):
+        calls.append(1)
+        if rows.dtype == np.float32 and rows.ndim == 2 and len(calls) == 5:
+            rows = rows.copy()
+            rows[0 if flip == "first" else -1, 0 if flip == "first" else -1] += 1e-3
+        return real(rows, chunk)
+
+    monkeypatch.setattr(module, "_MAX_WORKERS", 1)             # so the fifth call is one chunk
+    monkeypatch.setattr(module, "_packed", packed)
+    with pytest.raises(ValueError, match="not identical .*values differ"):
+        repack(path)
+    assert path.stat().st_size == size and not is_compressed(path)
+    assert not list(tmp_path.glob(".*repack"))
+
+
+def test_the_original_is_read_once(tmp_path, monkeypatch):
+    import ashen.diag_repack as module
+
+    path = write_like_jorek(tmp_path / "a.h5")
+    opened = []
+    real = h5py.File
+
+    def file(name, mode="r", *args, **kwargs):
+        opened.append((Path(name).name, mode))
+        return real(name, mode, *args, **kwargs)
+
+    monkeypatch.setattr(h5py, "File", file)
+    assert repack(path).skipped is None
+    # once to see whether it is compressed (no data read), once to copy
+    assert opened.count(("a.h5", "r")) == 2
 
 
 # --- when a trace ends --------------------------------------------------------------

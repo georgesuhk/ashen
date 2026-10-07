@@ -4,6 +4,24 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-06: repacking a trace's diagnostics faster
+
+Measured on a 10000-marker file in JOREK's layout (3.3 GB on disk, 660 MB
+of data): 4.3 s, down from 10.1 s. The repacked file is the same size and
+holds the same values.
+
+- **The original is read once, not twice.** Each block of values is hashed
+  as it is copied. The finished copy is then read back through HDF5 and
+  its hashes compared. A copy that differs is still thrown away and the
+  original kept. Before, the check read the original a second time,
+  padding and all.
+- **Compression runs on up to 8 cores.** Each chunk is shuffled and
+  gzipped on a thread and handed to HDF5 ready-made. The file is still a
+  standard gzip HDF5 file, read as before.
+- Nothing to set: `ptrace` and `util --func compress_traces` use it.
+- Unverified: not yet run on the HPC, where the read of the original is
+  likely the larger share of the time.
+
 ## 2026-10-06: particle plots faster and leaner
 
 These were measured on a 2000-marker, 12000-row trace with 60 snapshots
