@@ -342,9 +342,22 @@ ashen, delete the notebook and let `run_jorek` write it again.
 `notebooks/case_viewer.ipynb` in the repository is the same notebook, kept
 for reference.
 
-Everything is drawn from files already in the folder. Nothing in it runs
-JOREK or a `jorek2_*` tool; a missing cache is named with the `analyse`
-command that makes it.
+Everything is drawn from files already in the folder. JOREK's tools run
+only when you press one of the gather buttons:
+
+- **Run analyse --diag four** and **Run analyse --diag profiles**, above
+  those two views, run `analyse` for this run and then redraw. The run
+  must have an entry in the campaign's `cases.toml` (the nearest one above
+  the folder); if it has none, the button prints the lines to add. What is
+  gathered (steps, variables, modes) is what that entry says.
+- **Gather q-profile + zeroD for this step** (equilibrium view) and
+  **Gather JOREK's q-profile** (tuner) make two short `jorek2_postproc`
+  calls for one step. They need no `cases.toml` entry.
+
+A gather runs inside the notebook and holds it until it finishes;
+`analyse --diag four` over many steps takes as long as it does from the
+shell. Its output appears under the button. For a long gather, use the
+shell or a job as before and just re-run the cell afterwards.
 
 | Cell | Shows | Reads |
 |---|---|---|
@@ -353,6 +366,26 @@ command that makes it.
 | `viewer.equilibrium_view(RUN)` | psi_N contours of a restart with the plasma edge marked, q, and j_phi on the nodes | `jorek<step>.h5`, the q-profile cache |
 | `viewer.four_view(RUN)` | mode amplitudes against step and their radial structure at one step | the `four` caches |
 | `viewer.profiles_view(RUN)` | a cached radial profile at every gathered step | the `profiles` caches |
+
+**The folder's own profile.** Whenever the run folder has an
+`ffprime_prof.dat`, the tuner also draws that profile as a broad grey line
+on all three panels, and gives its q0, l_i and qa: the current density, the
+safety factor and FF' of what the run will actually use, whatever
+`ffprime_method` made it. With `"castor"` that is the CASTOR3D profile, and
+the sliders start on its values, so the model lies over it and can be tuned
+against it. With `"q_li"` it shows whether the inputs match the sliders.
+
+- The grey j and q are the cylinder picture of that FF'
+  (`current_profile.profile_from_ffprime`): the same estimate the sliders'
+  curves are, so the two compare like for like. JOREK's own q, in red when
+  its caches exist, is the real one.
+- How far the estimate is off, on `qa3.3_g3.2/eta1e-3_adv0.1` (a CASTOR3D
+  run): the cylinder picture of its FF' gives q0 = 0.95, l_i = 1.26,
+  qa = 2.97; JOREK's equilibrium from that same FF' has 0.93, 1.39, 3.23.
+  So expect JOREK to land about 9% higher in qa and 10% higher in l_i than
+  the sliders say, and close in q0.
+- It needs the folder to have been prepared once (`ffprime_prof.dat` and a
+  plasma boundary to take R0, a and kappa from).
 
 **The tuner's buttons.**
 - **Save to shotfile** writes `current_q0`, `current_li`, `current_qa`

@@ -4,6 +4,38 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: gather buttons in the viewer
+
+- **Run analyse --diag four** / **--diag profiles** above those views:
+  runs `analyse --case <this run>` from the campaign folder
+  (`viewer.run_analyse`), prints its output, then redraws. Needs the run
+  in `cases.toml`; otherwise it prints the entry to add.
+- **Gather q-profile + zeroD for this step** in the equilibrium view and
+  **Gather JOREK's q-profile** in the tuner: two `jorek2_postproc` calls
+  for one step (`viewer.gather_step_caches`), no `cases.toml` needed. The
+  tuner then shows what JOREK achieved.
+- A gather runs in the notebook and holds it until done.
+- Drawing a view still runs nothing.
+- Tested with a real `analyse` subprocess on a folder with no restarts,
+  and with stand-ins for the JOREK tools. Not run against real JOREK
+  executables.
+
+## 2026-10-07: the tuner shows the folder's own profile, for any ffprime_method
+
+- With an `ffprime_prof.dat` in the run folder, the tuner draws its
+  current density, safety factor and FF' as a grey line under the
+  sliders' profile, and gives its q0, l_i and qa. For a `"castor"` run
+  that is the CASTOR3D profile.
+- Without saved q0/l_i/qa, the sliders start on that profile's values.
+- `current_profile.profile_from_ffprime`: the cylinder picture (j, q, l_i)
+  of any FF' profile. It returns exactly what a family member was made
+  from. `viewer.input_profile` reads it from a run folder.
+- On `qa3.3_g3.2/eta1e-3_adv0.1` the CASTOR3D profile comes out as
+  q0 = 0.95, l_i = 1.26, qa = 2.97, and the family fits it almost exactly
+  (alpha = 2.09, nu = 2.25). JOREK's equilibrium from the same FF' has
+  0.93, 1.39, 3.23: the first measure of the cylinder estimate's error,
+  about +9% in qa and +10% in l_i.
+
 ## 2026-10-07: the tuner warns in red when the folder name gives other values
 
 - A run folder named for one profile (`qa2.1_li1.0_q01.0/eta1e-3`) holding
