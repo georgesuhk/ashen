@@ -62,7 +62,10 @@ from ashen.shotfile import ShotfileError, ShotParams
 
 __all__ = [
     "PreparedRun",
+    "boundary_template",
+    "job_name",
     "prepare_run",
+    "starwall_response_name",
     "submit_eq",
     "submit_main",
     "submit_restart",
@@ -189,6 +192,41 @@ def _uses_castor(params: ShotParams) -> bool:
     return "castor" in (
         params.ffprime_method, params.T_method, params.rho_method, params.bnd_method
     )
+
+
+def boundary_template(site: Site, name: str) -> Path:
+    """Where a campaign boundary (bnd_method="template") lives."""
+    return site.template / "symlink" / "boundary" / name
+
+
+def _case_label(params: ShotParams) -> str:
+    """What identifies the run's domain boundary, which is what a STARWALL
+    response belongs to (with the wall): the campaign boundary and whether
+    it is extended, or for other runs CASTOR3D's qa and g."""
+    if params.bnd_method == "template":
+        stem = Path(params.bnd_file).stem
+        return f"{stem}_ext{params.extend_ratio:g}" if params.extend_bnd else f"{stem}_noext"
+    return f"qa{params.qa:.1f}_g{params.g:.3f}"
+
+
+def starwall_response_name(params: ShotParams) -> str:
+    """File name of the archived STARWALL response for this run, under
+    template/symlink/starwall/.
+
+    On a campaign boundary: ``starwall-response_boundary1_ext1.2.dat``, or
+    ``starwall-response_boundary1_noext.dat`` without extend_bnd. The
+    response depends on the domain boundary and the wall, not on the plasma,
+    so every run on that boundary shares it. Otherwise
+    ``starwall-response_qa2.1_g2.300.dat``.
+    """
+    return f"starwall-response_{_case_label(params)}.dat"
+
+
+def job_name(params: ShotParams) -> str:
+    """The batch job's name: ``<g>_<eta>``; without g, ``<boundary>_<eta>``."""
+    if params.g is None:
+        return f"{Path(params.bnd_file).stem}_{params.eta:g}"
+    return f"{params.g:.1f}_{params.eta:g}"
 
 
 def _toroidal_f0(params: ShotParams, site: Site) -> float:
@@ -380,6 +418,7 @@ def prepare_run(
     # ---- boundary (before ffprime: a current profile takes its geometry
     # from the plasma boundary) ------------------------------------------------
     plasma_bnd = None
+    template_bnd = None
     if params.bnd_method == "castor":
         raw = bnd_mod.read_boundary_from_castor(castor_dir, params.castor_suffix)
         if params.extend_bnd:
@@ -393,6 +432,27 @@ def prepare_run(
         psi_bnd = np.full(
             len(bnd), real_psi_edge_psi[-1] if params.extend_bnd else psi[-1]
         )
+    elif params.bnd_method == "template":
+        template_bnd = boundary_template(site, params.bnd_file)
+        if not template_bnd.is_file():
+            there = sorted(p.name for p in template_bnd.parent.glob("*") if p.is_file())
+            raise ShotfileError(
+                f"bnd_file={params.bnd_file!r}: no such campaign boundary "
+                f"({template_bnd}). There: {', '.join(there) or 'none'}"
+            )
+        raw = load_two_col_data(template_bnd)
+        if len(raw) < 3:
+            raise ShotfileError(f"{template_bnd}: needs at least three (R, Z) rows")
+        plasma_bnd = original_bnd = raw
+        if params.extend_bnd:
+            R0, Z0 = bnd_mod.boundary_center(raw)
+            raw = bnd_mod.expand_boundary(raw, R0, Z0, scale=params.extend_ratio)
+        bnd = bnd_mod.downsample_boundary(raw, BOUNDARY_POINTS)
+        if psi is None:
+            psi_edge_value = params.psi_bnd
+        else:                              # with a CASTOR3D psi, as bnd_method="castor"
+            psi_edge_value = real_psi_edge_psi[-1] if params.extend_bnd else psi[-1]
+        psi_bnd = np.full(len(bnd), psi_edge_value)
     elif params.bnd_method == "file":
         bnd_path = run_dir / params.bnd_file
         bnd = load_two_col_data(bnd_path)
@@ -427,8 +487,8 @@ def prepare_run(
             if plasma_bnd is None:
                 raise ShotfileError(
                     f"ffprime_method={params.ffprime_method!r} takes R0, a and kappa "
-                    "from the plasma boundary: use bnd_method='castor', or "
-                    "bnd_method='file' with bnd_file_is_plasma=True"
+                    "from the plasma boundary: use bnd_method='template' or "
+                    "'castor', or 'file' with bnd_file_is_plasma=True"
                     + ("" if params.ffprime_method == "q_li" else ", or set current_R0")
                 )
             geometry = cur_mod.boundary_geometry(plasma_bnd, _toroidal_f0(params, site))
@@ -515,17 +575,17 @@ def prepare_run(
     disk.symlink_files_in(site.template / "symlink" / "base", run_dir)
 
     if params.freeboundary and not params.allow_other_starwall and not run_sw:
-        starwall_src = (
-            site.template / "symlink" / "starwall"
-            / f"starwall-response_qa{params.qa:.1f}_g{params.g:.3f}.dat"
-        )
+        starwall_src = site.template / "symlink" / "starwall" / starwall_response_name(params)
         if not starwall_src.is_file():
             raise FileNotFoundError(
-                f"No starwall response found for qa{params.qa:.1f}_g{params.g:.3f}"
+                f"No starwall response found for {_case_label(params)}"
                 f" ({starwall_src}). Run submit_starwall first, or set "
                 "allow_other_starwall=True."
             )
         disk.symlink_file(starwall_src, run_dir / "starwall-response.dat")
+
+    if template_bnd is not None:
+        disk.symlink_file(template_bnd, run_dir / params.bnd_file)
 
     disk.symlink_dir(site.jorek_util(params.with_refluid), run_dir, "util")
     model_symlinks = "RE" if params.with_refluid else "standard"
@@ -622,7 +682,7 @@ def submit_main(
         command = (
             f"{site.launch.batch_prelude}\n"
             f"./submit_jorek.sh jobscripts/{params.jobscript} ./exe/{params.exe} "
-            f"./in_main log {params.g:.1f}_{params.eta:g}"
+            f"./in_main log {job_name(params)}"
         )
     return _run(command, paths.run_dir, dry_run=dry_run)
 
@@ -634,7 +694,7 @@ def submit_restart(
     command = (
         f"{site.launch.batch_prelude}\n"
         f"./submit_jorek.sh jobscripts/{params.jobscript} ./exe/{params.exe} "
-        f"./in_main_r log {params.g:.1f}_{params.eta:g}"
+        f"./in_main_r log {job_name(params)}"
     )
     return _run(command, paths.run_dir, dry_run=dry_run)
 
@@ -677,10 +737,7 @@ def submit_starwall(
     )
     commands.append(_run(sw_command, paths.run_dir, dry_run=dry_run))
 
-    archive_target = (
-        site.template / "symlink" / "starwall"
-        / f"starwall-response_qa{params.qa:.1f}_g{params.g:.3f}.dat"
-    )
+    archive_target = site.template / "symlink" / "starwall" / starwall_response_name(params)
     response = paths.run_dir / "starwall-response.dat"
     if dry_run:
         commands.append(f"copy {response} -> {archive_target}, then remove {response}")

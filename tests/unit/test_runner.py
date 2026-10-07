@@ -782,6 +782,7 @@ def _q_li_params(params, run_dir, template_dir, *, f0=3.0, **changes):
     fields = dict(
         ffprime_method="q_li", current_file=None, current_R0=None,
         current_q0=1.1, current_li=1.2, current_q_edge=3.0,
+        freeboundary=False,
     )
     return _current_params(params, run_dir, **(fields | changes))
 
@@ -864,6 +865,7 @@ def test_q_li_with_castor_boundary_and_psi(synthetic_campaign, tmp_path):
     in_eq.write_text(in_eq.read_text().replace("&end", " F0 = 3.0\n&end", 1))
     params = dataclasses.replace(
         params, ffprime_method="q_li", current_q0=1.1, current_li=1.2, current_q_edge=3.0,
+        freeboundary=False,
     )
 
     result = prepare_run(params, site, tmp_path / "rundir", dry_run=True)
@@ -900,3 +902,123 @@ def test_boundary_points_are_not_rounded_to_centimetres(synthetic_campaign, tmp_
         written = np.array(read_boundary_points(run_dir / name))
         np.testing.assert_allclose(written, exact, atol=5.1e-7)
     assert "psi_boundary(  1) = " in (run_dir / "in_bnd").read_text()
+
+
+# --- a campaign boundary, and the STARWALL response named after it -------------
+
+
+def _template_params(params, run_dir, template_dir, **changes):
+    """A "q_li" run on the campaign boundary boundary1.dat (an ellipse: R0 1.5,
+    a 0.5, kappa 1.2), with no qa or g."""
+    boundary_dir = template_dir / "symlink" / "boundary"
+    boundary_dir.mkdir(parents=True, exist_ok=True)
+    theta = np.linspace(0, 2 * np.pi, 120, endpoint=False)
+    np.savetxt(boundary_dir / "boundary1.dat",
+               np.column_stack((1.5 + 0.5 * np.cos(theta), 0.6 * np.sin(theta))))
+    fields = dict(bnd_method="template", bnd_file="boundary1.dat", bnd_file_is_plasma=False,
+                  qa=None, g=None)
+    return _q_li_params(params, run_dir, template_dir, **(fields | changes))
+
+
+def test_starwall_response_is_named_after_the_boundary(synthetic_campaign, tmp_path):
+    from ashen.runner import job_name, starwall_response_name
+
+    site, template_dir, params = synthetic_campaign
+    assert starwall_response_name(params) == "starwall-response_qa2.1_g2.300.dat"
+    assert job_name(params) == "2.3_0.001"
+
+    on_template = _template_params(params, tmp_path / "r", template_dir)
+    assert starwall_response_name(on_template) == "starwall-response_boundary1_ext1.2.dat"
+    assert job_name(on_template) == "boundary1_0.001"
+    assert starwall_response_name(
+        dataclasses.replace(on_template, extend_bnd=False)
+    ) == "starwall-response_boundary1_noext.dat"
+    assert starwall_response_name(
+        dataclasses.replace(on_template, extend_ratio=1.35)
+    ) == "starwall-response_boundary1_ext1.35.dat"
+    # the plasma does not enter: another profile, same response
+    assert starwall_response_name(
+        dataclasses.replace(on_template, current_q0=1.4, current_li=0.9)
+    ) == "starwall-response_boundary1_ext1.2.dat"
+
+
+def test_qa_and_g_are_needed_only_off_a_campaign_boundary(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    assert _template_params(params, tmp_path / "r", template_dir).qa is None
+    with pytest.raises(ShotfileError, match="missing required field.*qa, g"):
+        dataclasses.replace(params, qa=None, g=None)
+    with pytest.raises(ShotfileError, match="missing required field.*qa, g"):
+        _q_li_params(params, tmp_path / "s", template_dir, qa=None, g=None)   # a local file boundary
+
+
+def test_template_boundary_is_linked_expanded_and_used(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    from ashen.namelist import read_boundary_points
+    from ashen.physics import MU_0
+
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _template_params(params, run_dir, template_dir)
+
+    result = prepare_run(params, site, run_dir)
+
+    source = template_dir / "symlink" / "boundary" / "boundary1.dat"
+    np.testing.assert_allclose(np.loadtxt(run_dir / "boundary1.dat"), np.loadtxt(source))
+    np.testing.assert_allclose(np.loadtxt(run_dir / "original_bnd.dat"), np.loadtxt(source))
+    assert any("symlink" in a and "boundary1.dat" in a for a in result.actions)
+    written = np.array(read_boundary_points(run_dir / "in_bnd"))
+    assert len(written) == 50 and written[:, 0].max() == pytest.approx(1.5 + 0.5 * 1.2, abs=1e-3)
+    # the current profile took R0, a, kappa from it
+    j0 = (3.0 / 1.5) * (1 + 1.2**2) / (MU_0 * 1.5 * 1.2 * 1.1)
+    assert np.loadtxt(run_dir / "ffprime_prof.dat")[0, 1] == pytest.approx(-MU_0 * 1.5 * j0, rel=1e-6)
+
+
+def test_template_boundary_is_a_real_symlink(synthetic_campaign, tmp_path, require_symlinks):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    prepare_run(_template_params(params, run_dir, template_dir), site, run_dir)
+    assert (run_dir / "boundary1.dat").is_symlink()
+    prepare_run(_template_params(params, run_dir, template_dir), site, run_dir)     # again: no error
+    assert (run_dir / "boundary1.dat").is_symlink()
+
+
+def test_unknown_template_boundary_lists_what_is_there(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    params = _template_params(params, tmp_path / "rundir", template_dir, bnd_file="boundary9.dat")
+    with pytest.raises(ShotfileError, match="no such campaign boundary.*There: boundary1.dat"):
+        prepare_run(params, site, tmp_path / "rundir", dry_run=True)
+
+
+def test_template_boundary_takes_a_name_not_a_path(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    with pytest.raises(ShotfileError, match="not a path"):
+        _template_params(params, tmp_path / "r", template_dir, bnd_file="../elsewhere/b.dat")
+
+
+def test_freeboundary_run_uses_the_boundary_s_response(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _template_params(params, run_dir, template_dir, freeboundary=True)
+
+    with pytest.raises(FileNotFoundError, match="boundary1_ext1.2"):
+        prepare_run(params, site, run_dir)
+
+    (template_dir / "symlink" / "starwall" / "starwall-response_boundary1_ext1.2.dat").write_text("1 2\n")
+    prepare_run(params, site, run_dir)
+    assert (run_dir / "starwall-response.dat").read_text() == "1 2\n"
+
+    # another current profile on the same boundary needs no new response
+    other = tmp_path / "other"
+    prepare_run(_template_params(params, other, template_dir, freeboundary=True,
+                                 current_q0=1.3, current_li=1.0), site, other)
+    assert (other / "starwall-response.dat").read_text() == "1 2\n"
+
+
+def test_starwall_run_archives_under_the_boundary_s_name(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    params = _template_params(params, run_dir, template_dir, freeboundary=True)
+    result = prepare_run(params, site, run_dir, dry_run=True, run_sw=True)
+
+    commands = submit_starwall(result.paths, site, params, dry_run=True)
+
+    assert "starwall-response_boundary1_ext1.2.dat" in commands[-1]

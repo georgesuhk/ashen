@@ -98,7 +98,8 @@ bnd_file           = "bnd.dat"  # two columns: R, Z [m]
 bnd_file_is_plasma = True
 ```
 
-`qa` and `g` are still required: they name the STARWALL response.
+`qa` and `g` are still required with a boundary file in the run folder: they
+name the STARWALL response. On a campaign boundary (below) they are not.
 
 **The current.** `j` is the toroidal current density at `R = current_R0` on
 each flux surface, positive in the direction the CASTOR3D-sourced runs carry
@@ -138,6 +139,43 @@ written on the boundary when no CASTOR3D psi supplies it.
 
 The conversions are in `ashen.current_profile`: `ffprime_from_current`,
 `current_from_ffprime`, `psi_n_from_rho`, `temperature_to_jorek`.
+
+### One boundary for a campaign
+
+Keep the plasma boundary in the template and name it in the shotfile:
+
+```
+NL_kinks/template/symlink/boundary/boundary1.dat      # two columns: R, Z [m]
+```
+
+```python
+bnd_method = "template"
+bnd_file   = "boundary1.dat"
+```
+
+- `run_jorek` symlinks it into the run folder under the same name, so
+  every run on `boundary1.dat` uses the one file. It is the plasma
+  boundary: with `extend_bnd` it is scaled by `extend_ratio`, and
+  resampled to 50 points, as a CASTOR3D boundary is.
+- **The STARWALL response is named after it**, with a suffix for the
+  extension:
+
+      template/symlink/starwall/starwall-response_boundary1_ext1.2.dat
+      template/symlink/starwall/starwall-response_boundary1_noext.dat
+
+  `ext1.2` is `extend_ratio`. The response depends on the domain boundary
+  and the wall, not on the plasma, so one `--run_sw` serves every q0, l_i,
+  q_edge and resistivity run on that boundary. A different `extend_ratio`
+  is a different domain and gets its own file.
+- `qa` and `g` are not needed in the shotfile. The batch job is named
+  `<boundary>_<eta>`.
+- The name does not record the wall or the grid. After changing
+  `input_starwall`, `n_pol`, `R_geo` or `Z_geo`, or the contents of the
+  boundary file, run `--run_sw` again: JOREK checks only the number of
+  boundary elements when it reads a response, so an out-of-date one is
+  used without complaint.
+- An existing run's `original_bnd.dat` is a ready-made boundary file for
+  that case (the CASTOR3D boundary, unrounded).
 
 ### The current from q0, l_i and q_edge
 
@@ -190,7 +228,8 @@ resistivities. It lives in the campaign (anywhere under the folder that holds
 base   = "base_shotfile.py"        # an ordinary shotfile: everything the runs share
 folder = "qa2.1_li1.0_q01.0"       # parent folder of the runs
 name   = "eta{eta}"                # run folder name, built from the varied values
-copy   = ["plasma_bnd.dat"]        # files each run folder needs (optional)
+# copy = ["some_file.dat"]         # files to put in each run folder (optional;
+#                                  # a campaign boundary needs none)
 
 [vary]
 eta = [1e-3, 1e-4, 1e-5]
