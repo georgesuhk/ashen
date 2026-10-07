@@ -176,6 +176,25 @@ and flag named here.
   needs the real CASTOR3D tree, which this machine lacks).
 - Unverified: no JOREK run with the corrected file yet.
 
+## 2026-10-07: boundary R and Z written to 6 decimals, not 2
+
+- `run_jorek` wrote the boundary's R and Z with `.2f`, rounding each of
+  the 50 points to 1 cm. In `qa3.3_g3.2/eta1e-3_adv0.1` that put the
+  points up to 6 mm off the smooth boundary, with jumps of up to 10 mm
+  between neighbours and 8 concave kinks. JOREK's grid boundary
+  (`boundary.txt`) carried the same wobble.
+- R and Z now go to `in_eq`, `in_main`, `in_main_r` and `in_bnd` with 6
+  decimals. `psi_boundary` is written as before.
+- A new run's domain boundary differs from an old one's by up to 5 mm per
+  point. Existing run folders are untouched until `run_jorek` is run in
+  them again.
+- The golden `in_bnd` was regenerated from the golden `original_bnd.dat`.
+  Rounded to 2 decimals it reproduces the old file byte for byte. The
+  golden `in_eq` is still the legacy capture; its test now accepts R and Z
+  that round to the legacy values.
+- Unverified: no JOREK grid built from the new boundary yet; the golden
+  tests need the real CASTOR3D tree.
+
 ## 2026-10-06: repacking a trace's diagnostics faster
 
 Measured on a 10000-marker file in JOREK's layout (3.3 GB on disk, 660 MB

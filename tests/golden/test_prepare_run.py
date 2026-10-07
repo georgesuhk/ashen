@@ -97,9 +97,19 @@ def test_namelist_matches_legacy_semantically(produced_run, name):
     mismatched = {
         key: (reference_fields[key], produced_fields[key])
         for key in reference_fields
-        if not _values_match(reference_fields[key], produced_fields[key])
+        if not (
+            _rounds_to(reference_fields[key], produced_fields[key])
+            if key.startswith(("r_boundary(", "z_boundary("))
+            else _values_match(reference_fields[key], produced_fields[key])
+        )
     }
     assert not mismatched, f"{name}: value mismatches (legacy, produced): {mismatched}"
+
+
+def _rounds_to(legacy, produced) -> bool:
+    """Legacy wrote the boundary's R and Z to 2 decimals; ashen writes 6
+    (CHANGELOG 2026-10-07). The new value must round to the legacy one."""
+    return abs(float(legacy) - float(produced)) <= 0.005 + 1e-9
 
 
 def _values_match(a, b) -> bool:

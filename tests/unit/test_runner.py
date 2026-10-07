@@ -873,6 +873,12 @@ def test_q_li_with_castor_boundary_and_psi(synthetic_campaign, tmp_path):
 def test_rho_profile_is_in_units_of_central_density(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
     """JOREK's rho is n / (central_density * 1e20): rho_const everywhere is 1,
     not rho_const / 1e20 a second time."""
+
+def test_boundary_points_are_not_rounded_to_centimetres(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    """R and Z keep 6 decimals; ".2f" used to put 1 cm kinks in the boundary."""
+    from ashen import boundary as bnd_mod
+    from ashen.namelist import read_boundary_points
+
     site, template_dir, params = synthetic_campaign
     run_dir = tmp_path / "rundir"
 
@@ -884,3 +890,13 @@ def test_rho_profile_is_in_units_of_central_density(synthetic_campaign, tmp_path
     assert float(str(fields["central_density"]).lower().replace("d", "e")) == pytest.approx(
         params.rho_const / 1e20
     )
+
+    raw = np.loadtxt(run_dir / "original_bnd.dat")
+    R0, Z0 = bnd_mod.boundary_center(raw)
+    exact = bnd_mod.downsample_boundary(
+        bnd_mod.expand_boundary(raw, R0, Z0, scale=params.extend_ratio), 50
+    )
+    for name in ("in_bnd", "in_eq", "in_main", "in_main_r"):
+        written = np.array(read_boundary_points(run_dir / name))
+        np.testing.assert_allclose(written, exact, atol=5.1e-7)
+    assert "psi_boundary(  1) = " in (run_dir / "in_bnd").read_text()

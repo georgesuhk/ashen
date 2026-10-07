@@ -298,8 +298,12 @@ def format_boundary_block(
     Z: Sequence[float],
     psi: Sequence[float],
     float_fmt: str = ".6f",
+    psi_fmt: str | None = None,
 ) -> list[str]:
     """Render a boundary block as namelist lines, no trailing newline.
+
+    ``float_fmt`` formats R and Z; ``psi_fmt`` formats psi and defaults to
+    the same.
 
     Single source of truth for a layout write_boundary_file and
     write_boundary_to_namelist previously produced with two independent
@@ -314,7 +318,7 @@ def format_boundary_block(
         lines.append(
             f"R_boundary({i:3d}) = {format(r, float_fmt)}, "
             f"Z_boundary({i:3d}) = {format(z, float_fmt)}, "
-            f"psi_boundary({i:3d}) = {format(p, float_fmt)}"
+            f"psi_boundary({i:3d}) = {format(p, psi_fmt or float_fmt)}"
         )
     return lines
 
@@ -354,6 +358,7 @@ def set_boundary_block(
     Z: Sequence[float],
     psi: Sequence[float],
     float_fmt: str = ".6f",
+    psi_fmt: str | None = None,
 ) -> None:
     """Write a boundary block into a namelist, replacing any existing one.
 
@@ -375,7 +380,7 @@ def set_boundary_block(
     if end_idx is None:
         raise NamelistError(f"{path}: no '&end' marker found")
 
-    block = format_boundary_block(R, Z, psi, float_fmt)
+    block = format_boundary_block(R, Z, psi, float_fmt, psi_fmt)
     merged = kept[:end_idx] + block + [""] + kept[end_idx:]
     path.write_text("\n".join(merged) + "\n", encoding="utf-8")
 
@@ -386,12 +391,13 @@ def write_boundary_file(
     Z: Sequence[float],
     psi: Sequence[float],
     float_fmt: str = ".2f",
+    psi_fmt: str | None = None,
 ) -> None:
     """Write a standalone boundary file (``in_bnd``).
 
     Same block as :func:`set_boundary_block`, without the leading space on
     ``n_boundary`` that the namelist form carries.
     """
-    block = format_boundary_block(R, Z, psi, float_fmt)
+    block = format_boundary_block(R, Z, psi, float_fmt, psi_fmt)
     block[0] = block[0].lstrip()
     Path(path).write_text("\n".join(block) + "\n", encoding="utf-8")
