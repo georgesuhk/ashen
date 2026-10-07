@@ -4,6 +4,28 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-07: scan files: several runs from one base shotfile
+
+- A scan file (TOML, in the campaign) names a base shotfile, a parent
+  folder, a name pattern and the shotfile fields to vary. `run_jorek
+  --scan FILE` lists the run folders it would create; `--apply` creates
+  and prepares them; a stage flag (`--run`, `--run_eq`, ...) launches each.
+- `[vary]` gives every combination; `[[runs]]` gives hand-picked ones.
+  `copy` lists files to put in each run folder.
+- The campaign is the one the scan file sits in (nearest `site.toml`
+  above it), so the command works from anywhere.
+- Re-applying acts only on runs it creates: existing runs are not
+  prepared or launched again. A folder with a different `shotfile.py` is
+  left alone unless `--force`.
+- Applying appends the runs and a comparison to `cases.toml` (`cases =
+  false` turns that off). It never edits what is there.
+- New steps form: `steps = { first_last = true }`, the first and last
+  restart of the run, which the added cases use.
+- `ashen.shotfile.shotfile_text_with`: the text form of
+  `set_shotfile_values`.
+- Tried on a made-up campaign (three resistivities). No JOREK job has
+  been submitted through it.
+
 ## 2026-10-07: a viewer notebook in every run folder
 
 - `run_jorek` now writes `case_viewer.ipynb` into the run folder it

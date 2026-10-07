@@ -37,7 +37,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-__all__ = ["ShotParams", "ShotfileError", "load_shotfile", "set_shotfile_values"]
+__all__ = ["ShotParams", "ShotfileError", "load_shotfile", "set_shotfile_values",
+           "shotfile_text_with"]
 
 #: Fields the old shotfile.py sometimes set that are now supplied elsewhere:
 #: shot_folder is always the cwd, template_folder/castor_master_folder come
@@ -269,18 +270,17 @@ def _is_literal(source: str) -> bool:
     return True
 
 
-def set_shotfile_values(path: Path | str, values: dict[str, Any]) -> None:
-    """Set module-level ``name = value`` lines in a shotfile, in place.
+def shotfile_text_with(text: str, values: dict[str, Any], source: Path | str = "shotfile") -> str:
+    """``text`` (a shotfile's source) with module-level ``name = value`` lines set.
 
     A name already assigned on one line to a plain literal has that line
     replaced (a trailing comment is kept); a name not assigned at all is
     appended. Anything else -- a computed right-hand side such as
     ``rho_const = n0``, a name assigned twice, a statement spanning lines --
-    raises ShotfileError and leaves the file untouched, so a hand-written
-    expression is never overwritten. Values are written with ``repr``.
+    raises ShotfileError, so a hand-written expression is never overwritten.
+    Values are written with ``repr``. ``source`` only names the file in errors.
     """
-    path = Path(path)
-    text = path.read_text(encoding="utf-8")
+    path = source
     try:
         tree = ast.parse(text)
     except SyntaxError as exc:
@@ -318,4 +318,15 @@ def set_shotfile_values(path: Path | str, values: dict[str, Any]) -> None:
         if lines and lines[-1].strip():
             lines.append("")
         lines.extend(appended)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return "\n".join(lines) + "\n"
+
+
+def set_shotfile_values(path: Path | str, values: dict[str, Any]) -> None:
+    """Set module-level ``name = value`` lines in a shotfile, in place.
+
+    See shotfile_text_with for what is replaced, appended or refused. On a
+    refusal the file is left untouched.
+    """
+    path = Path(path)
+    new_text = shotfile_text_with(path.read_text(encoding="utf-8"), values, source=path)
+    path.write_text(new_text, encoding="utf-8")

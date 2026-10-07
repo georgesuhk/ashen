@@ -178,6 +178,79 @@ and switch to `ffprime_method = "current"`.
 lines in a shotfile. It only replaces plain values and refuses a computed
 one (`rho_const = n0`).
 
+## Several runs from one scan file
+
+A scan file creates a set of run folders that share a base shotfile and
+differ in a few shotfile fields, e.g. the same q0, l_i and q_edge at several
+resistivities. It lives in the campaign (anywhere under the folder that holds
+`site.toml`):
+
+```toml
+# NL_kinks/scans/qa2.1_eta.toml
+base   = "base_shotfile.py"        # an ordinary shotfile: everything the runs share
+folder = "qa2.1_li1.0_q01.0"       # parent folder of the runs
+name   = "eta{eta}"                # run folder name, built from the varied values
+copy   = ["plasma_bnd.dat"]        # files each run folder needs (optional)
+
+[vary]
+eta = [1e-3, 1e-4, 1e-5]
+```
+
+```bash
+run_jorek --scan scans/qa2.1_eta.toml                 # list what it would create
+run_jorek --scan scans/qa2.1_eta.toml --apply         # create and prepare the folders
+run_jorek --scan scans/qa2.1_eta.toml --apply --run   # ... and submit each main run
+```
+
+That makes `qa2.1_li1.0_q01.0/eta1e-3`, `.../eta1e-4`, `.../eta1e-5`. Each gets
+the base shotfile with only the varied lines rewritten, so every run folder
+holds its own complete `shotfile.py`, and `run_jorek`, the viewer notebook and
+`analyse` work in it as in any other.
+
+- **The campaign is the scan file's.** `base`, `folder`, `copy` and
+  `cases.toml` are relative to the folder holding `site.toml`, found by
+  walking up from the scan file. The command works from any directory.
+- **Several keys in `[vary]`** give every combination. For hand-picked ones
+  use `[[runs]]` tables instead, one per run, each listing its values.
+- **Names** come from the values and are never read back. A value is
+  written as you would: `1e-3`, `2.5e-4`, `2.1`. A format spec overrides
+  that (`{eta:.0e}`). Every varied key must be in `name`, or runs collide.
+- **Only shotfile fields can be varied**, and only lines the base shotfile
+  sets to a plain value: a computed one (`rho_const = n0`) is refused.
+- **Without `--apply` nothing is written.**
+- **Applying acts only on runs it creates.** A run folder already there
+  with the same shotfile is not touched, prepared or launched again, so a
+  scan can be extended (add `1e-6` to the list) and re-applied while the
+  earlier runs are going. One whose `shotfile.py` differs is left alone
+  unless `--force`.
+- **Stage flags** (`--run`, `--run_i`, `--run_eq`, `--run_sw`, `--run_r`)
+  apply to each run created. A run that cannot be prepared is reported and
+  the others go on; the exit status is then non-zero.
+
+**`cases.toml`.** Applying a scan also appends to the campaign's
+`cases.toml` (creating it if needed), unless the scan has `cases = false`:
+
+```toml
+[cases."qa2.1_li1.0_q01.0/eta1e-3"]
+note  = "qa2.1_eta.toml: eta = 1e-3"
+steps = { first_last = true }
+
+[comparisons.qa2.1_eta]
+note  = "from qa2.1_eta.toml"
+cases = ["qa2.1_li1.0_q01.0/eta1e-3", "qa2.1_li1.0_q01.0/eta1e-4", "qa2.1_li1.0_q01.0/eta1e-5"]
+x_values = [0.001, 0.0001, 1e-05]
+x_label  = "eta"
+```
+
+- `steps = { first_last = true }` is the run's first and last restart,
+  read from the folder each time `cases.toml` is loaded. Change it per
+  case as you like.
+- The comparison is named after the scan file (`comparison = "..."`
+  overrides). It gets `x_values` when exactly one numeric key is varied.
+- It only appends. A case already there is not repeated. A comparison
+  already there is not edited: when a scan has grown, the lines it should
+  now have are printed for you to paste.
+
 ## Looking at a case from a notebook
 
 Each run folder has a `case_viewer.ipynb` that shows that run: its current
@@ -610,6 +683,7 @@ run's own restarts (`jorek<step>.h5` in the case's folder) fill them in:
 steps = { step = 400 }                 # every 400 steps, first restart to last
 steps = {}                             # every restart
 steps = { start = 1000, step = 400 }   # from step 1000 to the last restart
+steps = { first_last = true }          # the first and the last restart only
 ```
 
 - `start` defaults to the run's first restart, `stop` to its last, which is
@@ -2194,6 +2268,7 @@ src/ashen/
   current_profile.py  current density -> JOREK's FFprime, r/a -> psi_N; q0/l_i/q_edge profiles
   viewer.py     notebook views of a run folder
   case_notebook.py  the case_viewer.ipynb run_jorek puts in each run folder
+  scan.py       scan files: several run folders from one base shotfile
   demo.py       a made-up campaign for trying the viewer (notebooks/case_viewer_demo.ipynb)
   shotfile.py   ShotParams dataclass + validating loader
   fs.py         copy/symlink helpers used when populating a run folder

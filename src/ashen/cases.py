@@ -336,13 +336,21 @@ def _steps_from_range_dict(
     to and including its last. The steps are then picked *from the restarts
     that exist* -- those at start, start + step, start + 2 step, ... -- so
     `{step = 400}` needs no knowledge of the run's length and `{}` is every
-    restart. A folder that is missing or has no restarts gives no steps; the
+    restart. `{first_last = true}` is the run's first and last restart only. A folder that is missing or has no restarts gives no steps; the
     entry points then report that case as they would anyway.
     """
     where = f"{source}: case {case_name!r} steps table"
+    if "first_last" in spec:
+        # The run's first and last restart, whatever they are when read.
+        if set(spec) != {"first_last"} or spec["first_last"] is not True:
+            raise CasesError(f"{where}: first_last takes only `first_last = true`, got {spec!r}")
+        available = restart_steps(run_dir) if run_dir.is_dir() else []
+        return sorted({available[0], available[-1]}) if available else []
     unknown = sorted(set(spec) - {"start", "stop", "step"})
     if unknown:
-        raise CasesError(f"{where} has unknown key(s) {unknown}; it takes start, stop, step")
+        raise CasesError(
+            f"{where} has unknown key(s) {unknown}; it takes start, stop, step, or first_last"
+        )
     try:
         start, stop = (None if spec.get(k) is None else int(spec[k]) for k in ("start", "stop"))
         step = int(spec.get("step", 1))
