@@ -137,6 +137,9 @@ class ShotParams:
 
     #: T_method="const": Te + Ti [eV], flat.
     T_const: float | None = None
+    #: T_method="file": a two-column file in the run folder, psi_N of the
+    #: plasma (0 at the axis, 1 at its edge) and Te + Ti [eV].
+    T_file: str | None = None
 
     #: bnd_method="template": bnd_file names a plasma boundary shared by the
     #: campaign, template/symlink/boundary/<bnd_file>. The run folder gets a
@@ -200,6 +203,8 @@ class ShotParams:
                 )
         if self.T_method == "const" and self.T_const is None:
             raise ShotfileError("T_const is required when T_method='const'")
+        if self.T_method == "file" and self.T_file is None:
+            raise ShotfileError("T_file is required when T_method='file'")
 
         if self.with_refluid:
             missing = [f for f in _RE_FIELDS if getattr(self, f) is None]

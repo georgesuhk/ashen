@@ -52,6 +52,7 @@ __all__ = [
     "extend_psi_n",
     "ffprime_from_current",
     "load_current_profile",
+    "load_temperature_profile",
     "psi_n_from_rho",
     "resample_monotone",
     "temperature_to_jorek",
@@ -120,6 +121,27 @@ def load_current_profile(path: Path | str, coord: str = "psi_n") -> tuple[np.nda
     if coord == "rho":
         return psi_n_from_rho(x, j), j
     raise ValueError(f"current_coord={coord!r}; expected 'psi_n' or 'rho'")
+
+
+def load_temperature_profile(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
+    """Read a two-column (psi_N, Te + Ti [eV]) file.
+
+    psi_N must run from 0 to 1, increasing, and T must be positive
+    everywhere: JOREK rejects a profile that is not.
+    """
+    data = load_two_col_data(path)
+    if len(data) < 2:
+        raise ValueError(f"{path}: needs at least two (psi_N, T) rows")
+    x, T = data[:, 0], data[:, 1]
+    if np.any(np.diff(x) <= 0):
+        raise ValueError(f"{path}: the first column must increase strictly")
+    if abs(x[0]) > 1e-12 or abs(x[-1] - 1.0) > 1e-9:
+        raise ValueError(
+            f"{path}: the first column must run from 0 to 1, got {x[0]:g} to {x[-1]:g}"
+        )
+    if np.any(T <= 0):
+        raise ValueError(f"{path}: T must be positive everywhere, lowest is {T.min():g} eV")
+    return x, T
 
 
 def resample_monotone(x, y, x_new) -> np.ndarray:
@@ -220,8 +242,8 @@ def solve_shape(q0: float, li: float, q_edge: float) -> tuple[float, float]:
     crossings = np.nonzero(d[:-1] * d[1:] <= 0)[0]
     if len(crossings) == 0:
         raise ValueError(
-            f"q0 = {q0:g} is outside what l_i = {li:g} and q_edge = {q_edge:g} "
-            f"allow for this profile family: {lo:.3f} to {hi:.3f}"
+            f"q0 = {q0:g} is outside what l_i = {li:g} and qa = {q_edge:g} "
+            f"allow for this profile family: q0 from {lo:.3f} to {hi:.3f}"
         )
     k = crossings[0]
     alpha = brentq(

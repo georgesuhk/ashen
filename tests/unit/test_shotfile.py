@@ -25,6 +25,7 @@ exe = "jorek_model600_ntor1"
 jobscript = "23h"
 ffprime_method = "file"
 T_method = "file"
+T_file = "T.dat"
 rho_method = "const"
 bnd_method = "file"
 rho_const = 1e18
@@ -299,7 +300,7 @@ def test_shotparams_validates_even_when_constructed_directly():
     with pytest.raises(ShotfileError, match="rho_const"):
         ShotParams(
             qa=2.1, g=2.3, eta=1e-3, tstep_n=[0.03], nstep_n=[3000], nout=100,
-            exe="x", jobscript="y", ffprime_method="file", T_method="file",
+            exe="x", jobscript="y", ffprime_method="file", T_method="file", T_file="T.dat",
             rho_method="const", bnd_method="file", bnd_file="b.dat",
         )
 

@@ -154,3 +154,52 @@ def test_second_prepare_always_succeeds(cli_campaign, symlinks_maybe_bypassed):
     code = main(["shotfile.py"])
 
     assert code == 0
+
+
+# --- the viewer notebook is written even when the run is refused ----------------
+
+
+def test_notebook_is_written_even_when_prepare_run_refuses(cli_campaign, capsys):
+    """A q0 outside the reachable window stops run_jorek; the viewer, which
+    is how that gets fixed, must be there anyway."""
+    shot = cli_campaign / "shotfile.py"
+    shot.write_text(
+        shot.read_text()
+        + '\nffprime_method = "q_li"\ncurrent_q0 = 0.2\ncurrent_li = 1.2\ncurrent_qa = 3.0\n'
+        + 'bnd_method = "castor"\n'
+    )
+
+    code = main(["shotfile.py"])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert (cli_campaign / "case_viewer.ipynb").is_file()
+    assert "viewer notebook written" in captured.out
+    assert not (cli_campaign / "ffprime_prof.dat").exists()
+
+
+def test_notebook_is_written_even_when_the_shotfile_does_not_load(cli_campaign, capsys):
+    (cli_campaign / "shotfile.py").write_text("eta = 1e-3\n")      # most fields missing
+
+    assert main(["shotfile.py"]) == 1
+    assert (cli_campaign / "case_viewer.ipynb").is_file()
+
+
+def test_dry_run_still_writes_no_notebook(cli_campaign):
+    assert main(["shotfile.py", "--dry-run"]) == 0
+    assert not (cli_campaign / "case_viewer.ipynb").exists()
+
+
+def test_window_message_speaks_of_qa(cli_campaign, capsys):
+    shot = cli_campaign / "shotfile.py"
+    shot.write_text(
+        shot.read_text()
+        + '\nffprime_method = "q_li"\ncurrent_q0 = 0.2\ncurrent_li = 1.2\ncurrent_qa = 3.0\n'
+    )
+    in_eq = cli_campaign.parents[1] / "template" / "copy" / "in_eq"
+    in_eq.write_text(in_eq.read_text().replace("&end", " F0 = 3.0\n&end", 1))
+
+    main(["shotfile.py"])
+
+    err = capsys.readouterr().err
+    assert "qa = 3" in err and "q_edge" not in err and "q0 from" in err

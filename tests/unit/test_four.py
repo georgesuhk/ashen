@@ -129,7 +129,7 @@ def test_analyse_four_tool_rejects_missing_exe(tmp_path):
     (run_dir / "shotfile.py").write_text(
         "qa = 2.1\ng = 2.3\neta = 1e-3\ntstep_n = [1]\nnstep_n = [1]\nnout = 1\n"
         "exe = 'jorek_model600'\njobscript = 'j'\nffprime_method = 'file'\n"
-        "T_method = 'file'\nrho_method = 'file'\nbnd_method = 'file'\n"
+        "T_method = 'file'\nT_file = 'T.dat'\nrho_method = 'file'\nbnd_method = 'file'\n"
         "bnd_file = 'b'\nfour_exe = 'jorek2_four_typo'\n",
         encoding="utf-8",
     )

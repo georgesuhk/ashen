@@ -122,6 +122,21 @@ and `j_phi = -Delta* psi / (R mu_0)`.
 - `current_coord = "rho"` maps r/a to psi_N as a circular cylinder would.
   Shaping and toroidicity move the surfaces, so give `psi_n` when you have it.
 
+**The temperature.** Besides `T_method = "const"`, a profile from a file:
+
+```python
+T_method = "file"
+T_file   = "T.dat"      # two columns: psi_N of the plasma (0 to 1), Te + Ti [eV]
+```
+
+- It is converted to JOREK's units (`T * e * mu_0 * n_0`, `n_0` from
+  `rho_const`) and written to `T_prof.dat`. T must be positive everywhere.
+- With `extend_bnd`, the edge value is held through the vacuum region.
+- A T that varies makes a pressure gradient, which carries current that the
+  current-to-FF' conversion leaves out (above). At the low beta of these
+  runs that is small, but the equilibrium's current is then not exactly the
+  profile asked for.
+
 **Extension.** With `extend_bnd` the plasma edge sits at `1/extend_ratio` of
 the domain's psi_N (written to `real_psi_edge.dat`), and `FFprime` is 0
 beyond it. A `j` that is not 0 at `x = 1` drops to 0 within one grid interval
@@ -305,8 +320,11 @@ Remote SSH on the HPC, or locally) and run the cells. It needs `ipywidgets`,
 pip install --user ipywidgets ipykernel h5py
 ```
 
-**Where the notebook comes from.** `run_jorek` writes it into a run folder
-when it prepares one, if the folder has none. It never overwrites one, so
+**Where the notebook comes from.** `run_jorek shotfile.py` writes it into
+the run folder if the folder has none, before it reads the shotfile. So it
+is there even when `run_jorek` then refuses the shotfile (a q0 outside the
+reachable window, a missing field): the viewer is how that gets fixed.
+`--dry-run` writes nothing. It never overwrites one, so
 saved figures and edits survive `run_jorek` and the Regenerate button. For a
 folder prepared before this existed, run `run_jorek shotfile.py` there
 again, or:
