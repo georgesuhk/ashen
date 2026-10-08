@@ -386,3 +386,23 @@ def test_the_old_name_of_current_qa_is_refused_with_the_new_one(tmp_path):
     )
     with pytest.raises(ShotfileError, match="current_q_edge is now current_qa"):
         load_shotfile(path)
+
+
+def test_a_shotfile_rewritten_at_once_at_the_same_length_is_read_afresh(tmp_path):
+    """Imported as a module, the second read came from __pycache__: same
+    size, same second, so the old bytecode counted as current."""
+    import os
+    from pathlib import Path
+
+    path = tmp_path / "shotfile.py"
+    text = (Path(__file__).parent / "test_viewer.py").read_text()
+    body = text[text.index('SHOTFILE = """') + len('SHOTFILE = """'):]
+    body = body[:body.index('"""')]
+    path.write_text(body)
+    stamp = path.stat()
+    assert load_shotfile(path).nstep_n == [10]
+
+    path.write_text(body.replace("nstep_n = [10]", "nstep_n = [77]"))
+    os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))        # the same instant
+    assert load_shotfile(path).nstep_n == [77]
+    assert not (tmp_path / "__pycache__").exists()

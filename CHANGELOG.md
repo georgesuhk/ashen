@@ -4,6 +4,31 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-08: `--run_r --keep-inputs`; a guard on `--run_r`; stale shotfile reads
+
+- `run_jorek shotfile.py --run_r --keep-inputs` restarts a run without
+  preparing its folder again. Only `tstep_n`, `nstep_n` and `nout` of
+  `in_main_r` are set from the shotfile; profiles, boundary, `in_eq`,
+  `in_main` and every other field of `in_main_r` (`central_density`,
+  `eta`, RE settings, `namelist_options`) stay as the run was started
+  with. This is the way to restart a run prepared before the density fix
+  (`central_density` = `rho_const`/1e20) and the exact boundary. To change
+  anything else for the restart, edit `in_main_r` by hand.
+  `--dry-run` shows what it would do. (`runner.prepare_restart`)
+- Plain `--run_r` now refuses, writing nothing, when the folder's
+  `in_main_r` has a `central_density` other than the one it would write
+  (`runner.restart_density_change`): before, it silently re-prepared such
+  a folder and the restart went on at another density normalisation. The
+  message gives both ways on: `--keep-inputs`, or `run_jorek shotfile.py`
+  first to prepare it again on purpose.
+- Fixed: a shotfile rewritten within the same second at the same length
+  was read back as it was before (Python's bytecode cache; `"3000"` to
+  `"7000"`, or the viewer's Save followed at once by Regenerate).
+  `load_shotfile` now compiles the text itself, and no longer leaves
+  `__pycache__` in run folders.
+- Tested on synthetic folders with the submit command intercepted. Not
+  run on the HPC.
+
 ## 2026-10-08: four view: Psi only; a failing zoom says why
 
 - The four view shows Psi; the variable menu is gone.

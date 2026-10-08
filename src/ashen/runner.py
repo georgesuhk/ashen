@@ -57,7 +57,7 @@ from ashen import namelist as nml
 from ashen import profiles as prof_mod
 from ashen.castor_io import load_two_col_data
 from ashen.config import Site
-from ashen.paths import RunPaths, write_float
+from ashen.paths import RunPaths, read_float, write_float
 from ashen.shotfile import ShotfileError, ShotParams
 
 __all__ = [
@@ -68,6 +68,8 @@ __all__ = [
     "starwall_response_name",
     "submit_eq",
     "submit_main",
+    "prepare_restart",
+    "restart_density_change",
     "submit_restart",
     "submit_starwall",
 ]
@@ -663,6 +665,58 @@ def prepare_run(
         disk.savetxt(run_dir / "original_bnd.dat", original_bnd)
 
     return PreparedRun(paths=paths, real_psi_edge=real_psi_edge, actions=disk.actions)
+
+
+def prepare_restart(
+    params: ShotParams, site: Site, run_dir: Path, *, dry_run: bool = False,
+) -> PreparedRun:
+    """Ready an already-prepared run folder for a restart, keeping its inputs.
+
+    Only the run length is taken from the shotfile: ``tstep_n``, ``nstep_n``
+    and ``nout`` in ``in_main_r``. Everything else the folder holds stays as
+    the run was started with: profiles, boundary, the other namelists, and
+    every other field of ``in_main_r`` (``central_density``, ``eta``, ...).
+    That is what a run prepared by an older ashen needs: prepare_run would
+    rewrite them the way it does now, changing the normalisation under a
+    run that is already going.
+    """
+    run_dir = Path(run_dir).resolve()
+    paths = RunPaths(run_dir)
+    if not paths.in_main_r.is_file():
+        raise FileNotFoundError(
+            f"{paths.in_main_r} not found: this folder has not been prepared, so there is "
+            "nothing to keep. Run without --keep-inputs."
+        )
+    disk = _Disk(dry_run)
+    disk.set_fields(
+        [paths.in_main_r],
+        {
+            "tstep_n": str(params.tstep_n).strip("[]"),
+            "nstep_n": str(params.nstep_n).strip("[]"),
+            "nout": params.nout,
+        },
+    )
+    try:
+        real_psi_edge = read_float(paths.real_psi_edge)
+    except (OSError, ValueError):
+        real_psi_edge = float("nan")
+    return PreparedRun(paths=paths, real_psi_edge=real_psi_edge, actions=disk.actions)
+
+
+def restart_density_change(params: ShotParams, run_dir: Path) -> tuple[float, float] | None:
+    """(central_density in the folder's in_main_r, the one prepare_run would
+    write) when they differ, else None. They differ in a folder prepared
+    before central_density became rho_const / 1e20: preparing it again
+    would change the density normalisation of a run being restarted.
+    None too if the folder has no in_main_r or no readable value."""
+    if params.rho_method != "const" or params.rho_const is None:
+        return None
+    try:
+        have = float(nml.read_field(RunPaths(Path(run_dir).resolve()).in_main_r, "central_density"))
+    except (OSError, nml.NamelistError, TypeError, ValueError):
+        return None
+    new = params.rho_const / 1e20
+    return None if np.isclose(have, new, rtol=1e-9, atol=0.0) else (have, new)
 
 
 # =============================================================================

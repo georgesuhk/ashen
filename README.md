@@ -309,6 +309,29 @@ x_label  = "eta"
   already there is not edited: when a scan has grown, the lines it should
   now have are printed for you to paste.
 
+## Restarting a run
+
+```bash
+python ~/ashen/bin/run_jorek shotfile.py --run_r                 # prepare the folder again, then restart
+python ~/ashen/bin/run_jorek shotfile.py --run_r --keep-inputs   # restart with the folder as it is
+```
+
+`--run_r` prepares the folder from the shotfile like every other stage and
+then submits `in_main_r`. For a run prepared by the ashen you have now,
+that rewrites the same files.
+
+`--keep-inputs` is for a run prepared by an older ashen, whose inputs a
+fresh preparation would change (the density normalisation, the boundary
+points). It sets only `tstep_n`, `nstep_n` and `nout` in `in_main_r` from
+the shotfile and submits. Profiles, the boundary, `in_eq`, `in_main` and
+every other field of `in_main_r` are left as the run was started with; to
+change one of those for the restart, edit `in_main_r` by hand. Add
+`--dry-run` to see what it would do.
+
+Plain `--run_r` refuses, writing nothing, when the folder's `in_main_r` has
+a `central_density` other than the one it would write, and says which of
+the two commands to use.
+
 ## Looking at a case from a notebook
 
 Each run folder has a `case_viewer.ipynb` that shows that run: its current

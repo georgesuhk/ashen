@@ -203,3 +203,97 @@ def test_window_message_speaks_of_qa(cli_campaign, capsys):
 
     err = capsys.readouterr().err
     assert "qa = 3" in err and "q_edge" not in err and "q0 from" in err
+
+
+# --- --run_r --keep-inputs ------------------------------------------------------
+
+
+@pytest.fixture
+def submitted(monkeypatch):
+    """The shell commands a stage would run, instead of running them."""
+    from ashen import runner
+
+    commands = []
+    monkeypatch.setattr(
+        runner, "_run",
+        lambda command, cwd, *, dry_run, check=True: commands.append(command) or command,
+    )
+    return commands
+
+
+def _snapshot(run_dir: Path) -> dict[str, bytes]:
+    return {
+        p.name: p.read_bytes() for p in sorted(run_dir.iterdir())
+        if p.is_file() and not p.is_symlink()
+    }
+
+
+def _old_folder(run_dir: Path) -> None:
+    """Prepare the folder, then put in_main_r's density back to what an
+    ashen from before the rho fix wrote (rho_const / 1e20 / 1e20... i.e. 1e-4)."""
+    from ashen import namelist as nml
+
+    assert main(["shotfile.py"]) == 0
+    nml.set_fields([run_dir / "in_main_r"], {"central_density": 1e-4})
+
+
+def test_run_r_keep_inputs_touches_only_the_run_length_in_in_main_r(
+    cli_campaign, submitted, symlinks_maybe_bypassed, capsys
+):
+    from ashen import namelist as nml
+
+    _old_folder(cli_campaign)
+    shotfile = cli_campaign / "shotfile.py"
+    shotfile.write_text(shotfile.read_text().replace("nstep_n = [3000]", "nstep_n = [7000]"))
+    before = _snapshot(cli_campaign)
+
+    assert main(["shotfile.py", "--run_r", "--keep-inputs"]) == 0
+
+    after = _snapshot(cli_campaign)
+    assert {name for name in after if after[name] != before.get(name)} == {"in_main_r"}
+    in_main_r = cli_campaign / "in_main_r"
+    assert int(nml.read_field(in_main_r, "nstep_n")) == 7000
+    assert float(nml.read_field(in_main_r, "central_density")) == 1e-4      # not renormalised
+    assert int(nml.read_field(cli_campaign / "in_main", "nstep_n")) == 3000
+    assert len(submitted) == 1 and "./in_main_r log" in submitted[0]
+    assert "inputs kept" in capsys.readouterr().out
+
+
+def test_plain_run_r_refuses_a_folder_whose_density_it_would_change(
+    cli_campaign, submitted, symlinks_maybe_bypassed, capsys
+):
+    _old_folder(cli_campaign)
+    before = _snapshot(cli_campaign)
+
+    assert main(["shotfile.py", "--run_r"]) == 1
+
+    assert _snapshot(cli_campaign) == before and submitted == []
+    err = capsys.readouterr().err
+    assert "central_density = 0.0001" in err and "0.01" in err and "--keep-inputs" in err
+
+
+def test_plain_run_r_still_prepares_and_submits_a_current_folder(
+    cli_campaign, submitted, symlinks_maybe_bypassed
+):
+    assert main(["shotfile.py"]) == 0
+    assert main(["shotfile.py", "--run_r"]) == 0
+    assert len(submitted) == 1 and "./in_main_r log" in submitted[0]
+
+
+def test_keep_inputs_needs_run_r_alone_and_a_prepared_folder(cli_campaign, submitted, capsys):
+    assert main(["shotfile.py", "--keep-inputs"]) == 1
+    assert main(["shotfile.py", "--run", "--run_r", "--keep-inputs"]) == 1
+    assert "--keep-inputs goes with --run_r alone" in capsys.readouterr().err
+
+    assert main(["shotfile.py", "--run_r", "--keep-inputs"]) == 1          # never prepared
+    assert "has not been prepared" in capsys.readouterr().err
+    assert submitted == []
+
+
+def test_keep_inputs_dry_run_writes_nothing(cli_campaign, submitted, symlinks_maybe_bypassed, capsys):
+    _old_folder(cli_campaign)
+    before = _snapshot(cli_campaign)
+    assert main(["shotfile.py", "--run_r", "--keep-inputs", "--dry-run"]) == 0
+    assert _snapshot(cli_campaign) == before
+    out = capsys.readouterr().out
+    assert "set_fields ['in_main_r']" in out and "would run:" in out
