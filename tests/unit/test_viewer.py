@@ -728,3 +728,66 @@ def test_case_viewer_draws_every_section_and_survives_a_broken_one(run_dir, monk
     page = viewer.case_viewer(run_dir)
     assert "RuntimeError: no such &lt;file&gt;" in page.children[2].value
     assert len(page.children) == 5
+
+
+def test_views_draw_into_image_widgets_and_leave_no_figure_open(run_dir):
+    """Not through an Output widget: VS Code repeats what one captures while
+    the cell runs, so every figure appeared twice."""
+    w = pytest.importorskip("ipywidgets")
+    import matplotlib.pyplot as plt
+
+    canvas = viewer.boundary_view(run_dir)
+    (image,) = canvas.children
+    assert isinstance(image, w.Image) and bytes(image.value[:4]) == b"\x89PNG"
+    assert plt.get_fignums() == []
+
+    def broken():
+        raise RuntimeError("no <file>")
+
+    viewer._show(canvas, broken)
+    assert "RuntimeError: no &lt;file&gt;" in canvas.children[0].value
+
+
+def test_default_four_modes_stop_one_past_the_last_rational_surface():
+    assert viewer.default_four_modes(2.8) == [(1, 1), (1, 2), (1, 3), (2, 3), (2, 4), (2, 5), (2, 6)]
+    assert viewer.default_four_modes(3.3, n_values=(1,)) == [(1, 1), (1, 2), (1, 3), (1, 4)]
+    assert viewer.default_four_modes(3.0, n_values=(1,))[-1] == (1, 4)   # 3/1 sits at the edge
+
+
+def test_four_view_modes_follow_the_shotfile_qa_else_the_largest(run_dir):
+    # no shotfile: the largest modes in the cache
+    assert viewer.shotfile_qa(run_dir) is None
+    assert viewer.four_view_modes(run_dir, "Psi", n_fallback=2) == [(1, 2), (1, 3)]
+
+    (run_dir / "shotfile.py").write_text(SHOTFILE.replace("current_qa = 3.0", "current_qa = 1.4"))
+    assert viewer.shotfile_qa(run_dir) == 1.4
+    assert viewer.four_view_modes(run_dir, "Psi") == [(1, 1), (1, 2)]   # 3/2 is not cached
+
+    # any other ffprime_method: the shotfile's qa
+    (run_dir / "shotfile.py").write_text(
+        SHOTFILE.replace('ffprime_method = "q_li"', 'ffprime_method = "current"\ncurrent_file = "j.dat"')
+    )
+    assert viewer.shotfile_qa(run_dir) == 2.1
+    assert viewer.four_view_modes(run_dir, "Psi") == [(1, 1), (1, 2), (1, 3)]
+
+
+def test_four_figure_radial_axis_is_linear_unless_asked(run_dir):
+    fig = viewer.four_figure(run_dir, "Psi", step=100, modes=[(1, 2)], colors={(1, 2): "#123456"})
+    ax_t, ax_r = fig.axes
+    assert ax_t.get_yscale() == "log" and ax_r.get_yscale() == "linear"
+    assert {l.get_color() for l in ax_r.get_lines() if l.get_label() == "n=1, m=2"} == {"#123456"}
+    assert viewer.four_figure(run_dir, "Psi", step=100, log_radial=True).axes[1].get_yscale() == "log"
+    viewer.four_figure(run_dir, "Psi", step=100, modes=[])            # nothing ticked still draws
+
+
+def test_four_view_has_a_checkbox_per_mode_that_removes_it(run_dir):
+    w = pytest.importorskip("ipywidgets")
+    _, _, holder = viewer.four_view(run_dir).children
+    controls, mode_row, canvas = holder.children[0].children
+    boxes = mode_row.children[1].children
+    assert [b.description for b in boxes] == ["1/1", "2/1", "3/1"] and all(b.value for b in boxes)
+    assert [c.description for c in controls.children[2:]] == ["log amplitudes", "log radial structure"]
+    assert controls.children[3].value is False
+    before = canvas.children[0].value
+    boxes[2].value = False
+    assert canvas.children[0].value != before

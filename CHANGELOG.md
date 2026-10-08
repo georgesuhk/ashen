@@ -4,6 +4,34 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-08: four view: modes chosen by qa, a checkbox per mode
+
+- The modes drawn are now `viewer.default_four_modes(qa)`: for n = 1 and
+  n = 2, m up to one past the highest rational surface inside the plasma
+  (`floor(n qa) + 1`), starting at 1/1 and at 3/2. qa = 2.8 gives
+  1/1 2/1 3/1 and 3/2 4/2 5/2 6/2. Modes not in the cache are left out.
+- qa is read from the shotfile (`viewer.shotfile_qa`): `current_qa` for
+  `ffprime_method = "q_li"`, else `qa`. It is the requested value, not
+  what JOREK's equilibrium reached. Without one, the six largest modes
+  are offered, as before.
+- A row of checkboxes, one per mode (`m/n`), turns modes off. A mode
+  keeps its colour when others are unticked. The "modes" slider is gone.
+- "log scale" is now two boxes: "log amplitudes" (on) and "log radial
+  structure" (off by default). `four_figure` takes `log_radial` and
+  `colors`.
+- Tested on synthetic caches and drawn on the local qa3.3_g3.2 run.
+
+## 2026-10-08: viewer figures no longer appear twice in VS Code
+
+- Every view drew its figure into an ipywidgets Output widget. VS Code
+  shows what an Output widget captures while its cell runs a second time,
+  as a plain copy below the widgets.
+- Figures now go in as PNG Image widgets (`viewer._show`, `_canvas`), at
+  the same on-screen size, 144 dpi. Nothing to change in a notebook: run
+  the cell again after updating.
+- The duplicate was not reproduced here (plain Jupyter shows one copy
+  before and after); the fix removes the mechanism. To confirm in VS Code.
+
 ## 2026-10-08: the case notebook is one cell; `bin/case_viewer`
 
 - `case_viewer.ipynb` is now a single cell calling the new
