@@ -278,6 +278,7 @@ def test_profile_tuner_saves_and_regenerates(synthetic_campaign, tmp_path, symli
 
     regenerate.click()
     assert status.value == ""                              # all three agree
+    assert "run_jorek shotfile.py --run_eq" in box.children[3].value
     q0.value = 1.3
     save.click()
     assert "out of date" in status.value and "q0 = 1.25" in status.value
@@ -287,7 +288,7 @@ def test_profile_tuner_saves_and_regenerates(synthetic_campaign, tmp_path, symli
     j0 = 2.0 * (1 + 1.2**2) / (MU_0 * 1.5 * 1.2 * 1.25)
     assert np.loadtxt(run / "ffprime_prof.dat")[0, 1] == pytest.approx(-MU_0 * 1.5 * j0, rel=1e-6)
     assert "q0 = 1.25" in (run / "j_prof.dat").read_text()
-    assert "run_jorek shotfile.py --run_eq" in capsys.readouterr().out
+    assert "run_jorek" not in box.children[3].value and "saved to" in box.children[3].value
 
 
 def test_profile_tuner_does_not_save_an_unreachable_q0(synthetic_campaign, tmp_path, capsys):
@@ -306,7 +307,7 @@ def test_profile_tuner_does_not_save_an_unreachable_q0(synthetic_campaign, tmp_p
     save.click()
 
     assert (run / "shotfile.py").read_text() == SHOTFILE
-    assert "not saved" in capsys.readouterr().out
+    assert "not saved" in box.children[3].value
 
 
 # --- tuner_status ------------------------------------------------------------------
@@ -479,7 +480,7 @@ def test_profile_tuner_reset_puts_the_sliders_back_to_the_shotfile(
     reset.click()
     assert (q0.value, li.value, qa.value) == (1.1, 1.2, 3.0)
     assert "not saved" not in status.value
-    assert "sliders back to shotfile.py" in capsys.readouterr().out
+    assert "sliders back to shotfile.py" in box.children[3].value
     assert (run / "shotfile.py").read_text() == SHOTFILE          # reset writes nothing
 
     # it reads the file as it is now, even a value beyond the slider's travel
@@ -508,7 +509,7 @@ def test_profile_tuner_reset_without_saved_values_says_so(synthetic_campaign, tm
     box.children[1].children[2].click()
 
     assert q0.value == 1.3
-    assert "not reset" in capsys.readouterr().out
+    assert "not reset" in box.children[3].value
 
 
 # --- the folder's own FF' profile, whatever made it -------------------------------------
@@ -657,9 +658,10 @@ def test_gather_button_reports_a_failure_and_keeps_the_view(run_dir, monkeypatch
         raise RuntimeError("jorek2_four is not in this folder")
 
     monkeypatch.setattr(viewer, "run_analyse", broken)
-    button, _, holder = viewer.profiles_view(run_dir).children
+    button, log, holder = viewer.profiles_view(run_dir).children
     button.click()
-    assert "jorek2_four is not in this folder" in capsys.readouterr().out
+    assert "jorek2_four is not in this folder" in log.value
+    assert capsys.readouterr().out == ""                 # nothing leaks into the cell's output
     assert holder.children and not button.disabled
 
 
@@ -784,7 +786,7 @@ def test_four_figure_radial_axis_is_linear_unless_asked(run_dir):
 
 def _four_parts(run_dir):
     _, _, holder = viewer.four_view(run_dir).children
-    controls, mode_row, figure = holder.children[0].children
+    controls, mode_row, _, figure = holder.children[0].children
     return controls.children, mode_row.children[1].children, figure.children[0]
 
 
@@ -799,9 +801,9 @@ def test_four_view_has_a_checkbox_per_mode_that_removes_it(run_dir, monkeypatch)
     pytest.importorskip("ipywidgets")
     controls, boxes, image = _png(run_dir, monkeypatch)
     assert [b.description for b in boxes] == ["1/1", "2/1", "3/1"] and all(b.value for b in boxes)
-    assert [c.description for c in controls[2:]] == [
+    assert [c.description for c in controls[1:]] == [
         "log amplitudes", "log radial structure", "Reset view"]
-    assert controls[3].value is False
+    assert controls[2].value is False
     before = bytes(image.value)
     boxes[2].value = False
     assert bytes(image.value) != before
@@ -816,13 +818,13 @@ def test_four_view_controls_update_the_figure_without_reading_the_caches_again(r
     assert reads == ["Psi"]
 
     seen = {bytes(image.value)}
-    controls[1].value = 0            # step
+    controls[0].value = 0            # step
     seen.add(bytes(image.value))
-    controls[3].value = True         # log radial structure
+    controls[2].value = True         # log radial structure
     seen.add(bytes(image.value))
     boxes[0].value = False
     seen.add(bytes(image.value))
-    controls[4].click()              # reset view
+    controls[3].click()              # reset view
     assert len(seen) == 4 and reads == ["Psi"]
 
 
@@ -830,7 +832,7 @@ def test_four_view_uses_an_ipympl_canvas_when_there_is_one(run_dir):
     pytest.importorskip("ipywidgets")
     nbagg = pytest.importorskip("ipympl.backend_nbagg")
     _, _, holder = viewer.four_view(run_dir).children
-    assert isinstance(holder.children[0].children[2].children[0], nbagg.Canvas)
+    assert isinstance(holder.children[0].children[3].children[0].children[0], nbagg.Canvas)
 
 
 def test_four_plot_updates_its_lines_in_place(run_dir):
@@ -863,3 +865,93 @@ def test_four_plot_updates_its_lines_in_place(run_dir):
     assert plot.ax_r.get_ylim()[1] < 1.0
     plot.set_log(False, True)
     assert (plot.ax_t.get_yscale(), plot.ax_r.get_yscale()) == ("linear", "log")
+
+
+def test_a_log_shows_only_the_latest_messages():
+    """A second press replaces the first one's text instead of adding to it."""
+    w = pytest.importorskip("ipywidgets")
+    log = viewer._Log(w)
+    with log:
+        print("q-profile of step 5: gathered")
+    with log:
+        print("q-profile of step 5: already <there>")
+    assert log.widget.value.count("q-profile") == 1
+    assert "already &lt;there&gt;" in log.widget.value
+
+
+def test_rational_amplitude_matches_rational_surface_series_and_can_be_switched(run_dir, monkeypatch):
+    from matplotlib.figure import Figure
+
+    from ashen.diagnostics.four_modes import rational_surface_series
+
+    modes = [(1, 1), (1, 2), (1, 3)]             # the fixture's q runs from 1 to 3.5
+    data = viewer.load_four_data(run_dir, "Psi", modes)
+    expected = rational_surface_series(RunPaths(run_dir, pad_width=6), [0, 100], modes,
+                                       variables=["Psi"])
+    for (_, n, m), values in expected.items():
+        np.testing.assert_allclose(data.rational[(n, m)], values, equal_nan=True)
+    assert np.isfinite(data.rational[(1, 2)]).all()
+    assert (data.rational[(1, 2)] <= data.amplitude[(1, 2)]).all()
+
+    plot = viewer.FourPlot(Figure(), data, step=100)
+    line = plot.amplitude_lines[(1, 2)]
+    np.testing.assert_allclose(line.get_ydata(), data.amplitude[(1, 2)])
+    assert len(plot.surface_marks[(1, 2)].get_xdata()) == 0
+    plot.set_rational(True)
+    np.testing.assert_allclose(line.get_ydata(), data.rational[(1, 2)])
+    assert "at q = m/n" in plot.ax_t.get_ylabel()
+    psi_n, there = data.surfaces[(1, 2)][100]
+    np.testing.assert_allclose(plot.surface_marks[(1, 2)].get_xdata(), psi_n)
+    np.testing.assert_allclose(1 + 2.5 * psi_n, 2.0)                    # really q = 2
+    plot.set_rational(False)
+    np.testing.assert_allclose(line.get_ydata(), data.amplitude[(1, 2)])
+
+    # the view's switch, and its note when there is no q-profile
+    pytest.importorskip("ipywidgets")
+    monkeypatch.setitem(sys.modules, "ipympl.backend_nbagg", None)
+    _, _, holder = viewer.four_view(run_dir).children
+    switch, note = holder.children[0].children[2].children
+    image = holder.children[0].children[3].children[0].children[0]
+    before = bytes(image.value)
+    switch.value = True
+    assert bytes(image.value) != before and note.value == ""
+
+    for step in (0, 100):
+        RunPaths(run_dir, pad_width=6).qprofile(step).unlink()
+    _, _, holder = viewer.four_view(run_dir).children
+    switch, note = holder.children[0].children[2].children
+    switch.value = True
+    assert "no q-profile cache" in note.value
+
+
+def test_four_view_is_psi_only_and_says_so_when_the_cache_lacks_the_variable(run_dir):
+    w = pytest.importorskip("ipywidgets")
+    _, _, holder = viewer.four_view(run_dir).children
+    controls = holder.children[0].children[0].children
+    assert not any(isinstance(c, w.Dropdown) for c in controls)
+    _, _, holder = viewer.four_view(run_dir, variable="T").children
+    assert "no T in the jorek2_four cache; it holds Psi" in holder.children[0].value
+
+
+def test_a_live_figure_says_why_the_mouse_did_nothing(run_dir):
+    w = pytest.importorskip("ipywidgets")
+    pytest.importorskip("ipympl.backend_nbagg")
+    fig, box, draw = viewer._live_figure(w, (6, 4))
+    canvas, problem = box.children
+    ax = fig.subplots()
+    ax.plot([0, 1], [0, 1])
+    canvas.send = lambda *a, **k: None                       # no front end here
+
+    # zoom to a rectangle with the mouse, as the front end reports it
+    events = [dict(type="toolbar_button", name="zoom")] + [
+        dict(type=kind, x=x, y=y, button=0, buttons=1, modifiers=[], guiEvent={})
+        for kind, x, y in (("button_press", 200, 150), ("motion_notify", 350, 250),
+                           ("button_release", 350, 250))
+    ]
+    for event in events:
+        canvas._handle_message(canvas, event, [])
+    assert 0.2 < ax.get_xlim()[0] < ax.get_xlim()[1] < 0.7 and problem.value == ""
+
+    with pytest.raises(Exception):
+        canvas._handle_message(canvas, dict(type="button_press"), [])   # a malformed event
+    assert "could not handle" in problem.value and "ipympl" in problem.value
