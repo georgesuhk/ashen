@@ -67,3 +67,19 @@ def test_wrong_schema_raises(tmp_path, monkeypatch):
         fc.read_cache(path)
     with pytest.raises(fc.FourCacheError, match="schema"):
         fc.count_records(path)
+
+
+def test_read_records_and_list_keys_agree_with_read_cache(tmp_path):
+    path = tmp_path / "four_s000100.h5"
+    records = [_record("Psi", 1, 2), _record("Psi", 2, 3), _record("T", 1, 2)]
+    fc.write_cache(path, step=100, pad_width=6, records=records)
+    everything = fc.read_cache(path)
+
+    assert sorted(fc.list_keys(path)) == sorted(everything)
+    some = fc.read_records(path, "Psi", [(1, 2), (9, 9)])     # (9, 9) is not there
+    assert list(some) == [("Psi", 1, 2)]
+    np.testing.assert_array_equal(some[("Psi", 1, 2)].real, everything[("Psi", 1, 2)].real)
+    np.testing.assert_array_equal(some[("Psi", 1, 2)].psi_n, everything[("Psi", 1, 2)].psi_n)
+
+    assert fc.list_keys(tmp_path / "nope.h5") == []
+    assert fc.read_records(tmp_path / "nope.h5", "Psi", [(1, 2)]) == {}

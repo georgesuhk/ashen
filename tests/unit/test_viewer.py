@@ -10,6 +10,8 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+import sys  # noqa: E402
+
 import pytest  # noqa: E402
 
 from ashen import current_profile as cur  # noqa: E402
@@ -780,14 +782,84 @@ def test_four_figure_radial_axis_is_linear_unless_asked(run_dir):
     viewer.four_figure(run_dir, "Psi", step=100, modes=[])            # nothing ticked still draws
 
 
-def test_four_view_has_a_checkbox_per_mode_that_removes_it(run_dir):
-    w = pytest.importorskip("ipywidgets")
+def _four_parts(run_dir):
     _, _, holder = viewer.four_view(run_dir).children
-    controls, mode_row, canvas = holder.children[0].children
-    boxes = mode_row.children[1].children
+    controls, mode_row, figure = holder.children[0].children
+    return controls.children, mode_row.children[1].children, figure.children[0]
+
+
+def _png(run_dir, monkeypatch):
+    """four_view without ipympl: the figure is a PNG Image widget."""
+    monkeypatch.setitem(sys.modules, "ipympl.backend_nbagg", None)
+    controls, boxes, shown = _four_parts(run_dir)
+    return controls, boxes, shown.children[0]
+
+
+def test_four_view_has_a_checkbox_per_mode_that_removes_it(run_dir, monkeypatch):
+    pytest.importorskip("ipywidgets")
+    controls, boxes, image = _png(run_dir, monkeypatch)
     assert [b.description for b in boxes] == ["1/1", "2/1", "3/1"] and all(b.value for b in boxes)
-    assert [c.description for c in controls.children[2:]] == ["log amplitudes", "log radial structure"]
-    assert controls.children[3].value is False
-    before = canvas.children[0].value
+    assert [c.description for c in controls[2:]] == [
+        "log amplitudes", "log radial structure", "Reset view"]
+    assert controls[3].value is False
+    before = bytes(image.value)
     boxes[2].value = False
-    assert canvas.children[0].value != before
+    assert bytes(image.value) != before
+
+
+def test_four_view_controls_update_the_figure_without_reading_the_caches_again(run_dir, monkeypatch):
+    pytest.importorskip("ipywidgets")
+    reads = []
+    real = viewer.load_four_data
+    monkeypatch.setattr(viewer, "load_four_data", lambda *a: reads.append(a[1]) or real(*a))
+    controls, boxes, image = _png(run_dir, monkeypatch)
+    assert reads == ["Psi"]
+
+    seen = {bytes(image.value)}
+    controls[1].value = 0            # step
+    seen.add(bytes(image.value))
+    controls[3].value = True         # log radial structure
+    seen.add(bytes(image.value))
+    boxes[0].value = False
+    seen.add(bytes(image.value))
+    controls[4].click()              # reset view
+    assert len(seen) == 4 and reads == ["Psi"]
+
+
+def test_four_view_uses_an_ipympl_canvas_when_there_is_one(run_dir):
+    pytest.importorskip("ipywidgets")
+    nbagg = pytest.importorskip("ipympl.backend_nbagg")
+    _, _, holder = viewer.four_view(run_dir).children
+    assert isinstance(holder.children[0].children[2].children[0], nbagg.Canvas)
+
+
+def test_four_plot_updates_its_lines_in_place(run_dir):
+    from matplotlib.figure import Figure
+
+    data = viewer.load_four_data(run_dir, "Psi", [(1, 1), (1, 3), (2, 9)])
+    assert data.steps == [0, 100] and data.radial[(2, 9)] == {}       # not cached: empty
+    assert np.isnan(data.amplitude[(2, 9)]).all()
+    np.testing.assert_allclose(data.amplitude[(1, 3)][1], data.radial[(1, 3)][100][1].max())
+
+    plot = viewer.FourPlot(Figure(), data, step=100)
+    line = plot.radial_lines[(1, 3)]
+    at_100 = line.get_ydata().copy()
+    plot.set_step(0)
+    assert plot.radial_lines[(1, 3)] is line and not np.allclose(line.get_ydata(), at_100)
+    assert list(plot.marker.get_xdata()) == [0, 0]
+
+    plot.set_visible([(1, 1)])
+    assert not line.get_visible() and not plot.amplitude_lines[(1, 3)].get_visible()
+    assert [t.get_text() for t in plot.ax_r.get_legend().get_texts()] == ["n=1, m=1"]
+    plot.set_visible([])
+    assert plot.ax_r.get_legend() is None
+
+    # a hand-set range survives a change of step; Reset view lets it follow the data again
+    plot.set_visible([(1, 1), (1, 3)])
+    plot.ax_r.set_ylim(0.0, 123.0)
+    plot.set_step(100)
+    assert plot.ax_r.get_ylim() == (0.0, 123.0)
+    plot.reset_view()
+    assert plot.ax_r.get_ylim()[1] < 1.0
+    plot.set_log(False, True)
+    assert (plot.ax_t.get_yscale(), plot.ax_r.get_yscale()) == ("linear", "log")

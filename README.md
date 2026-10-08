@@ -318,6 +318,7 @@ Remote SSH on the HPC, or locally) and run its cell. It needs `ipywidgets`,
 
 ```bash
 pip install --user ipywidgets ipykernel h5py
+pip install --user ipympl      # optional: zoom and pan in the four view
 ```
 
 **Where the notebook comes from.** `run_jorek shotfile.py` writes it into
@@ -379,7 +380,7 @@ shell or a job as before and just re-run the cell afterwards.
 | `viewer.profile_tuner(RUN, step=0)` | sliders for q0, l_i, q_edge; j, q and FF' of that profile; JOREK's q-profile and achieved q0, l_i, q_edge beside them | `shotfile.py`, the plasma boundary, `F0`; the step's q-profile and zeroD caches |
 | `viewer.boundary_view(RUN)` | plasma boundary, domain boundary, JOREK's grid boundary, STARWALL's wall | `original_bnd.dat`, `in_bnd`, `boundary.txt`, `input_starwall` |
 | `viewer.equilibrium_view(RUN)` | psi_N contours of a restart with the plasma edge marked, q, and j_phi on the nodes | `jorek<step>.h5`, the q-profile cache |
-| `viewer.four_view(RUN)` | mode amplitudes against step and their radial structure at one step (linear unless "log radial structure" is ticked). The modes are chosen from the shotfile's qa (`current_qa` for a `"q_li"` profile, else `qa`): for n = 1 and 2, m up to one past the highest rational surface in the plasma, so qa = 2.8 gives 1/1 2/1 3/1 and 3/2 4/2 5/2 6/2. A checkbox per mode turns it off. | the `four` caches, `shotfile.py` |
+| `viewer.four_view(RUN)` | mode amplitudes against step and their radial structure at one step (linear unless "log radial structure" is ticked). The modes are chosen from the shotfile's qa (`current_qa` for a `"q_li"` profile, else `qa`): for n = 1 and 2, m up to one past the highest rational surface in the plasma, so qa = 2.8 gives 1/1 2/1 3/1 and 3/2 4/2 5/2 6/2. A checkbox per mode turns it off. Controls update the figure in place. With `ipympl` installed (`pip install --user ipympl`, restart the kernel) the figure has a toolbar to zoom and pan; a zoomed range is kept across steps until **Reset view**. | the `four` caches, `shotfile.py` |
 | `viewer.profiles_view(RUN)` | a cached radial profile at every gathered step | the `profiles` caches |
 
 **The folder's own profile.** Whenever the run folder has an

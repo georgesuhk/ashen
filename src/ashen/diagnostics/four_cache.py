@@ -17,7 +17,7 @@ from ashen.diagnostics.hdf5 import require_h5py
 
 __all__ = [
     "FourCacheError", "FourRecord", "SCHEMA_VERSION",
-    "write_cache", "read_cache", "count_records",
+    "write_cache", "read_cache", "read_records", "list_keys", "count_records",
 ]
 
 SCHEMA_VERSION = 1
@@ -111,6 +111,54 @@ def read_cache(path: Path | str) -> dict[tuple[str, int, int], FourRecord]:
                         real=np.asarray(m_group["real"][:]),
                         imag=np.asarray(m_group["imag"][:]),
                     )
+    return records
+
+
+def _open(path: Path):
+    f = _h5py().File(path, "r")
+    schema = int(f.attrs.get("schema", -1))
+    if schema != SCHEMA_VERSION:
+        f.close()
+        raise FourCacheError(f"{path}: schema {schema}, expected {SCHEMA_VERSION}")
+    return f
+
+
+def list_keys(path: Path | str) -> list[tuple[str, int, int]]:
+    """Every (variable, n, m) in a cache file, without reading any data.
+    ``[]`` if it doesn't exist."""
+    path = Path(path)
+    if not path.is_file():
+        return []
+    with _open(path) as f:
+        return [
+            (variable, int(n_name[1:]), int(m_name[1:]))
+            for variable, var_group in f["records"].items()
+            for n_name, n_group in var_group.items()
+            for m_name in n_group
+        ]
+
+
+def read_records(
+    path: Path | str, variable: str, modes
+) -> dict[tuple[str, int, int], FourRecord]:
+    """Only one variable's ``modes`` ((n, m) pairs) from a cache file: what
+    read_cache returns for those keys, without reading the rest. A mode the
+    file lacks is left out; ``{}`` if the file doesn't exist."""
+    path = Path(path)
+    if not path.is_file():
+        return {}
+    records: dict[tuple[str, int, int], FourRecord] = {}
+    with _open(path) as f:
+        for n, m in modes:
+            group = f.get(f"records/{variable}/n{int(n):03d}/m{int(m):03d}")
+            if group is None:
+                continue
+            records[(variable, int(n), int(m))] = FourRecord(
+                variable=variable, n=int(n), m=int(m),
+                psi_n=np.asarray(group["psi_n"][:]),
+                real=np.asarray(group["real"][:]),
+                imag=np.asarray(group["imag"][:]),
+            )
     return records
 
 
