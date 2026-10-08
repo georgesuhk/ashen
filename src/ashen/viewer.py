@@ -4,7 +4,9 @@ Every view is a ``*_figure`` function that returns a matplotlib Figure from
 files already in the run folder, plus a thin ipywidgets wrapper around it
 (``profile_tuner``, ``boundary_view``, ``equilibrium_view``, ``four_view``,
 ``profiles_view``). The figure functions need neither a notebook nor
-ipywidgets; the wrappers import ipywidgets when called.
+ipywidgets; the wrappers import ipywidgets when called. ``case_viewer`` is
+all the views on one page, and is the one call a run folder's notebook makes:
+a view added to it reaches every notebook already written.
 
 Drawing never runs a ``jorek2_*`` tool. Gathering is done only by the
 views' own buttons: ``run_analyse`` (analyse for this run) and
@@ -42,6 +44,7 @@ __all__ = [
     "boundary_figure",
     "boundary_view",
     "case_boundaries",
+    "case_viewer",
     "equilibrium_figure",
     "equilibrium_view",
     "folder_name_mismatches",
@@ -1037,3 +1040,46 @@ def profiles_view(run_dir: Path | str = "."):
     return _gathering(
         w, "Run analyse --diag profiles", lambda: run_analyse(run_dir, ["profiles"]), build
     )
+
+
+#: The sections of case_viewer, in order: (heading, note under it, the view).
+#: A new view is added here, and so appears in every run folder's notebook.
+_SECTIONS = [
+    (
+        "Current profile from q0, l_i, qa",
+        "<b>Save to shotfile</b> writes the three values and <code>ffprime_method = \"q_li\"</code> "
+        "into <code>shotfile.py</code>; <b>Regenerate inputs</b> then rewrites this folder's input "
+        "files from the shotfile. A yellow band says when the two are out of step. The grey "
+        "profile is the one in this folder's <code>ffprime_prof.dat</code>.",
+        lambda run_dir, step: profile_tuner(run_dir, step=step),
+    ),
+    ("Boundaries", "", lambda run_dir, step: boundary_view(run_dir)),
+    (
+        "Equilibrium",
+        "Contours are drawn on the grid nodes: good for looking, not for measuring.",
+        lambda run_dir, step: equilibrium_view(run_dir),
+    ),
+    ("Fourier modes (analyse --diag four)", "", lambda run_dir, step: four_view(run_dir)),
+    ("Radial profiles (analyse --diag profiles)", "", lambda run_dir, step: profiles_view(run_dir)),
+]
+
+
+def case_viewer(run_dir: Path | str = ".", *, step: int = 0):
+    """Every view of a run folder on one page, each under its heading.
+
+    ``step`` is the restart whose q-profile the tuner shows as JOREK's
+    result. A view that fails says so in its place and the others still draw.
+    """
+    w = _widgets()
+    run_dir = Path(run_dir).resolve()
+    children = [w.HTML(f"<h2>Case viewer</h2><code>{html.escape(str(run_dir))}</code>")]
+    for title, note, build in _SECTIONS:
+        children.append(w.HTML(f"<h3>{html.escape(title)}</h3>{note}"))
+        try:
+            children.append(build(run_dir, step))
+        except Exception as exc:  # one broken view must not hide the rest
+            children.append(w.HTML(
+                f"<pre style='color:{_RED}'>{html.escape(type(exc).__name__)}: "
+                f"{html.escape(str(exc))}</pre>"
+            ))
+    return w.VBox(children)
