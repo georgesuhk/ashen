@@ -4,6 +4,38 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-08: four view: Psi only; a failing zoom says why
+
+- The four view shows Psi; the variable menu is gone.
+  `viewer.four_view(folder, variable="T")` in a cell of your own shows
+  another one.
+- Zoom and pan did not respond in VS Code on the HPC although the toolbar
+  was there. Here the kernel side works (a test zooms with the mouse
+  events a front end sends), so the cause is not found. A failure while
+  handling the mouse or the toolbar was silent; it is now written in red
+  under the figure with the matplotlib and ipympl versions. An ipympl
+  older than its matplotlib is the known way to get exactly this.
+
+## 2026-10-08: four view: amplitude at the rational surface; logs that do not repeat
+
+- **amplitude** switch in the four view: "max over radius" (as before) or
+  "at q = m/n surface", each mode's |c| on its own rational surface. The
+  second is the same number as `four_modes.rational_surface_series`
+  (`four_rational` in cases.toml): the largest value over the surfaces
+  where that step's q-profile crosses m/n. In that mode a dot on each
+  radial curve marks the surface.
+- It needs the q-profile cache of each step (`analyse --diag four`
+  gathers them). A step without one, or a mode whose m/n the q-profile
+  never reaches (1/1 when q0 > 1), has no point; a note says so when
+  nothing can be drawn.
+- `FourData.rational`, `FourData.surfaces`, `FourPlot.set_rational`,
+  `four_figure(..., rational=True)`.
+- The messages under the viewer's buttons (Save, Regenerate, Reset, the
+  gather buttons) are now an HTML widget whose text is replaced on each
+  press (`viewer._Log`), not an Output widget. In VS Code the gather
+  message was seen four times; the cause was not reproduced here, the
+  widget that could repeat is gone. To confirm in VS Code.
+
 ## 2026-10-08: four view: fast controls, zoom and pan
 
 - Every control used to read all of every four cache again (all

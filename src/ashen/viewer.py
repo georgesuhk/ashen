@@ -33,7 +33,7 @@ from ashen.diagnostics import four_cache as fc
 from ashen.diagnostics.equilibrium import AchievedQLi, achieved_q_li
 from ashen.diagnostics.four_modes import max_amplitude_series, radial_amplitude_series
 from ashen.diagnostics.profiles import read_profile_series
-from ashen.diagnostics.qprofile import read_qprofile
+from ashen.diagnostics.qprofile import find_rational_surfaces, read_qprofile
 from ashen.namelist import NamelistError, read_boundary_points, read_field
 from ashen.padding import PaddingError, restart_steps
 from ashen.paths import RunPaths, read_float
@@ -678,6 +678,12 @@ class FourData:
     amplitude: dict[tuple[int, int], np.ndarray]
     #: {(n, m): {step: (psi_n, |c|)}}
     radial: dict[tuple[int, int], dict[int, tuple[np.ndarray, np.ndarray]]]
+    #: {(n, m): the largest |c| on a q = m/n surface, per step (nan if the
+    #: step has no q-profile cache or q never reaches m/n)}: the numbers
+    #: four_modes.rational_surface_series gives
+    rational: dict[tuple[int, int], np.ndarray]
+    #: {(n, m): {step: (psi_n of its q = m/n surfaces, |c| there)}}
+    surfaces: dict[tuple[int, int], dict[int, tuple[np.ndarray, np.ndarray]]]
 
 
 def load_four_data(run_dir: Path | str, variable: str, modes) -> FourData:
@@ -686,14 +692,26 @@ def load_four_data(run_dir: Path | str, variable: str, modes) -> FourData:
     paths, steps = _paths(run_dir), four_steps(run_dir)
     modes = [(int(n), int(m)) for n, m in modes]
     amplitude = {mode: np.full(len(steps), np.nan) for mode in modes}
+    rational = {mode: np.full(len(steps), np.nan) for mode in modes}
     radial: dict = {mode: {} for mode in modes}
+    surfaces: dict = {mode: {} for mode in modes}
     for i, step in enumerate(steps):
+        q_path = paths.qprofile(step)
+        q_profile = read_qprofile(q_path) if q_path.is_file() else None
         for (_, n, m), record in fc.read_records(paths.four_cache(step), variable, modes).items():
             values = record.abs
-            if values.size:
-                amplitude[(n, m)][i] = float(np.max(values))
-                radial[(n, m)][step] = (record.psi_n, values)
-    return FourData(variable, steps, amplitude, radial)
+            if not values.size:
+                continue
+            amplitude[(n, m)][i] = float(np.max(values))
+            radial[(n, m)][step] = (record.psi_n, values)
+            if q_profile is None or n == 0:
+                continue
+            crossings = find_rational_surfaces(*q_profile, m / n)
+            if crossings:
+                there = np.interp(crossings, record.psi_n, values)
+                rational[(n, m)][i] = float(np.max(there))
+                surfaces[(n, m)][step] = (np.asarray(crossings), there)
+    return FourData(variable, steps, amplitude, radial, rational, surfaces)
 
 
 def _mode_label(mode: tuple[int, int]) -> str:
@@ -705,7 +723,8 @@ class FourPlot:
     step, visible modes or scale only updates the lines already there."""
 
     def __init__(self, fig, data: FourData, *, step: int | None = None, colors=None,
-                 log: bool = True, log_radial: bool = False, real_psi_edge: float = 1.0):
+                 log: bool = True, log_radial: bool = False, real_psi_edge: float = 1.0,
+                 rational: bool = False):
         from ashen.plotting.four_modes import draw_mode_amplitudes
 
         self.fig, self.data = fig, data
@@ -725,6 +744,13 @@ class FourPlot:
                                  color=self.amplitude_lines[mode].get_color())[0]
             for mode in sorted(data.amplitude)
         }
+        # where each mode's q = m/n surfaces are, shown with the rational amplitude
+        self.surface_marks = {
+            mode: self.ax_r.plot([], [], ls="", marker="o", ms=6, mec="white",
+                                 color=line.get_color(), label="_nolegend_")[0]
+            for mode, line in self.radial_lines.items()
+        }
+        self.rational = False
         _style(self.ax_r, r"$\psi_N$ (JOREK grid)", f"|{variable}|", "")
         if real_psi_edge < 1.0:
             self.ax_r.axvline(real_psi_edge, color=_GREY, lw=1, ls="--")
@@ -732,6 +758,8 @@ class FourPlot:
             self.ax_r.set_yscale("log")
         self.step = None
         self.set_step(data.steps[-1] if step is None and data.steps else step)
+        if rational:
+            self.set_rational(True)
         self._legends()
 
     def _rescale(self, ax) -> None:
@@ -753,15 +781,35 @@ class FourPlot:
         for mode, line in self.radial_lines.items():
             psi_n, values = self.data.radial[mode].get(step, ((), ()))
             line.set_data(psi_n, values)
+        self._mark_surfaces()
         if step is not None:
             self.marker.set_xdata([step, step])
         self.ax_r.set_title(f"Radial structure, step {step}", loc="left", fontsize=11,
                             fontweight="bold")
         self._rescale(self.ax_r)
 
+    def _mark_surfaces(self) -> None:
+        for mode, marks in self.surface_marks.items():
+            at = self.data.surfaces[mode].get(self.step) if self.rational else None
+            marks.set_data(*(at if at is not None else ((), ())))
+
+    def set_rational(self, rational: bool) -> None:
+        """The left panel's amplitude: each mode's largest value on its own
+        q = m/n surface (True), or its maximum over the radius (False)."""
+        self.rational = bool(rational)
+        source = self.data.rational if self.rational else self.data.amplitude
+        for mode, line in self.amplitude_lines.items():
+            line.set_ydata(source[mode])
+        variable = self.data.variable
+        what = f"|{variable}| at q = m/n" if self.rational else f"max |{variable}|"
+        self.ax_t.set_ylabel(what)
+        self.ax_t.set_title(f"{what} per mode", loc="left", fontsize=11, fontweight="bold")
+        self._mark_surfaces()
+        self._rescale(self.ax_t)
+
     def set_visible(self, modes) -> None:
         modes = {(int(n), int(m)) for n, m in modes}
-        for lines in (self.amplitude_lines, self.radial_lines):
+        for lines in (self.amplitude_lines, self.radial_lines, self.surface_marks):
             for mode, line in lines.items():
                 line.set_visible(mode in modes)
         self._legends()
@@ -794,10 +842,13 @@ def four_figure(
     log: bool = True,
     log_radial: bool = False,
     colors: dict[tuple[int, int], str] | None = None,
+    rational: bool = False,
 ):
     """Mode amplitudes against step, and the radial eigenfunctions at one step.
 
     ``modes`` is a list of (n, m); None draws the ``n_modes`` largest.
+    ``rational`` draws each mode's amplitude on its q = m/n surface instead
+    of its maximum over the radius, and marks those surfaces on the right.
     ``log`` is the amplitude axis against step, ``log_radial`` the radial
     one. ``colors`` maps (n, m) to a colour, so a mode keeps its colour
     when others are left out.
@@ -817,7 +868,7 @@ def four_figure(
         biggest = sorted(series, key=lambda k: -np.nanmax(series[k]))[:n_modes]
         modes = [(n, m) for _, n, m in biggest]
     FourPlot(fig, load_four_data(run_dir, variable, modes), step=step, colors=colors, log=log,
-             log_radial=log_radial, real_psi_edge=_real_psi_edge(paths))
+             log_radial=log_radial, real_psi_edge=_real_psi_edge(paths), rational=rational)
     return fig
 
 
@@ -923,11 +974,47 @@ def _show(canvas, make_figure) -> None:
                                layout=w.Layout(width=width, max_width="100%")),)
 
 
+class _Log:
+    """Where a button's messages go: ``with log:`` empties it and then shows
+    what is printed, line by line as it comes.
+
+    An HTML widget whose text is set, not an Output widget: in VS Code an
+    Output widget can keep what it should have cleared and show a message
+    several times.
+    """
+
+    def __init__(self, w):
+        self.widget = w.HTML()
+        self.text = ""
+
+    def write(self, text: str) -> int:
+        self.text += text
+        self.widget.value = (
+            f"<pre style='margin:2px 0;white-space:pre-wrap'>{html.escape(self.text)}</pre>"
+        )
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def __enter__(self):
+        import contextlib
+
+        self.text, self.widget.value = "", ""
+        self._redirect = contextlib.redirect_stdout(self)
+        self._redirect.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._redirect.__exit__(*exc)
+
+
 def _live_figure(w, figsize):
     """(figure, widget showing it, draw()) for a figure that is updated in
-    place. With ipympl installed the widget is its canvas: zoom and pan with
-    the mouse from the toolbar, and a draw sends only the new image. Without
-    it the widget is a PNG that draw() renders again, with a note saying so.
+    place. With ipympl installed the widget holds its canvas: zoom and pan
+    with the mouse from the toolbar, and a draw sends only the new image.
+    Without it the widget holds a PNG that draw() renders again, with a note
+    saying so. Either way the figure is the widget's first child.
     """
     from matplotlib.figure import Figure
 
@@ -950,11 +1037,33 @@ def _live_figure(w, figsize):
         return fig, w.VBox([image, note]), draw
 
     canvas = Canvas(fig)
-    FigureManager(canvas, 0)
+    manager = FigureManager(canvas, 0)
     canvas.header_visible = False
     canvas.footer_visible = True       # the cursor's x, y
     canvas.toolbar_position = "top"
-    return fig, canvas, canvas.draw_idle
+
+    # A failure while handling the mouse or the toolbar is otherwise silent:
+    # the figure just does not respond. Say what failed, under the figure.
+    problem, handle = w.HTML(), manager.handle_json
+
+    def handle_json(content):
+        try:
+            return handle(content)
+        except Exception as exc:
+            import ipympl
+            import matplotlib
+
+            problem.value = (
+                "<small style='color:#c8442f'>The figure could not handle "
+                f"<code>{html.escape(str(content.get('type')))}</code>: "
+                f"{html.escape(type(exc).__name__)}: {html.escape(str(exc))} "
+                f"(matplotlib {matplotlib.__version__}, ipympl {ipympl.__version__}). If the two "
+                "do not go together: <code>pip install --user -U ipympl matplotlib</code>, "
+                "then restart the kernel.</small>")
+            raise
+
+    manager.handle_json = handle_json
+    return fig, w.VBox([canvas, problem]), canvas.draw_idle
 
 
 def _gathering(w, label: str, action, build):
@@ -962,13 +1071,12 @@ def _gathering(w, label: str, action, build):
     into a log) and then builds the view again from what is now on disk."""
     button = w.Button(description=label, layout=w.Layout(width="auto"),
                       tooltip="Runs in this notebook until it is done")
-    log, holder = w.Output(), w.VBox([build()])
+    log, holder = _Log(w), w.VBox([build()])
 
     def on_click(_):
         button.disabled = True
         try:
             with log:
-                log.clear_output()
                 try:
                     action()
                 except Exception as exc:
@@ -978,7 +1086,7 @@ def _gathering(w, label: str, action, build):
             button.disabled = False
 
     button.on_click(on_click)
-    return w.VBox([button, log, holder])
+    return w.VBox([button, log.widget, holder])
 
 
 def _slider(w, value, lo, hi, step, name):
@@ -1041,7 +1149,7 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
                       layout=w.Layout(width="auto"),
                       tooltip="q-profile and zeroD of that step, for the JOREK: line")
     state = {"achieved": achieved}
-    figure_out, log_out = _canvas(w), w.Output()
+    figure_out, log_out = _canvas(w), _Log(w)
     status = w.HTML()
 
     def refresh_status():
@@ -1067,7 +1175,6 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
 
     def on_save(_):
         with log_out:
-            log_out.clear_output()
             try:
                 cur.solve_shape(q0.value, li.value, q_edge.value)
                 set_shotfile_values(shotfile, {
@@ -1085,7 +1192,6 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
 
     def on_regenerate(_):
         with log_out:
-            log_out.clear_output()
             if site is None:
                 print("no site.toml found from here; run `run_jorek shotfile.py` in the run folder")
                 return
@@ -1103,7 +1209,6 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
 
     def on_reset(_):
         with log_out:
-            log_out.clear_output()
             try:
                 now = load_shotfile(shotfile)
             except ShotfileError as exc:
@@ -1123,7 +1228,6 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
 
     def on_gather(_):
         with log_out:
-            log_out.clear_output()
             print("\n".join(gather_step_caches(run_dir, step)))
             try:
                 state["achieved"] = achieved_q_li(_paths(run_dir), step, f0=geometry.B0 * geometry.R0)
@@ -1138,7 +1242,7 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
     reset.on_click(on_reset)
     gather.on_click(on_gather)
     redraw()
-    return w.VBox([w.VBox([q0, li, q_edge]), w.HBox([save, regenerate, reset, gather]), status, log_out,
+    return w.VBox([w.VBox([q0, li, q_edge]), w.HBox([save, regenerate, reset, gather]), status, log_out.widget,
                    figure_out])
 
 
@@ -1160,29 +1264,29 @@ def equilibrium_view(run_dir: Path | str = "."):
                              continuous_update=False)
     gather = w.Button(description="Gather q-profile + zeroD for this step",
                       layout=w.Layout(width="auto"))
-    out, log = _canvas(w), w.Output()
+    out, log = _canvas(w), _Log(w)
 
     def redraw(*_):
         _show(out, lambda: equilibrium_figure(run_dir, step.value))
 
     def on_gather(_):
         with log:
-            log.clear_output()
             print("\n".join(gather_step_caches(run_dir, step.value)))
         redraw()
 
     step.observe(redraw, names="value")
     gather.on_click(on_gather)
     redraw()
-    return w.VBox([w.HBox([step, gather]), log, out])
+    return w.VBox([w.HBox([step, gather]), log.widget, out])
 
 
-def four_view(run_dir: Path | str = "."):
-    """Mode amplitudes and radial structure, with variable and step selectors
+def four_view(run_dir: Path | str = ".", *, variable: str = "Psi"):
+    """Mode amplitudes and radial structure of one jorek2_four ``variable``
+    (Psi unless another is named), with a step selector
     and a checkbox per mode (four_view_modes: by the shotfile's qa), under a
     button that runs ``analyse --diag four`` for this run.
 
-    The modes are read once per variable (load_four_data); a control then
+    The modes are read once (load_four_data); a control then
     updates the one figure (FourPlot) instead of drawing a new one. With
     ipympl installed the figure can be zoomed and panned with the mouse.
     """
@@ -1193,16 +1297,22 @@ def four_view(run_dir: Path | str = "."):
         if not steps:
             return w.HTML("no jorek2_four cache yet")
         paths = _paths(run_dir)
-        variables = sorted({key[0] for key in fc.read_cache(paths.four_cache(steps[-1]))})
-        variable = w.Dropdown(options=variables,
-                              value="Psi" if "Psi" in variables else variables[0],
-                              description="variable")
+        variables = sorted({key[0] for key in fc.list_keys(paths.four_cache(steps[-1]))})
+        if variable not in variables:
+            return w.HTML(f"no {html.escape(variable)} in the jorek2_four cache; it holds "
+                          f"{html.escape(', '.join(variables))}")
         step = w.SelectionSlider(options=steps, value=steps[-1], description="step",
                                  continuous_update=False)
         log = w.Checkbox(value=True, description="log amplitudes", indent=False,
                          layout=w.Layout(width="auto"))
         log_radial = w.Checkbox(value=False, description="log radial structure", indent=False,
                                 layout=w.Layout(width="auto"))
+        amplitude = w.ToggleButtons(
+            options=[("max over radius", False), ("at q = m/n surface", True)], value=False,
+            description="amplitude", style={"button_width": "auto"},
+            tooltips=["each mode's largest |c| anywhere on the radius",
+                      "each mode's |c| on its own rational surface (needs q-profile caches)"])
+        note = w.HTML()
         boxes = w.HBox([], layout=w.Layout(flex_flow="row wrap"))
         reset = w.Button(description="Reset view", layout=w.Layout(width="auto"),
                          tooltip="Back to limits that follow the data, after zooming")
@@ -1214,9 +1324,9 @@ def four_view(run_dir: Path | str = "."):
             return [box.mode for box in boxes.children if box.value]
 
         def load(*_):
-            """A variable's modes into memory and a new figure: the slow step,
-            done once per variable. Everything else updates that figure."""
-            modes = four_view_modes(run_dir, variable.value)
+            """The modes into memory and a new figure: the slow step, done
+            once. Everything else updates that figure."""
+            modes = four_view_modes(run_dir, variable)
             palette = _plt().get_cmap("tab20").colors
             colors = {
                 mode: "#%02x%02x%02x" % tuple(round(255 * c) for c in palette[i % len(palette)])
@@ -1231,10 +1341,11 @@ def four_view(run_dir: Path | str = "."):
                 made.append(box)
             boxes.children = made
             try:
-                data = load_four_data(run_dir, variable.value, modes)
+                data = load_four_data(run_dir, variable, modes)
                 fig, widget, state["draw"] = _live_figure(w, _FOUR_FIGSIZE)
                 state["plot"] = FourPlot(fig, data, step=step.value, colors=colors, log=log.value,
-                                         log_radial=log_radial.value, real_psi_edge=edge)
+                                         log_radial=log_radial.value, real_psi_edge=edge,
+                                         rational=amplitude.value)
             except Exception as exc:  # say what is missing, do not die
                 state.pop("plot", None)
                 holder.children = (w.HTML(
@@ -1247,16 +1358,31 @@ def four_view(run_dir: Path | str = "."):
             if "plot" in state:
                 change(state["plot"])
                 state["draw"]()
+            explain()
 
-        variable.observe(load, names="value")
+        def explain():
+            """Say so when the rational amplitude has nothing to show."""
+            note.value = ""
+            if amplitude.value and "plot" in state:
+                data = state["plot"].data
+                if not any(np.isfinite(values).any() for values in data.rational.values()):
+                    note.value = (
+                        "<small>No amplitude on a rational surface: these steps have no "
+                        "q-profile cache (<code>analyse --diag four</code> gathers them), or q "
+                        "never reaches m/n for these modes.</small>")
+
         step.observe(lambda _: update(lambda plot: plot.set_step(step.value)), names="value")
         for control in (log, log_radial):
             control.observe(
                 lambda _: update(lambda plot: plot.set_log(log.value, log_radial.value)), names="value")
         reset.on_click(lambda _: update(lambda plot: plot.reset_view()))
+        amplitude.observe(
+            lambda _: update(lambda plot: plot.set_rational(amplitude.value)), names="value")
         load()
-        return w.VBox([w.HBox([variable, step, log, log_radial, reset]),
-                       w.HBox([w.HTML("modes m/n:&nbsp;"), boxes]), holder])
+        explain()
+        return w.VBox([w.HBox([step, log, log_radial, reset]),
+                       w.HBox([w.HTML("modes m/n:&nbsp;"), boxes]), w.HBox([amplitude, note]),
+                       holder])
 
     return _gathering(w, "Run analyse --diag four", lambda: run_analyse(run_dir, ["four"]), build)
 
