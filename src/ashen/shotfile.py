@@ -30,7 +30,6 @@ from __future__ import annotations
 import ast
 import dataclasses
 import difflib
-import importlib.util
 import types
 import warnings
 from dataclasses import dataclass, field, fields
@@ -227,11 +226,14 @@ def load_shotfile(path: Path | str) -> ShotParams:
     unmet cross-field requirement (ShotParams.__post_init__).
     """
     path = Path(path)
-    spec = importlib.util.spec_from_file_location("shotfile", path)
-    if spec is None or spec.loader is None:
-        raise ShotfileError(f"{path}: could not be loaded as a Python module")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Compiled from the text each time, not imported: the import system keeps
+    # bytecode in __pycache__ keyed by the file's size and its time to the
+    # second, so a shotfile rewritten within a second at the same length
+    # ("3000" to "7000", as the viewer's Save does) was read back as it was
+    # before. It also keeps __pycache__ out of run folders.
+    module = types.ModuleType("shotfile")
+    module.__file__ = str(path)
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), module.__dict__)
 
     return _from_module(module, source=path)
 
