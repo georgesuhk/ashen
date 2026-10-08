@@ -4,6 +4,31 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-08: four view: fast controls, zoom and pan
+
+- Every control used to read all of every four cache again (all
+  variables, all modes) and draw a new figure: about 5 s per click on the
+  local qa3.3_g3.2 run (43 steps). Now the chosen modes of one variable
+  are read once (`viewer.load_four_data`, using the new
+  `four_cache.read_records`, which opens only the records asked for), and
+  a control updates the lines of one figure (`viewer.FourPlot`). Measured
+  on the same run: 0.5 s to open, 0.06 to 0.2 s per step change or mode
+  tick, 0.1 s to change variable.
+- **Zoom and pan** need `ipympl` in the notebook's Python:
+  `pip install --user ipympl`, then restart the kernel. The figure then
+  has matplotlib's toolbar (pan, zoom to rectangle, home, save) and shows
+  the cursor's x, y. Without ipympl the view works as a still image and
+  says how to get the toolbar.
+- A range you zoomed to is kept when the step or the modes change.
+  **Reset view** makes the axes follow the data again.
+- The numbers drawn are the same as before (max |c| and |c|(psi_N) from
+  the same records).
+- Only the four view is changed; the other views still draw a new image
+  per change.
+- Tested with and without ipympl, and by executing the notebook on the
+  demo campaign. The ipympl canvas has not been tried in VS Code, locally
+  or over Remote SSH.
+
 ## 2026-10-08: four view: modes chosen by qa, a checkbox per mode
 
 - The modes drawn are now `viewer.default_four_modes(qa)`: for n = 1 and

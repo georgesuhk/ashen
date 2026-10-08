@@ -68,6 +68,9 @@ __all__ = [
     "starwall_wall",
     "tuner_figure",
     "tuner_status",
+    "FourData",
+    "FourPlot",
+    "load_four_data",
 ]
 
 _FIGURE_DPI = 144   # 1.5 pixels per CSS pixel: sharp on a laptop screen
@@ -654,7 +657,7 @@ def four_view_modes(run_dir: Path | str, variable: str, n_fallback: int = 6) -> 
     paths, steps = _paths(run_dir), four_steps(run_dir)
     if not steps:
         return []
-    cached = {(n, m) for var, n, m in fc.read_cache(paths.four_cache(steps[-1])) if var == variable}
+    cached = {(n, m) for var, n, m in fc.list_keys(paths.four_cache(steps[-1])) if var == variable}
     qa = shotfile_qa(run_dir)
     wanted = [mode for mode in default_four_modes(qa) if mode in cached] if qa else []
     if wanted:
@@ -662,6 +665,123 @@ def four_view_modes(run_dir: Path | str, variable: str, n_fallback: int = 6) -> 
     series = max_amplitude_series(paths, steps, variables=[variable])
     biggest = sorted(series, key=lambda k: -np.nanmax(series[k]))[:n_fallback]
     return sorted((n, m) for _, n, m in biggest)
+
+
+@dataclass(frozen=True)
+class FourData:
+    """One variable's chosen modes at every cached step, in memory, so a
+    view can change step or modes without going back to the files."""
+
+    variable: str
+    steps: list[int]
+    #: {(n, m): max |c| over the radius, one value per step (nan if missing)}
+    amplitude: dict[tuple[int, int], np.ndarray]
+    #: {(n, m): {step: (psi_n, |c|)}}
+    radial: dict[tuple[int, int], dict[int, tuple[np.ndarray, np.ndarray]]]
+
+
+def load_four_data(run_dir: Path | str, variable: str, modes) -> FourData:
+    """Read ``modes`` ((n, m) pairs) of ``variable`` from every four cache.
+    Only those records are read, not the whole of each file."""
+    paths, steps = _paths(run_dir), four_steps(run_dir)
+    modes = [(int(n), int(m)) for n, m in modes]
+    amplitude = {mode: np.full(len(steps), np.nan) for mode in modes}
+    radial: dict = {mode: {} for mode in modes}
+    for i, step in enumerate(steps):
+        for (_, n, m), record in fc.read_records(paths.four_cache(step), variable, modes).items():
+            values = record.abs
+            if values.size:
+                amplitude[(n, m)][i] = float(np.max(values))
+                radial[(n, m)][step] = (record.psi_n, values)
+    return FourData(variable, steps, amplitude, radial)
+
+
+def _mode_label(mode: tuple[int, int]) -> str:
+    return f"n={mode[0]}, m={mode[1]}"
+
+
+class FourPlot:
+    """The two four panels drawn once on ``fig``; after that a change of
+    step, visible modes or scale only updates the lines already there."""
+
+    def __init__(self, fig, data: FourData, *, step: int | None = None, colors=None,
+                 log: bool = True, log_radial: bool = False, real_psi_edge: float = 1.0):
+        from ashen.plotting.four_modes import draw_mode_amplitudes
+
+        self.fig, self.data = fig, data
+        self.ax_t, self.ax_r = fig.subplots(1, 2)
+        variable = data.variable
+        series = {(variable, n, m): values for (n, m), values in data.amplitude.items()}
+        draw_mode_amplitudes(self.ax_t, data.steps, series, variable=variable, log=log,
+                             xlabel="Time step", colors=colors)
+        by_label = {line.get_label(): line for line in self.ax_t.get_lines()}
+        self.amplitude_lines = {mode: by_label[_mode_label(mode)] for mode in data.amplitude}
+        self.marker = self.ax_t.axvline(data.steps[-1] if data.steps else 0, color=_GREY, lw=1, ls="--")
+        self.ax_t.set_title(f"max |{variable}| per mode", loc="left", fontsize=11, fontweight="bold")
+
+        # same colour per mode as the left panel
+        self.radial_lines = {
+            mode: self.ax_r.plot([], [], lw=1.6, label=_mode_label(mode),
+                                 color=self.amplitude_lines[mode].get_color())[0]
+            for mode in sorted(data.amplitude)
+        }
+        _style(self.ax_r, r"$\psi_N$ (JOREK grid)", f"|{variable}|", "")
+        if real_psi_edge < 1.0:
+            self.ax_r.axvline(real_psi_edge, color=_GREY, lw=1, ls="--")
+        if log_radial:
+            self.ax_r.set_yscale("log")
+        self.step = None
+        self.set_step(data.steps[-1] if step is None and data.steps else step)
+        self._legends()
+
+    def _rescale(self, ax) -> None:
+        # Follows the data unless the axis was zoomed or panned by hand:
+        # matplotlib turns autoscaling off for an axis whose limits were set.
+        ax.relim(visible_only=True)
+        ax.autoscale_view()
+
+    def _legends(self) -> None:
+        for ax, lines in ((self.ax_t, self.amplitude_lines), (self.ax_r, self.radial_lines)):
+            shown = [lines[mode] for mode in sorted(lines) if lines[mode].get_visible()]
+            if shown:
+                ax.legend(handles=shown, frameon=False, labelcolor=_INK, fontsize=8)
+            elif ax.get_legend() is not None:
+                ax.get_legend().remove()
+
+    def set_step(self, step: int | None) -> None:
+        self.step = step
+        for mode, line in self.radial_lines.items():
+            psi_n, values = self.data.radial[mode].get(step, ((), ()))
+            line.set_data(psi_n, values)
+        if step is not None:
+            self.marker.set_xdata([step, step])
+        self.ax_r.set_title(f"Radial structure, step {step}", loc="left", fontsize=11,
+                            fontweight="bold")
+        self._rescale(self.ax_r)
+
+    def set_visible(self, modes) -> None:
+        modes = {(int(n), int(m)) for n, m in modes}
+        for lines in (self.amplitude_lines, self.radial_lines):
+            for mode, line in lines.items():
+                line.set_visible(mode in modes)
+        self._legends()
+        self._rescale(self.ax_t)
+        self._rescale(self.ax_r)
+
+    def set_log(self, log: bool, log_radial: bool) -> None:
+        self.ax_t.set_yscale("log" if log else "linear")
+        self.ax_r.set_yscale("log" if log_radial else "linear")
+        self._rescale(self.ax_t)
+        self._rescale(self.ax_r)
+
+    def reset_view(self) -> None:
+        """Back to limits that follow the data, after zooming or panning."""
+        for ax in (self.ax_t, self.ax_r):
+            ax.set_autoscale_on(True)
+            self._rescale(ax)
+
+
+_FOUR_FIGSIZE = (14, 4.6)
 
 
 def four_figure(
@@ -682,45 +802,22 @@ def four_figure(
     one. ``colors`` maps (n, m) to a colour, so a mode keeps its colour
     when others are left out.
     """
-    from ashen.plotting.four_modes import draw_mode_amplitudes
+    from matplotlib.figure import Figure
 
-    plt = _plt()
     paths = _paths(run_dir)
     steps = four_steps(run_dir)
-    fig, (ax_t, ax_r) = plt.subplots(1, 2, figsize=(14, 4.6))
+    fig = Figure(figsize=_FOUR_FIGSIZE, layout="constrained")
     if not steps:
-        ax_t.text(0.5, 0.5, "no jorek2_four cache (analyse --diag four)", ha="center",
-                  transform=ax_t.transAxes)
+        ax = fig.subplots(1, 2)[0]
+        ax.text(0.5, 0.5, "no jorek2_four cache (analyse --diag four)", ha="center",
+                transform=ax.transAxes)
         return fig
-    step = steps[-1] if step is None else step
-
-    series = max_amplitude_series(paths, steps, variables=[variable], modes=modes)
     if modes is None:
+        series = max_amplitude_series(paths, steps, variables=[variable])
         biggest = sorted(series, key=lambda k: -np.nanmax(series[k]))[:n_modes]
-        series = {k: series[k] for k in biggest}
-    draw_mode_amplitudes(ax_t, steps, series, variable=variable, log=log, xlabel="Time step",
-                         colors=colors)
-    ax_t.axvline(step, color=_GREY, lw=1, ls="--")
-    ax_t.set_title(f"max |{variable}| per mode", loc="left", fontsize=11, fontweight="bold")
-
-    radial = radial_amplitude_series(
-        paths, [step], variables=[variable], modes=[(n, m) for _, n, m in series]
-    )
-    # same colour per mode as the left panel
-    left = {line.get_label(): line.get_color() for line in ax_t.get_lines()}
-    for (_, n, m), curves in sorted(radial.items(), key=lambda kv: (kv[0][1], kv[0][2])):
-        psi_n, values = curves[step]
-        label = f"n={n}, m={m}"
-        ax_r.plot(psi_n, values, lw=1.6, label=label, color=left.get(label))
-    if log_radial:
-        ax_r.set_yscale("log")
-    _style(ax_r, r"$\psi_N$ (JOREK grid)", f"|{variable}|", f"Radial structure, step {step}")
-    if radial:
-        ax_r.legend(frameon=False, labelcolor=_INK, fontsize=8)
-    edge = _real_psi_edge(paths)
-    if edge < 1.0:
-        ax_r.axvline(edge, color=_GREY, lw=1, ls="--")
-    fig.tight_layout()
+        modes = [(n, m) for _, n, m in biggest]
+    FourPlot(fig, load_four_data(run_dir, variable, modes), step=step, colors=colors, log=log,
+             log_radial=log_radial, real_psi_edge=_real_psi_edge(paths))
     return fig
 
 
@@ -824,6 +921,40 @@ def _show(canvas, make_figure) -> None:
     width = f"{fig.get_figwidth() * 96:.0f}px"   # the size an inline figure has
     canvas.children = (w.Image(value=buffer.getvalue(), format="png",
                                layout=w.Layout(width=width, max_width="100%")),)
+
+
+def _live_figure(w, figsize):
+    """(figure, widget showing it, draw()) for a figure that is updated in
+    place. With ipympl installed the widget is its canvas: zoom and pan with
+    the mouse from the toolbar, and a draw sends only the new image. Without
+    it the widget is a PNG that draw() renders again, with a note saying so.
+    """
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=figsize, layout="constrained")
+    try:
+        from ipympl.backend_nbagg import Canvas, FigureManager
+    except ImportError:
+        image = w.Image(format="png", layout=w.Layout(width=f"{figsize[0] * 96:.0f}px",
+                                                      max_width="100%"))
+        note = w.HTML("<small>For zoom and pan: <code>pip install --user ipympl</code>, "
+                      "then restart the kernel.</small>")
+
+        def draw():
+            import io
+
+            buffer = io.BytesIO()
+            fig.savefig(buffer, format="png", dpi=_FIGURE_DPI)
+            image.value = buffer.getvalue()
+
+        return fig, w.VBox([image, note]), draw
+
+    canvas = Canvas(fig)
+    FigureManager(canvas, 0)
+    canvas.header_visible = False
+    canvas.footer_visible = True       # the cursor's x, y
+    canvas.toolbar_position = "top"
+    return fig, canvas, canvas.draw_idle
 
 
 def _gathering(w, label: str, action, build):
@@ -1049,7 +1180,12 @@ def equilibrium_view(run_dir: Path | str = "."):
 def four_view(run_dir: Path | str = "."):
     """Mode amplitudes and radial structure, with variable and step selectors
     and a checkbox per mode (four_view_modes: by the shotfile's qa), under a
-    button that runs ``analyse --diag four`` for this run."""
+    button that runs ``analyse --diag four`` for this run.
+
+    The modes are read once per variable (load_four_data); a control then
+    updates the one figure (FourPlot) instead of drawing a new one. With
+    ipympl installed the figure can be zoomed and panned with the mouse.
+    """
     w = _widgets()
 
     def build():
@@ -1068,19 +1204,21 @@ def four_view(run_dir: Path | str = "."):
         log_radial = w.Checkbox(value=False, description="log radial structure", indent=False,
                                 layout=w.Layout(width="auto"))
         boxes = w.HBox([], layout=w.Layout(flex_flow="row wrap"))
-        out = _canvas(w)
-        state = {"colors": {}}
+        reset = w.Button(description="Reset view", layout=w.Layout(width="auto"),
+                         tooltip="Back to limits that follow the data, after zooming")
+        holder = w.VBox([])
+        state = {}
+        edge = _real_psi_edge(paths)
 
-        def redraw(*_):
-            modes = [box.mode for box in boxes.children if box.value]
-            _show(out, lambda: four_figure(run_dir, variable.value, step=step.value, modes=modes,
-                                           log=log.value, log_radial=log_radial.value,
-                                           colors=state["colors"]))
+        def visible():
+            return [box.mode for box in boxes.children if box.value]
 
-        def set_modes(*_):
+        def load(*_):
+            """A variable's modes into memory and a new figure: the slow step,
+            done once per variable. Everything else updates that figure."""
             modes = four_view_modes(run_dir, variable.value)
             palette = _plt().get_cmap("tab20").colors
-            state["colors"] = {
+            colors = {
                 mode: "#%02x%02x%02x" % tuple(round(255 * c) for c in palette[i % len(palette)])
                 for i, mode in enumerate(modes)
             }
@@ -1089,17 +1227,36 @@ def four_view(run_dir: Path | str = "."):
                 box = w.Checkbox(value=True, description=f"{m}/{n}", indent=False,
                                  layout=w.Layout(width="70px"))
                 box.mode = (n, m)
-                box.observe(redraw, names="value")
+                box.observe(lambda _: update(lambda plot: plot.set_visible(visible())), names="value")
                 made.append(box)
             boxes.children = made
-            redraw()
+            try:
+                data = load_four_data(run_dir, variable.value, modes)
+                fig, widget, state["draw"] = _live_figure(w, _FOUR_FIGSIZE)
+                state["plot"] = FourPlot(fig, data, step=step.value, colors=colors, log=log.value,
+                                         log_radial=log_radial.value, real_psi_edge=edge)
+            except Exception as exc:  # say what is missing, do not die
+                state.pop("plot", None)
+                holder.children = (w.HTML(
+                    f"<pre>{html.escape(type(exc).__name__)}: {html.escape(str(exc))}</pre>"),)
+                return
+            holder.children = (widget,)
+            state["draw"]()
 
-        variable.observe(set_modes, names="value")
-        for control in (step, log, log_radial):
-            control.observe(redraw, names="value")
-        set_modes()
-        return w.VBox([w.HBox([variable, step, log, log_radial]),
-                       w.HBox([w.HTML("modes m/n:&nbsp;"), boxes]), out])
+        def update(change):
+            if "plot" in state:
+                change(state["plot"])
+                state["draw"]()
+
+        variable.observe(load, names="value")
+        step.observe(lambda _: update(lambda plot: plot.set_step(step.value)), names="value")
+        for control in (log, log_radial):
+            control.observe(
+                lambda _: update(lambda plot: plot.set_log(log.value, log_radial.value)), names="value")
+        reset.on_click(lambda _: update(lambda plot: plot.reset_view()))
+        load()
+        return w.VBox([w.HBox([variable, step, log, log_radial, reset]),
+                       w.HBox([w.HTML("modes m/n:&nbsp;"), boxes]), holder])
 
     return _gathering(w, "Run analyse --diag four", lambda: run_analyse(run_dir, ["four"]), build)
 
