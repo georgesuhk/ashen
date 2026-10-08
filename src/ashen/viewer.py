@@ -19,6 +19,7 @@ elements: good for looking, not for measuring.
 from __future__ import annotations
 
 import html
+import math
 import re
 import sys
 from dataclasses import dataclass
@@ -45,12 +46,14 @@ __all__ = [
     "boundary_view",
     "case_boundaries",
     "case_viewer",
+    "default_four_modes",
     "equilibrium_figure",
     "equilibrium_view",
     "folder_name_mismatches",
     "four_figure",
     "four_steps",
     "four_view",
+    "four_view_modes",
     "gather_step_caches",
     "grid_boundary",
     "input_profile",
@@ -61,11 +64,13 @@ __all__ = [
     "profiles_view",
     "restart_nodes",
     "run_analyse",
+    "shotfile_qa",
     "starwall_wall",
     "tuner_figure",
     "tuner_status",
 ]
 
+_FIGURE_DPI = 144   # 1.5 pixels per CSS pixel: sharp on a laptop screen
 _BLUE, _GREY, _RED, _INK, _ORANGE = "#2a78d6", "#898781", "#c8442f", "#52514e", "#d98a1f"
 
 
@@ -613,6 +618,52 @@ def four_steps(run_dir: Path | str) -> list[int]:
     return sorted(found)
 
 
+def default_four_modes(qa: float, n_values=(1, 2)) -> list[tuple[int, int]]:
+    """The (n, m) modes worth looking at for an edge safety factor ``qa``.
+
+    For each n, m runs up to one past the highest rational surface m/n
+    inside the plasma: ``floor(n qa) + 1``. It starts at 1/1 for n = 1 and at
+    m = n + 1 for higher n, whose m = n mode sits on the q = 1 surface that
+    1/1 already stands for. qa = 2.8 gives 1/1 2/1 3/1 and 3/2 4/2 5/2 6/2.
+    """
+    modes = []
+    for n in n_values:
+        first = 1 if n == 1 else n + 1
+        last = math.floor(n * qa + 1e-9) + 1
+        modes += [(n, m) for m in range(first, last + 1)]
+    return modes
+
+
+def shotfile_qa(run_dir: Path | str) -> float | None:
+    """The edge safety factor the shotfile asks for: ``current_qa`` for a
+    q0/l_i/qa profile, else ``qa``. None if the shotfile gives neither or
+    cannot be read."""
+    try:
+        params = load_shotfile(Path(run_dir) / "shotfile.py")
+    except Exception:
+        return None
+    if params.ffprime_method == "q_li" and params.current_qa is not None:
+        return float(params.current_qa)
+    return None if params.qa is None else float(params.qa)
+
+
+def four_view_modes(run_dir: Path | str, variable: str, n_fallback: int = 6) -> list[tuple[int, int]]:
+    """The modes four_view offers for a variable: default_four_modes for the
+    shotfile's qa, those of them the cache holds. Without a qa, or if the
+    cache holds none of them, the ``n_fallback`` largest."""
+    paths, steps = _paths(run_dir), four_steps(run_dir)
+    if not steps:
+        return []
+    cached = {(n, m) for var, n, m in fc.read_cache(paths.four_cache(steps[-1])) if var == variable}
+    qa = shotfile_qa(run_dir)
+    wanted = [mode for mode in default_four_modes(qa) if mode in cached] if qa else []
+    if wanted:
+        return wanted
+    series = max_amplitude_series(paths, steps, variables=[variable])
+    biggest = sorted(series, key=lambda k: -np.nanmax(series[k]))[:n_fallback]
+    return sorted((n, m) for _, n, m in biggest)
+
+
 def four_figure(
     run_dir: Path | str,
     variable: str = "Psi",
@@ -621,10 +672,15 @@ def four_figure(
     modes: list[tuple[int, int]] | None = None,
     n_modes: int = 6,
     log: bool = True,
+    log_radial: bool = False,
+    colors: dict[tuple[int, int], str] | None = None,
 ):
     """Mode amplitudes against step, and the radial eigenfunctions at one step.
 
     ``modes`` is a list of (n, m); None draws the ``n_modes`` largest.
+    ``log`` is the amplitude axis against step, ``log_radial`` the radial
+    one. ``colors`` maps (n, m) to a colour, so a mode keeps its colour
+    when others are left out.
     """
     from ashen.plotting.four_modes import draw_mode_amplitudes
 
@@ -642,7 +698,8 @@ def four_figure(
     if modes is None:
         biggest = sorted(series, key=lambda k: -np.nanmax(series[k]))[:n_modes]
         series = {k: series[k] for k in biggest}
-    draw_mode_amplitudes(ax_t, steps, series, variable=variable, log=log, xlabel="Time step")
+    draw_mode_amplitudes(ax_t, steps, series, variable=variable, log=log, xlabel="Time step",
+                         colors=colors)
     ax_t.axvline(step, color=_GREY, lw=1, ls="--")
     ax_t.set_title(f"max |{variable}| per mode", loc="left", fontsize=11, fontweight="bold")
 
@@ -655,7 +712,7 @@ def four_figure(
         psi_n, values = curves[step]
         label = f"n={n}, m={m}"
         ax_r.plot(psi_n, values, lw=1.6, label=label, color=left.get(label))
-    if log:
+    if log_radial:
         ax_r.set_yscale("log")
     _style(ax_r, r"$\psi_N$ (JOREK grid)", f"|{variable}|", f"Radial structure, step {step}")
     if radial:
@@ -738,20 +795,35 @@ def _widgets():
     return ipywidgets
 
 
-def _show(out, make_figure) -> None:
-    """Draw ``make_figure()`` into an Output widget, replacing what was there."""
-    from IPython.display import display
+def _canvas(w):
+    """Where _show puts a figure."""
+    return w.VBox([])
 
+
+def _show(canvas, make_figure) -> None:
+    """Draw ``make_figure()`` into a _canvas, replacing what was there.
+
+    The figure goes in as a PNG Image widget, not through an Output widget:
+    VS Code shows what an Output widget captures while its cell runs a second
+    time, below the widgets.
+    """
+    import io
+
+    w = _widgets()
     plt = _plt()
-    with out:
-        out.clear_output(wait=True)
-        try:
-            fig = make_figure()
-        except Exception as exc:  # a view should say what is missing, not die
-            print(f"{type(exc).__name__}: {exc}")
-            return
-        display(fig)
-        plt.close(fig)
+    try:
+        fig = make_figure()
+    except Exception as exc:  # a view should say what is missing, not die
+        canvas.children = (w.HTML(
+            f"<pre>{html.escape(type(exc).__name__)}: {html.escape(str(exc))}</pre>"
+        ),)
+        return
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=_FIGURE_DPI)
+    plt.close(fig)
+    width = f"{fig.get_figwidth() * 96:.0f}px"   # the size an inline figure has
+    canvas.children = (w.Image(value=buffer.getvalue(), format="png",
+                               layout=w.Layout(width=width, max_width="100%")),)
 
 
 def _gathering(w, label: str, action, build):
@@ -838,7 +910,7 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
                       layout=w.Layout(width="auto"),
                       tooltip="q-profile and zeroD of that step, for the JOREK: line")
     state = {"achieved": achieved}
-    figure_out, log_out = w.Output(), w.Output()
+    figure_out, log_out = _canvas(w), w.Output()
     status = w.HTML()
 
     def refresh_status():
@@ -942,7 +1014,7 @@ def profile_tuner(run_dir: Path | str = ".", *, step: int = 0, site=None):
 def boundary_view(run_dir: Path | str = "."):
     """The run's boundaries (no controls)."""
     w = _widgets()
-    out = w.Output()
+    out = _canvas(w)
     _show(out, lambda: boundary_figure(run_dir))
     return out
 
@@ -957,7 +1029,7 @@ def equilibrium_view(run_dir: Path | str = "."):
                              continuous_update=False)
     gather = w.Button(description="Gather q-profile + zeroD for this step",
                       layout=w.Layout(width="auto"))
-    out, log = w.Output(), w.Output()
+    out, log = _canvas(w), w.Output()
 
     def redraw(*_):
         _show(out, lambda: equilibrium_figure(run_dir, step.value))
@@ -975,8 +1047,9 @@ def equilibrium_view(run_dir: Path | str = "."):
 
 
 def four_view(run_dir: Path | str = "."):
-    """Mode amplitudes and radial structure, with variable and step selectors,
-    under a button that runs ``analyse --diag four`` for this run."""
+    """Mode amplitudes and radial structure, with variable and step selectors
+    and a checkbox per mode (four_view_modes: by the shotfile's qa), under a
+    button that runs ``analyse --diag four`` for this run."""
     w = _widgets()
 
     def build():
@@ -990,18 +1063,43 @@ def four_view(run_dir: Path | str = "."):
                               description="variable")
         step = w.SelectionSlider(options=steps, value=steps[-1], description="step",
                                  continuous_update=False)
-        n_modes = w.IntSlider(value=6, min=1, max=12, description="modes", continuous_update=False)
-        log = w.Checkbox(value=True, description="log scale")
-        out = w.Output()
+        log = w.Checkbox(value=True, description="log amplitudes", indent=False,
+                         layout=w.Layout(width="auto"))
+        log_radial = w.Checkbox(value=False, description="log radial structure", indent=False,
+                                layout=w.Layout(width="auto"))
+        boxes = w.HBox([], layout=w.Layout(flex_flow="row wrap"))
+        out = _canvas(w)
+        state = {"colors": {}}
 
         def redraw(*_):
-            _show(out, lambda: four_figure(run_dir, variable.value, step=step.value,
-                                           n_modes=n_modes.value, log=log.value))
+            modes = [box.mode for box in boxes.children if box.value]
+            _show(out, lambda: four_figure(run_dir, variable.value, step=step.value, modes=modes,
+                                           log=log.value, log_radial=log_radial.value,
+                                           colors=state["colors"]))
 
-        for control in (variable, step, n_modes, log):
+        def set_modes(*_):
+            modes = four_view_modes(run_dir, variable.value)
+            palette = _plt().get_cmap("tab20").colors
+            state["colors"] = {
+                mode: "#%02x%02x%02x" % tuple(round(255 * c) for c in palette[i % len(palette)])
+                for i, mode in enumerate(modes)
+            }
+            made = []
+            for n, m in modes:
+                box = w.Checkbox(value=True, description=f"{m}/{n}", indent=False,
+                                 layout=w.Layout(width="70px"))
+                box.mode = (n, m)
+                box.observe(redraw, names="value")
+                made.append(box)
+            boxes.children = made
+            redraw()
+
+        variable.observe(set_modes, names="value")
+        for control in (step, log, log_radial):
             control.observe(redraw, names="value")
-        redraw()
-        return w.VBox([w.HBox([variable, step, n_modes, log]), out])
+        set_modes()
+        return w.VBox([w.HBox([variable, step, log, log_radial]),
+                       w.HBox([w.HTML("modes m/n:&nbsp;"), boxes]), out])
 
     return _gathering(w, "Run analyse --diag four", lambda: run_analyse(run_dir, ["four"]), build)
 
@@ -1021,7 +1119,7 @@ def profiles_view(run_dir: Path | str = "."):
         first = available[labels[which.value]]
         step = w.SelectionSlider(options=first, value=first[-1], description="step",
                                  continuous_update=False)
-        out = w.Output()
+        out = _canvas(w)
 
         def redraw(*_):
             _show(out, lambda: profiles_figure(run_dir, labels[which.value], step=step.value))
