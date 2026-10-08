@@ -19,10 +19,10 @@ def test_notebook_is_valid_and_location_independent():
     nb = case_notebook()
     assert nb["nbformat"] == 4 and all("source" in c for c in nb["cells"])
     code = _code(nb)
-    assert 'RUN = Path(".").resolve()' in code
+    assert 'viewer.case_viewer(Path(".").resolve()' in code
     assert repr(default_ashen_src()) in code            # fallback when ashen is not importable
-    for view in ("profile_tuner", "boundary_view", "equilibrium_view", "four_view", "profiles_view"):
-        assert f"viewer.{view}(RUN" in code
+    assert "del sys.modules[name]" in code              # a rerun loads an updated ashen
+    assert sum(c["cell_type"] == "code" for c in nb["cells"]) == 1
     compile(code, "case_viewer", "exec")                # every code cell parses
 
 
@@ -68,3 +68,35 @@ def test_dry_run_writes_no_notebook(synthetic_campaign, tmp_path):
     result = prepare_run(params, site, tmp_path / "rundir", dry_run=True)
     assert not (tmp_path / "rundir").exists()
     assert any(NOTEBOOK_NAME in a for a in result.actions)
+
+
+def test_case_viewer_command_writes_replaces_and_keeps_current(tmp_path, capsys):
+    from ashen.cli.case_viewer import main
+
+    new, old, bare = tmp_path / "new", tmp_path / "old", tmp_path / "bare"
+    for folder in (new, old, bare):
+        folder.mkdir()
+    (old / NOTEBOOK_NAME).write_text(json.dumps({"cells": [], "nbformat": 4}))
+
+    assert main([str(new), str(old)]) == 0
+    assert json.loads((old / NOTEBOOK_NAME).read_text()) == case_notebook()
+    out = capsys.readouterr().out
+    assert f"written:  {new / NOTEBOOK_NAME}" in out and f"replaced: {old / NOTEBOOK_NAME}" in out
+
+    # A current notebook that has been run keeps its saved outputs.
+    ran = case_notebook()
+    ran["cells"][1]["outputs"] = [{"output_type": "stream", "name": "stdout", "text": ["x"]}]
+    (new / NOTEBOOK_NAME).write_text(json.dumps(ran))
+    assert main([str(new)]) == 0
+    assert json.loads((new / NOTEBOOK_NAME).read_text()) == ran
+    assert "current:" in capsys.readouterr().out
+
+    assert main(["--existing", str(bare)]) == 0 and not (bare / NOTEBOOK_NAME).exists()
+    assert main([str(tmp_path / "missing")]) == 1
+
+
+def test_case_viewer_command_defaults_to_this_folder(tmp_path, monkeypatch):
+    from ashen.cli.case_viewer import main
+
+    monkeypatch.chdir(tmp_path)
+    assert main([]) == 0 and (tmp_path / NOTEBOOK_NAME).is_file()

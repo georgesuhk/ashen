@@ -713,3 +713,18 @@ def test_tuner_gather_button_brings_in_what_jorek_achieved(run_dir, monkeypatch)
     gather.click()
 
     assert drawn[-1] is not None and drawn[-1].q0 == pytest.approx(1.0 + 2.5 * 0.01, abs=1e-6)
+
+
+def test_case_viewer_draws_every_section_and_survives_a_broken_one(run_dir, monkeypatch):
+    pytest.importorskip("ipywidgets")
+    page = viewer.case_viewer(run_dir)
+    headings = [c.value for c in page.children if getattr(c, "value", "").startswith("<h3>")]
+    assert len(headings) == len(viewer._SECTIONS) == (len(page.children) - 1) // 2
+
+    def broken(run_dir, step):
+        raise RuntimeError("no such <file>")
+
+    monkeypatch.setattr(viewer, "_SECTIONS", [("Broken", "", broken), viewer._SECTIONS[1]])
+    page = viewer.case_viewer(run_dir)
+    assert "RuntimeError: no such &lt;file&gt;" in page.children[2].value
+    assert len(page.children) == 5

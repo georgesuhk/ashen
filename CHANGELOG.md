@@ -4,6 +4,23 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-08: the case notebook is one cell; `bin/case_viewer`
+
+- `case_viewer.ipynb` is now a single cell calling the new
+  `viewer.case_viewer(folder)`, which draws every view under its heading.
+  Views are listed in `_SECTIONS` in `viewer.py`: a view added there
+  shows up in every run folder's notebook, with no change to the file.
+- The cell drops any imported `ashen` modules before importing, so after
+  `git pull` you run the cell again: no kernel restart.
+- New command `python ~/ashen/bin/case_viewer [folders]` (default: the
+  current folder; `--existing */*/` for every folder that has a
+  notebook). Writes a missing notebook, replaces one with other cells
+  (its saved figures and edits are lost), leaves a current one alone.
+  Run it once for notebooks written before this change.
+- One view failing prints its error in place; the others still draw.
+- Tested with synthetic folders and by executing the generated notebook
+  on the demo campaign. Not tried in VS Code over Remote SSH.
+
 ## 2026-10-07: gather buttons in the viewer
 
 - **Run analyse --diag four** / **--diag profiles** above those views:

@@ -313,7 +313,7 @@ x_label  = "eta"
 
 Each run folder has a `case_viewer.ipynb` that shows that run: its current
 profile, boundaries, equilibrium and diagnostics. Open it in VS Code (over
-Remote SSH on the HPC, or locally) and run the cells. It needs `ipywidgets`,
+Remote SSH on the HPC, or locally) and run its cell. It needs `ipywidgets`,
 `matplotlib` and `h5py` in the notebook's Python:
 
 ```bash
@@ -324,23 +324,38 @@ pip install --user ipywidgets ipykernel h5py
 the run folder if the folder has none, before it reads the shotfile. So it
 is there even when `run_jorek` then refuses the shotfile (a q0 outside the
 reachable window, a missing field): the viewer is how that gets fixed.
-`--dry-run` writes nothing. It never overwrites one, so
-saved figures and edits survive `run_jorek` and the Regenerate button. For a
-folder prepared before this existed, run `run_jorek shotfile.py` there
-again, or:
+`--dry-run` writes nothing. `run_jorek` never overwrites one. To write or
+replace it yourself:
 
-```python
-from ashen.case_notebook import write_case_notebook
-write_case_notebook("path/to/run_folder")           # overwrite=True to replace
+```bash
+python ~/ashen/bin/case_viewer                  # the current folder
+python ~/ashen/bin/case_viewer qa2.1_g2.2/eta1e-3_adv0.1 qa3.3_g3.2/eta1e-3_adv0.1
+python ~/ashen/bin/case_viewer --existing */*/  # every folder that already has one
 ```
 
-The notebook shows the folder it sits in (`RUN = Path(".")`). Its first cell
-imports ashen; if the kernel cannot (a VS Code kernel does not always see
-the shell's `PYTHONPATH`), it falls back to the `src/` of the checkout that
-wrote it. That path is the one machine path in the notebook: after moving
-ashen, delete the notebook and let `run_jorek` write it again.
-`notebooks/case_viewer.ipynb` in the repository is the same notebook, kept
-for reference.
+It writes the notebook where there is none, and replaces one whose cells
+are not the current ones (`replaced:`; saved figures and edits in it are
+lost). A notebook that already has the current cells is left as it is, with
+its saved figures (`current:`). `--existing` skips folders without a
+notebook, so a wide glob does not put one in every directory.
+
+**Updating the viewer.** The notebook is one cell: it drops any ashen
+already imported, imports it again and calls `viewer.case_viewer`, which
+draws every view. So after updating ashen (`git pull`), run the cell again:
+no kernel restart, and nothing to do to the notebook file. A view added to
+`case_viewer` (the `_SECTIONS` list in `viewer.py`) appears in every run
+folder the same way. Notebooks written before 2026-10-08 call each view in
+its own cell; they still work but do not show new views, so replace them
+once with `bin/case_viewer`.
+
+The notebook shows the folder it sits in. Its cell imports ashen; if the
+kernel cannot (a VS Code kernel does not always see the shell's
+`PYTHONPATH`), it falls back to the `src/` of the checkout that wrote it.
+That path is the one machine path in the notebook: after moving ashen, run
+`bin/case_viewer` from the new place. `notebooks/case_viewer.ipynb` in the
+repository is the same notebook, kept for reference. The single views
+(`viewer.profile_tuner(".")`, `viewer.four_view(".")`, ...) can still be
+called on their own from any notebook.
 
 Everything is drawn from files already in the folder. JOREK's tools run
 only when you press one of the gather buttons:
