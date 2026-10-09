@@ -14,7 +14,7 @@ from ashen.diagnostics.re_current import CurrentDensity, CurrentTotals, RatioMap
 from ashen.plotting import DEFAULT_DPI, style
 
 __all__ = [
-    "COLORS", "RATIO_RANGE", "draw_current_density", "draw_current_ratio_map",
+    "COLORS", "RATIO_RANGE", "draw_current_density", "draw_current_ratio_map", "draw_li",
     "draw_current_totals", "plot_current_ratio_map", "plot_re_current", "ratio_map_figure", "re_current_figure",
 ]
 
@@ -153,19 +153,54 @@ def draw_current_ratio_map(
     return pcm
 
 
-def ratio_map_figure(fig, ratio_map: RatioMap, time=None, *, real_psi_edge: float = 1.0):
+def draw_li(ax, li, x) -> None:
+    """l_i against the map's x axis: JOREK's li3 and, where there are
+    q-profile caches, the plasma's own (diagnostics.equilibrium.LiSeries)."""
+    drawn = False
+    if np.isfinite(li.li_plasma).any():
+        ax.plot(x, li.li_plasma, color="#2a78d6", marker="o", markersize=3,
+                label=r"$l_i$, plasma only (from q, cylinder definition)")
+        drawn = True
+    if np.isfinite(li.li3).any():
+        ax.plot(x, li.li3, color="#52514e", marker="o", markersize=3,
+                label=r"$l_i(3)$, JOREK zeroD (whole domain)")
+        drawn = True
+    if drawn:
+        ax.legend(frameon=False, fontsize=8)
+    else:
+        ax.text(0.5, 0.5, "no l_i: no zeroD cache for these steps", ha="center",
+                va="center", transform=ax.transAxes, fontsize=8)
+    ax.set_ylabel(r"$l_i$")
+    ax.grid(True, linestyle=":", alpha=0.4)
+
+
+def ratio_map_figure(
+    fig, ratio_map: RatioMap, time=None, *, real_psi_edge: float = 1.0, li=None,
+):
     """The ratio map with its colour bar on ``fig``. ``time`` (seconds, one
-    per step) is the x axis when every step has one, else the step index."""
-    ax = fig.subplots()
+    per step) is the x axis when every step has one, else the step index.
+    ``li`` (an equilibrium.LiSeries for the map's steps) adds l_i against
+    the same axis in a panel underneath."""
     if len(ratio_map.steps) < 2:
+        ax = fig.subplots()
         ax.text(0.5, 0.5, "the ratio map needs currdens / recurrdens profiles at two steps "
                 "or more\n(analyse --diag re_current)", ha="center", transform=ax.transAxes)
         return fig
     by_time = time is not None and bool(np.isfinite(np.asarray(time, dtype=float)).all())
     x = np.asarray(time) * 1e3 if by_time else np.asarray(ratio_map.steps, dtype=float)
-    pcm = draw_current_ratio_map(ax, ratio_map, x, xlabel="t [ms]" if by_time else "Time step",
+    xlabel = "t [ms]" if by_time else "Time step"
+    if li is None:
+        ax, axes = fig.subplots(), None
+    else:
+        ax, ax_li = axes = fig.subplots(2, 1, sharex=True, height_ratios=[3, 1])
+    pcm = draw_current_ratio_map(ax, ratio_map, x, xlabel="" if axes is not None else xlabel,
                                  real_psi_edge=real_psi_edge)
-    bar = fig.colorbar(pcm, ax=ax, extend="both")
+    if axes is not None:
+        draw_li(ax_li, li, x)
+        ax_li.set_xlabel(xlabel)
+    # on both panels, so the colour bar takes the same width from each and
+    # their time axes stay lined up
+    bar = fig.colorbar(pcm, ax=ax if axes is None else list(axes), extend="both")
     bar.set_label(r"$|j_\mathrm{thermal}\,/\,j_\mathrm{RE}|$   "
                   "(red: more runaway, green: more thermal)")
     return fig
@@ -177,7 +212,8 @@ def plot_current_ratio_map(
     *,
     time=None,
     real_psi_edge: float = 1.0,
-    figsize: tuple[float, float] = (8, 5),
+    li=None,
+    figsize: tuple[float, float] | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save the ratio map."""
@@ -185,10 +221,11 @@ def plot_current_ratio_map(
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if figsize is None:
+        figsize = (8, 5) if li is None else (8, 6.4)
     with style():
-        fig = plt.figure(figsize=figsize)
-        ratio_map_figure(fig, ratio_map, time, real_psi_edge=real_psi_edge)
-        fig.tight_layout()
+        fig = plt.figure(figsize=figsize, layout="constrained")
+        ratio_map_figure(fig, ratio_map, time, real_psi_edge=real_psi_edge, li=li)
         fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
     return out_path

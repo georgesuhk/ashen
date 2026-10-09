@@ -228,7 +228,57 @@ def test_viewer_shows_the_ratio_map_under_the_profiles(tmp_path):
     from ashen import viewer
 
     run, _ = _folder(tmp_path)
-    assert len(viewer.re_current_ratio_figure(run).axes) == 2          # map and colour bar
+    assert len(viewer.re_current_ratio_figure(run).axes) == 3          # map, l_i, colour bar
     _, _, holder = viewer.re_current_view(run).children
     assert len(holder.children[0].children) == 3
     assert bytes(holder.children[0].children[2].children[0].value[:4]) == b"\x89PNG"
+
+
+# --- l_i under the ratio map --------------------------------------------------------
+
+
+def test_li_series_reads_li3_and_the_plasma_s_own_where_it_can(tmp_path):
+    from ashen.diagnostics.equilibrium import achieved_q_li, li_series
+
+    run = tmp_path / "run"
+    (run / "postproc").mkdir(parents=True)
+    paths = RunPaths(run, pad_width=6)
+    psi_n = np.linspace(0.01, 0.99, 50)
+    for step, li3 in ((0, 1.5), (100, 1.2)):
+        paths.zero_d(step).write_text(f"psi_axis psi_bnd R_axis li3\n-1.0 0.0 1.5 {li3}\n")
+    lines = ["# Psi_n q", "# time step #000000"] + [f"{p} {1 + 2.5 * p}" for p in psi_n]
+    paths.qprofile(0).write_text("\n".join(lines) + "\n")       # step 100 has no q-profile
+
+    li = li_series(paths, [0, 100, 200], f0=3.0)
+    np.testing.assert_allclose(li.li3[:2], [1.5, 1.2])
+    assert np.isnan(li.li3[2])                                  # no zeroD
+    assert li.li_plasma[0] == pytest.approx(achieved_q_li(paths, 0, f0=3.0).li)
+    assert np.isnan(li.li_plasma[1:]).all()
+    assert np.isnan(li_series(paths, [0], f0=None).li_plasma).all()   # no F0: li3 only
+
+
+def test_ratio_map_figure_puts_li_under_the_map_on_the_same_time_axis(tmp_path):
+    from matplotlib.figure import Figure
+
+    from ashen.diagnostics.equilibrium import LiSeries
+    from ashen.plotting.re_current import plot_current_ratio_map, ratio_map_figure
+
+    _, paths = _folder(tmp_path)
+    ratio_map = rc.current_ratio_map(rc.current_density_series(paths, STEPS))
+    li = LiSeries(STEPS, np.array([1.5, 1.4, 1.2]), np.array([1.3, np.nan, 1.1]))
+    fig = ratio_map_figure(Figure(layout="constrained"), ratio_map, [0.0, 1e-4, 2e-4], li=li)
+    ax_map, ax_li, _bar = fig.axes
+    assert ax_li.get_xlabel() == "t [ms]" and ax_map.get_xlabel() == ""
+    assert ax_map.get_shared_x_axes().joined(ax_map, ax_li)
+    by_label = {line.get_label(): line for line in ax_li.get_lines()}
+    assert len(by_label) == 2
+    li3 = next(l for name, l in by_label.items() if "zeroD" in name)
+    np.testing.assert_allclose(li3.get_ydata(), [1.5, 1.4, 1.2])
+    np.testing.assert_allclose(li3.get_xdata(), [0.0, 0.1, 0.2])
+
+    only_li3 = LiSeries(STEPS, np.array([1.5, 1.4, 1.2]), np.full(3, np.nan))
+    fig = ratio_map_figure(Figure(layout="constrained"), ratio_map, None, li=only_li3)
+    assert len(fig.axes[1].get_lines()) == 1 and fig.axes[1].get_xlabel() == "Time step"
+
+    assert plot_current_ratio_map(ratio_map, tmp_path / "f" / "r.png", li=li).is_file()
+    assert len(ratio_map_figure(Figure(), ratio_map).axes) == 2      # without li: as before
