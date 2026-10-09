@@ -137,6 +137,29 @@ T_file   = "T.dat"      # two columns: psi_N of the plasma (0 to 1), Te + Ti [eV
   runs that is small, but the equilibrium's current is then not exactly the
   profile asked for.
 
+Or a profile from four numbers, when all that is wanted is a plausible
+shape:
+
+```python
+T_method = "parametric"
+T_core   = 20.0     # Te + Ti on the axis [eV]
+T_edge   = 2.0      # at the plasma edge, and in the vacuum beyond [eV]
+T_alpha  = 1.0      # optional: larger = flatter core
+T_beta   = 2.0      # optional: how it meets the edge; >= 2 arrives with no gradient
+```
+
+    T(psi_N) = T_edge + (T_core - T_edge) * (1 - psi_N**T_alpha)**T_beta
+
+- psi_N is the plasma's own: 0 on the axis, 1 at the plasma edge.
+- The defaults are the parabola `(1 - psi_N)**2`. `T_alpha = 4` or more
+  keeps the core flat and puts the fall near the edge.
+- With `rho_method = "const"` the pressure has the same shape:
+  `p = n (Te + Ti)`.
+- `T_core = T_edge` is `T_method = "const"`.
+- The case viewer's "Temperature profile" section sets these four numbers
+  with the profile and its pressure drawn as you go, over the folder's
+  present `T_prof.dat`, and saves them to the shotfile.
+
 **Extension.** With `extend_bnd` the plasma edge sits at `1/extend_ratio` of
 the domain's psi_N (written to `real_psi_edge.dat`), and `FFprime` is 0
 beyond it. A `j` that is not 0 at `x = 1` drops to 0 within one grid interval
@@ -457,6 +480,7 @@ shell or a job as before and just re-run the cell afterwards.
 | `viewer.profile_tuner(RUN, step=0)` | sliders for q0, l_i, q_edge; j, q and FF' of that profile; JOREK's q-profile and achieved q0, l_i, q_edge beside them | `shotfile.py`, the plasma boundary, `F0`; the step's q-profile and zeroD caches |
 | `viewer.boundary_view(RUN)` | plasma boundary, domain boundary, JOREK's grid boundary, STARWALL's wall | `original_bnd.dat`, `in_bnd`, `boundary.txt`, `input_starwall` |
 | `viewer.equilibrium_view(RUN)` | psi_N contours of a restart with the plasma edge marked, q, and j_phi on the nodes | `jorek<step>.h5`, the q-profile cache |
+| `viewer.temperature_tuner(RUN)` | boxes for T_core and T_edge [eV] and sliders for T_alpha and T_beta of `T_method = "parametric"`; the profile and its pressure at `rho_const`, over the folder's `T_prof.dat` in grey. Buttons: Save to shotfile, Regenerate inputs, Reset to shotfile | `shotfile.py`, `T_prof.dat` |
 | `viewer.four_view(RUN)` | for Psi (`variable="T"` for another): mode amplitudes against step and their radial structure at one step (linear unless "log radial structure" is ticked). The modes are chosen from the shotfile's qa (`current_qa` for a `"q_li"` profile, else `qa`): for n = 1 and 2, m up to one past the highest rational surface in the plasma, so qa = 2.8 gives 1/1 2/1 3/1 and 3/2 4/2 5/2 6/2. A checkbox per mode turns it off. **amplitude** switches the left panel between each mode's maximum over the radius and its value on its own q = m/n surface (needs the steps' q-profile caches, which `analyse --diag four` gathers; dots then mark the surfaces on the right). Controls update the figure in place. With `ipympl` installed (`pip install --user ipympl`, restart the kernel) the figure has a toolbar to zoom and pan; a zoomed range is kept across steps until **Reset view**. | the `four` caches, `shotfile.py` |
 | `viewer.profiles_view(RUN)` | a cached radial profile at every gathered step | the `profiles` caches |
 

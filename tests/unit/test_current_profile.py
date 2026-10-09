@@ -177,3 +177,14 @@ def test_profile_from_ffprime_needs_current_on_axis():
     g = cur.PlasmaGeometry(R0=1.4, a=0.36, kappa=1.1, B0=2.6)
     with pytest.raises(ValueError, match="no current on axis"):
         cur.profile_from_ffprime([0.0, 1.0], [0.0, 0.0], g)
+
+
+def test_parametric_temperature():
+    psi_n = np.linspace(0, 1.2, 25)
+    t = cur.parametric_temperature(psi_n, 500.0, 20.0)
+    assert t[0] == 500.0 and np.all(t[psi_n >= 1.0] == 20.0)
+    np.testing.assert_allclose(t[psi_n <= 1], 20.0 + 480.0 * (1 - psi_n[psi_n <= 1]) ** 2)
+    assert abs(t[20] - t[19]) < 0.003 * 480.0             # meets the edge with no gradient
+    flat = cur.parametric_temperature(psi_n, 500.0, 20.0, alpha=8.0, beta=2.0)
+    assert flat[10] > 0.99 * 500.0 > t[10]                # psi_N = 0.5: still core
+    np.testing.assert_allclose(cur.parametric_temperature(psi_n, 50.0, 50.0), 50.0)

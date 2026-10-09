@@ -56,6 +56,7 @@ __all__ = [
     "profile_from_ffprime",
     "psi_n_from_rho",
     "resample_monotone",
+    "parametric_temperature",
     "temperature_to_jorek",
 ]
 
@@ -161,6 +162,24 @@ def extend_psi_n(psi_n, extend_ratio: float, extend_reso: int) -> tuple[np.ndarr
     vacuum = np.linspace(real_psi_edge, 1.0, extend_reso + 1)[1:]
     grid = np.concatenate([np.asarray(psi_n, dtype=float) * real_psi_edge, vacuum])
     return grid, vacuum, real_psi_edge
+
+
+def parametric_temperature(
+    psi_n, core: float, edge: float, alpha: float = 1.0, beta: float = 2.0
+) -> np.ndarray:
+    """A temperature profile from four numbers [eV]:
+
+        T(psi_N) = T_edge + (T_core - T_edge) (1 - psi_N^alpha)^beta
+
+    for psi_N from 0 (axis) to 1 (plasma edge); T_edge beyond. ``alpha``
+    flattens the core as it grows, ``beta`` sets how the profile meets the
+    edge: with beta >= 2 it arrives with zero gradient, so there is no kink
+    where the plasma meets the vacuum of an extended boundary. The default
+    (1, 2) is the (1 - psi_N)^2 parabola. A guess function, not a fit: with
+    a fixed density it is the pressure profile's shape too.
+    """
+    x = np.clip(np.asarray(psi_n, dtype=float), 0.0, 1.0)
+    return edge + (core - edge) * (1.0 - x**alpha) ** beta
 
 
 def temperature_to_jorek(T_eV, central_density: float) -> np.ndarray:

@@ -139,6 +139,15 @@ class ShotParams:
     #: T_method="file": a two-column file in the run folder, psi_N of the
     #: plasma (0 at the axis, 1 at its edge) and Te + Ti [eV].
     T_file: str | None = None
+    #: T_method="parametric": Te + Ti [eV] on the axis and at the plasma
+    #: edge, and the two shape numbers of
+    #: T = T_edge + (T_core - T_edge) (1 - psi_N^T_alpha)^T_beta
+    #: (current_profile.parametric_temperature). T_edge also fills the
+    #: vacuum of an extended boundary.
+    T_core: float | None = None
+    T_edge: float | None = None
+    T_alpha: float = 1.0
+    T_beta: float = 2.0
 
     #: bnd_method="template": bnd_file names a plasma boundary shared by the
     #: campaign, template/symlink/boundary/<bnd_file>. The run folder gets a
@@ -204,6 +213,19 @@ class ShotParams:
             raise ShotfileError("T_const is required when T_method='const'")
         if self.T_method == "file" and self.T_file is None:
             raise ShotfileError("T_file is required when T_method='file'")
+        if self.T_method == "parametric":
+            if self.T_core is None or self.T_edge is None:
+                raise ShotfileError(
+                    "T_core and T_edge (eV) are required when T_method='parametric'"
+                )
+            if self.T_core <= 0 or self.T_edge <= 0:
+                raise ShotfileError(
+                    f"T_core and T_edge must be positive (eV), got {self.T_core} and {self.T_edge}"
+                )
+            if self.T_alpha <= 0 or self.T_beta <= 0:
+                raise ShotfileError(
+                    f"T_alpha and T_beta must be positive, got {self.T_alpha} and {self.T_beta}"
+                )
 
         if self.with_refluid:
             missing = [f for f in _RE_FIELDS if getattr(self, f) is None]

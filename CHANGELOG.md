@@ -4,6 +4,43 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-09: `T_method = "parametric"`: a temperature profile from four numbers
+
+- In the shotfile:
+
+  ```python
+  T_method = "parametric"
+  T_core   = 20.0     # Te + Ti on the axis [eV]
+  T_edge   = 2.0      # at the plasma edge, and in the vacuum beyond [eV]
+  T_alpha  = 1.0      # optional: larger = flatter core
+  T_beta   = 2.0      # optional: how it meets the edge; >= 2 arrives with no gradient
+  ```
+
+  T(psi_N) = T_edge + (T_core - T_edge) (1 - psi_N^T_alpha)^T_beta, with
+  psi_N the plasma's own (0 on the axis, 1 at the plasma edge).
+- The defaults give the parabola (1 - psi_N)^2. `T_alpha = 4` or more
+  gives a flat core with the fall near the edge.
+- With the density held constant this is the pressure profile's shape
+  too: p = n (Te + Ti).
+- Converted to JOREK units with `rho_const`, as `"const"` and `"file"`
+  are. `T_core = T_edge` is the same as `T_method = "const"`.
+- It is a guess function, not a fit to anything.
+  (`current_profile.parametric_temperature`)
+- **In the case viewer**: a "Temperature profile" section under the
+  current-profile one (`viewer.temperature_tuner`). Boxes for `T_core`
+  and `T_edge` in eV, sliders for `T_alpha` and `T_beta`; the profile and
+  the pressure it gives at `rho_const` are drawn as you change them, over
+  the folder's own `T_prof.dat` in grey (turned back into eV, whatever
+  made it). **Save to shotfile** writes the four values and
+  `T_method = "parametric"`; **Reset to shotfile** and **Regenerate
+  inputs** work as in the current-profile section; a yellow band says
+  when sliders, shotfile and `T_prof.dat` are out of step.
+- For a folder with no saved values the controls start on the axis and
+  edge temperatures of its `T_prof.dat`.
+- Tested through `prepare_run` on the synthetic campaign, and the grey
+  line drawn from the local qa3.3_g3.2 run's CASTOR profile (623 eV on
+  axis; close to the default parabola). No JOREK run.
+
 ## 2026-10-09: `re_current` ratio map: l_i against time underneath
 
 - The ratio map (`profiles/re_current_ratio.png`, and in the viewer) has
