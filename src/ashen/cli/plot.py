@@ -1186,6 +1186,7 @@ def _plot_re_current(
     densities against psi_N at the last gathered step
     (diagnostics.re_current; ``profiles/re_current.png``)."""
     from ashen.diagnostics import re_current as rc
+    from ashen.diagnostics.equilibrium import li_series
     from ashen.plotting.re_current import plot_current_ratio_map, plot_re_current
 
     densities = rc.current_density_series(paths, steps)
@@ -1213,10 +1214,15 @@ def _plot_re_current(
         # the totals are on `steps`; the map only has the steps with profiles
         time_by_step = dict(zip(totals.steps, totals.time))
         ratio_map = rc.current_ratio_map(densities)
+        try:
+            f0 = toroidal_f0(case, paths)
+        except (NamelistError, OSError, ValueError):
+            f0 = None                    # then only JOREK's own li3 is drawn
         out = plot_current_ratio_map(
             ratio_map, paths.profile_figures_dir / "re_current_ratio.png",
             time=[time_by_step[step] for step in ratio_map.steps],
-            real_psi_edge=real_psi_edge, **_dpi_kwargs(dpi),
+            real_psi_edge=real_psi_edge, li=li_series(paths, ratio_map.steps, f0=f0),
+            **_dpi_kwargs(dpi),
         )
         print(f"  saved {out}")
     elif densities:

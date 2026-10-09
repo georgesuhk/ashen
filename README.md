@@ -340,6 +340,9 @@ last step's three totals.
   current runs against the runaway current. Grey is where there is no
   current to take a ratio of (beyond the plasma of an extended boundary),
   or where a step's profile does not reach.
+  Underneath, on the same time axis: `l_i(3)` from JOREK's zeroD (whole
+  domain, vacuum included with an extended boundary) and, for steps with
+  a q-profile cache, the l_i of the plasma only (cylinder definition).
 - **Steps** are the case's `steps`, or its own:
 
   ```toml

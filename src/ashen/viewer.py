@@ -30,7 +30,7 @@ import numpy as np
 from ashen import current_profile as cur
 from ashen.castor_io import load_two_col_data
 from ashen.diagnostics import four_cache as fc
-from ashen.diagnostics.equilibrium import AchievedQLi, achieved_q_li
+from ashen.diagnostics.equilibrium import AchievedQLi, achieved_q_li, li_series
 from ashen.diagnostics.four_modes import max_amplitude_series, radial_amplitude_series
 from ashen.diagnostics.profiles import read_profile_series
 from ashen.diagnostics.qprofile import find_rational_surfaces, read_qprofile
@@ -965,7 +965,8 @@ def re_current_figure(run_dir: Path | str, step: int | None = None):
 
 def re_current_ratio_figure(run_dir: Path | str):
     """thermal / runaway current density against time and psi_N, as a
-    colour map over every gathered step (plotting.re_current)."""
+    colour map over every gathered step, with l_i against time underneath
+    (plotting.re_current)."""
     from matplotlib.figure import Figure
 
     from ashen.diagnostics import re_current as rc
@@ -975,8 +976,13 @@ def re_current_ratio_figure(run_dir: Path | str):
     steps = re_current_steps(run_dir)
     ratio_map = rc.current_ratio_map(rc.current_density_series(paths, steps))
     totals = rc.current_totals(paths, ratio_map.steps, None)
-    fig = Figure(figsize=(9, 4.8), layout="constrained")
-    ratio_map_figure(fig, ratio_map, totals.time, real_psi_edge=_real_psi_edge(paths))
+    try:
+        f0 = _f0(Path(run_dir))
+    except Exception:
+        f0 = None                        # then only JOREK's own li3 is drawn
+    fig = Figure(figsize=(9, 6.2), layout="constrained")
+    ratio_map_figure(fig, ratio_map, totals.time, real_psi_edge=_real_psi_edge(paths),
+                     li=li_series(paths, ratio_map.steps, f0=f0))
     return fig
 
 

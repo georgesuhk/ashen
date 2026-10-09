@@ -4,6 +4,23 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-09: `re_current` ratio map: l_i against time underneath
+
+- The ratio map (`profiles/re_current_ratio.png`, and in the viewer) has
+  a panel below it, on the same time axis, with the internal inductance:
+  - `l_i(3)`, JOREK's own zeroD `li3`. With an extended boundary it is
+    taken over the whole domain, vacuum included.
+  - `l_i` of the plasma only, to the real plasma edge, from each step's
+    q-profile in the cylinder definition (as the tuner's "JOREK:" line).
+    Drawn for the steps that have a q-profile cache
+    (`analyse --diag four` gathers them) when F0 is in the namelist.
+- The two differ by definition and by region; neither is rescaled. On
+  the local qa3.3_g3.2/eta1e-3_adv0.1 run: li3 1.64 falling to 1.60,
+  plasma l_i 1.39 falling to 1.36, both at about 0.025 ms.
+- Nothing extra is gathered: it reads the zeroD caches `re_current`
+  already makes, and q-profiles if they are there.
+  (`diagnostics.equilibrium.li_series`, `plotting.re_current.draw_li`)
+
 ## 2026-10-09: fixed: two profile variables of one step overwrote each other
 
 - Seen on the HPC with `analyse --diag re_current`: warnings such as

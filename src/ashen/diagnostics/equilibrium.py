@@ -18,7 +18,7 @@ from ashen.diagnostics.qprofile import read_qprofile
 from ashen.paths import RunPaths, read_float
 from ashen.postproc import read_zeroD, zero_d_is_usable
 
-__all__ = ["AchievedQLi", "achieved_q_li", "cylinder_li"]
+__all__ = ["AchievedQLi", "LiSeries", "achieved_q_li", "cylinder_li", "li_series"]
 
 
 @dataclass(frozen=True)
@@ -80,3 +80,37 @@ def achieved_q_li(paths: RunPaths, step: int = 0, *, f0: float) -> AchievedQLi |
         q0=float(q[0]), q_edge=float(np.interp(edge, psi_n, q)), li=cylinder_li(r, q, a),
         a=a, real_psi_edge=float(real_psi_edge), psi_n=psi_n, q=q, r=r, zero_d=zero_d,
     )
+
+
+@dataclass(frozen=True)
+class LiSeries:
+    """Internal inductance at each step, two ways."""
+
+    steps: list[int]
+    #: JOREK's zeroD ``li3``: over everything inside its last flux surface,
+    #: which with an extended boundary includes the vacuum region. nan
+    #: where the step has no usable zeroD cache.
+    li3: np.ndarray
+    #: achieved_q_li's l_i: the plasma only, to the real plasma edge, in the
+    #: cylinder definition (cylinder_li). nan where the step has no
+    #: q-profile cache, or ``f0`` was not given.
+    li_plasma: np.ndarray
+
+
+def li_series(paths: RunPaths, steps: list[int], *, f0: float | None = None) -> LiSeries:
+    """l_i against step from the zeroD and q-profile caches. Gathers nothing."""
+    li3 = np.full(len(steps), np.nan)
+    li_plasma = np.full(len(steps), np.nan)
+    for i, step in enumerate(steps):
+        try:
+            li3[i] = read_zeroD(paths.zero_d(step)).get("li3", np.nan)
+        except (OSError, ValueError):
+            pass
+        if f0 is not None:
+            try:
+                achieved = achieved_q_li(paths, step, f0=f0)
+            except (OSError, ValueError):
+                achieved = None
+            if achieved is not None:
+                li_plasma[i] = achieved.li
+    return LiSeries(list(steps), li3, li_plasma)
