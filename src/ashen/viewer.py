@@ -37,7 +37,7 @@ from ashen.diagnostics.qprofile import find_rational_surfaces, read_qprofile
 from ashen.namelist import NamelistError, read_boundary_points, read_field
 from ashen.padding import PaddingError, restart_steps
 from ashen.paths import RunPaths, read_float
-from ashen.physics import MU_0
+from ashen.physics import ELEMENTARY_CHARGE, MU_0
 from ashen.shotfile import ShotfileError, load_shotfile, set_shotfile_values
 
 __all__ = [
@@ -69,6 +69,10 @@ __all__ = [
     "run_analyse",
     "shotfile_qa",
     "starwall_wall",
+    "temperature_figure",
+    "temperature_inputs",
+    "temperature_status",
+    "temperature_tuner",
     "tuner_figure",
     "tuner_status",
     "FourData",
@@ -344,6 +348,63 @@ def tuner_status(run_dir: Path | str, q0: float, li: float, q_edge: float) -> li
                     "Regenerate inputs before running JOREK."
                 )
     return warnings
+
+
+def temperature_inputs(run_dir: Path | str, rho_const: float) -> tuple[np.ndarray, np.ndarray] | None:
+    """(the plasma's psi_N, Te + Ti [eV]) of the temperature profile the run
+    folder holds now, ``T_prof.dat``, whatever made it. psi_N runs past 1
+    into the vacuum of an extended boundary. None if there is no such file.
+
+    JOREK's T is turned back into eV with n_0 = ``rho_const``, the density
+    the shotfile gives; a file made for another density reads wrong by
+    that factor.
+    """
+    run_dir = Path(run_dir)
+    path = run_dir / "T_prof.dat"
+    if not path.is_file():
+        return None
+    try:
+        data = np.loadtxt(path)
+        psi_n = data[:, 0] / _real_psi_edge(_paths(run_dir))
+        return psi_n, data[:, 1] / (ELEMENTARY_CHARGE * MU_0 * rho_const)
+    except (ValueError, IndexError, OSError):
+        return None
+
+
+def temperature_status(
+    run_dir: Path | str, core: float, edge: float, alpha: float, beta: float
+) -> list[str]:
+    """What is out of step between the temperature sliders, the shotfile and
+    the folder's ``T_prof.dat``. Empty when all three agree."""
+    run_dir = Path(run_dir)
+    try:
+        params = load_shotfile(run_dir / "shotfile.py")
+    except (ShotfileError, OSError) as exc:
+        return [f"shotfile.py could not be read: {exc}"]
+    saved = (params.T_core, params.T_edge, params.T_alpha, params.T_beta)
+    if params.T_method != "parametric":
+        return [
+            f"shotfile.py has T_method = {params.T_method!r}, so these values are not what "
+            "the run uses. Save to shotfile switches it to \"parametric\"."
+        ]
+    notes = []
+    if not _same((core, edge, alpha, beta), saved):
+        notes.append(
+            f"Sliders differ from shotfile.py (T_core = {saved[0]:g}, T_edge = {saved[1]:g}, "
+            f"T_alpha = {saved[2]:g}, T_beta = {saved[3]:g}): not saved."
+        )
+    have = temperature_inputs(run_dir, params.rho_const)
+    if have is None:
+        notes.append("There is no T_prof.dat from this shotfile yet. Regenerate inputs.")
+    else:
+        psi_n, t_eV = have
+        wanted = cur.parametric_temperature(psi_n, *saved)
+        if not np.allclose(t_eV, wanted, rtol=2e-2, atol=0.0):
+            notes.append(
+                "T_prof.dat is out of date: it was not made from the temperature "
+                "shotfile.py now has. Regenerate inputs before running JOREK."
+            )
+    return notes
 
 
 # --- gathering what a view needs -------------------------------------------------
@@ -986,6 +1047,37 @@ def re_current_ratio_figure(run_dir: Path | str):
     return fig
 
 
+def temperature_figure(
+    core: float, edge: float, alpha: float, beta: float, rho_const: float, *,
+    inputs: tuple[np.ndarray, np.ndarray] | None = None, inputs_label: str = "T_prof.dat",
+):
+    """The parametric temperature profile and, with the density held at
+    ``rho_const``, the pressure it makes. ``inputs`` (temperature_inputs)
+    draws the folder's own profile underneath in grey."""
+    from matplotlib.figure import Figure
+
+    far = 1.0 if inputs is None else max(1.0, float(inputs[0].max()))
+    psi_n = np.linspace(0.0, far, 300)
+    t_eV = cur.parametric_temperature(psi_n, core, edge, alpha, beta)
+    to_pa = rho_const * ELEMENTARY_CHARGE              # p = n (Te + Ti)
+
+    fig = Figure(figsize=(12, 4.2), layout="constrained")
+    ax_t, ax_p = fig.subplots(1, 2)
+    for ax, scale, ylabel, title in (
+        (ax_t, 1.0, r"$T_e + T_i$ [eV]", "Temperature"),
+        (ax_p, to_pa, "p [Pa]", f"Pressure at n = {rho_const:.3g} m$^{{-3}}$"),
+    ):
+        if inputs is not None:
+            ax.plot(inputs[0], inputs[1] * scale, color=_GREY, lw=3, alpha=0.6, label=inputs_label)
+        ax.plot(psi_n, t_eV * scale, color=_BLUE, lw=2, label="these values")
+        if far > 1.0:
+            ax.axvline(1.0, color=_GREY, lw=1, ls="--")
+        ax.set_ylim(bottom=0.0)
+        _style(ax, r"$\psi_N$ (plasma)", ylabel, title)
+        ax.legend(frameon=False, labelcolor=_INK, fontsize=8)
+    return fig
+
+
 # --- notebook wrappers ----------------------------------------------------------
 
 
@@ -1491,6 +1583,15 @@ _SECTIONS = [
         "profile is the one in this folder's <code>ffprime_prof.dat</code>.",
         lambda run_dir, step: profile_tuner(run_dir, step=step),
     ),
+    (
+        "Temperature profile from T_core, T_edge, T_alpha, T_beta",
+        "T = T_edge + (T_core &minus; T_edge)&middot;(1 &minus; &psi;<sub>N</sub><sup>T_alpha</sup>)"
+        "<sup>T_beta</sup>, in eV (Te + Ti). <b>Save to shotfile</b> writes the four values and "
+        "<code>T_method = \"parametric\"</code>; <b>Regenerate inputs</b> then rewrites this "
+        "folder's input files. The grey profile is the one in this folder's "
+        "<code>T_prof.dat</code>.",
+        lambda run_dir, step: temperature_tuner(run_dir),
+    ),
     ("Boundaries", "", lambda run_dir, step: boundary_view(run_dir)),
     (
         "Equilibrium",
@@ -1554,3 +1655,132 @@ def re_current_view(run_dir: Path | str = "."):
     return _gathering(
         w, "Run analyse --diag re_current", lambda: run_analyse(run_dir, ["re_current"]), build
     )
+
+
+def temperature_tuner(run_dir: Path | str = ".", *, site=None):
+    """Controls for the four numbers of ``T_method = "parametric"``
+    (current_profile.parametric_temperature): boxes for T_core and T_edge
+    [eV], sliders for T_alpha and T_beta.
+
+    **Save to shotfile** writes them and ``T_method = "parametric"`` into
+    ``shotfile.py``. **Reset to shotfile** puts the sliders back.
+    **Regenerate inputs** prepares the run folder from the shotfile, as
+    ``run_jorek shotfile.py`` does, without submitting anything. A yellow
+    band says what is out of step (temperature_status). The folder's own
+    ``T_prof.dat`` is drawn in grey, whatever made it.
+    """
+    w = _widgets()
+    run_dir = Path(run_dir).resolve()
+    shotfile = run_dir / "shotfile.py"
+    params = load_shotfile(shotfile)
+    if site is None:
+        site = _find_site(run_dir)
+    rho_const = params.rho_const
+
+    # Without saved values the sliders start on the profile the folder has.
+    have = temperature_inputs(run_dir, rho_const)
+    if have is not None:
+        on_axis, at_edge = float(have[1][0]), float(np.interp(1.0, have[0], have[1]))
+    else:
+        on_axis = at_edge = params.T_const or 20.0
+    start = (params.T_core or on_axis, params.T_edge or at_edge, params.T_alpha, params.T_beta)
+
+    def eV(value, name):
+        # a box to type in, not a slider: temperatures of interest span
+        # decades, and a typed value is kept exactly as typed
+        return w.BoundedFloatText(value=value, min=1e-3, max=1e6, step=1.0,
+                                  description=f"{name} [eV]",
+                                  layout=w.Layout(width="260px"),
+                                  style={"description_width": "100px"})
+
+    core, edge = eV(start[0], "T_core"), eV(start[1], "T_edge")
+    alpha = _slider(w, start[2], min(0.5, start[2]), max(12.0, start[2]), 0.1, "T_alpha")
+    beta = _slider(w, start[3], min(0.5, start[3]), max(8.0, start[3]), 0.1, "T_beta")
+    sliders = (core, edge, alpha, beta)
+    save = w.Button(description="Save to shotfile", button_style="primary")
+    regenerate = w.Button(description="Regenerate inputs")
+    reset = w.Button(description="Reset to shotfile",
+                     tooltip="Put the sliders back to shotfile.py's values")
+    figure_out, log_out, status = _canvas(w), _Log(w), w.HTML()
+
+    def values():
+        # what would be written: a slider's own steps carry more digits than mean anything
+        return tuple(float(f"{slider.value:.4g}") for slider in sliders)
+
+    def refresh_status():
+        status.value = "".join(
+            '<div style="background:#fff3cd;border-left:4px solid #d98a1f;color:#52514e;'
+            f'padding:6px 10px;margin:3px 0">&#9888; {html.escape(note)}</div>'
+            for note in temperature_status(run_dir, *values())
+        )
+
+    def redraw(*_):
+        refresh_status()
+        try:
+            method = load_shotfile(shotfile).T_method
+        except ShotfileError:
+            method = params.T_method
+        _show(figure_out, lambda: temperature_figure(
+            *values(), rho_const, inputs=temperature_inputs(run_dir, rho_const),
+            inputs_label=f"T_prof.dat ({method})"))
+
+    def on_save(_):
+        with log_out:
+            t_core, t_edge, t_alpha, t_beta = values()
+            try:
+                set_shotfile_values(shotfile, {
+                    "T_method": "parametric", "T_core": t_core, "T_edge": t_edge,
+                    "T_alpha": t_alpha, "T_beta": t_beta,
+                })
+            except (ShotfileError, ValueError) as exc:
+                print(f"not saved: {exc}")
+                return
+            print(f"saved to {shotfile}: T_core = {t_core:g} eV, T_edge = {t_edge:g} eV, "
+                  f"T_alpha = {t_alpha:g}, T_beta = {t_beta:g}.")
+        refresh_status()
+
+    def on_regenerate(_):
+        with log_out:
+            if site is None:
+                print("no site.toml found from here; run `run_jorek shotfile.py` in the run folder")
+                return
+            try:
+                from ashen.runner import prepare_run
+
+                result = prepare_run(load_shotfile(shotfile), site, run_dir)
+            except Exception as exc:
+                print(f"not regenerated: {type(exc).__name__}: {exc}")
+                return
+            print(f"run folder prepared ({len(result.actions)} steps): T_prof.dat and every "
+                  "other input file rewritten from shotfile.py.\n"
+                  "Next, in the run folder:  run_jorek shotfile.py --run_eq")
+        redraw()
+
+    def on_reset(_):
+        with log_out:
+            try:
+                now = load_shotfile(shotfile)
+            except ShotfileError as exc:
+                print(f"not reset: {exc}")
+                return
+            saved = (now.T_core, now.T_edge, now.T_alpha, now.T_beta)
+            if None in saved:
+                print("not reset: shotfile.py has no T_core and T_edge yet")
+                return
+            for slider, value in zip(sliders, saved):
+                # a value outside the control's range would be clipped silently
+                slider.min, slider.max = min(slider.min, value), max(slider.max, value)
+                slider.value = value
+            print("sliders back to shotfile.py: " + ", ".join(
+                f"{name} = {value:g}" for name, value in
+                zip(("T_core", "T_edge", "T_alpha", "T_beta"), saved)))
+        refresh_status()
+
+    for slider in sliders:
+        slider.observe(redraw, names="value")
+    save.on_click(on_save)
+    regenerate.on_click(on_regenerate)
+    reset.on_click(on_reset)
+    redraw()
+    return w.VBox([w.VBox([w.HBox([core, edge]), alpha, beta]),
+                   w.HBox([save, regenerate, reset]), status, log_out.widget, figure_out])

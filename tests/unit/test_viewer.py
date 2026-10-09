@@ -955,3 +955,89 @@ def test_a_live_figure_says_why_the_mouse_did_nothing(run_dir):
     with pytest.raises(Exception):
         canvas._handle_message(canvas, dict(type="button_press"), [])   # a malformed event
     assert "could not handle" in problem.value and "ipympl" in problem.value
+
+
+# --- temperature tuner --------------------------------------------------------------
+
+
+def _temperature_run(synthetic_campaign, tmp_path):
+    site, template_dir, _ = synthetic_campaign
+    in_eq = template_dir / "copy" / "in_eq"
+    in_eq.write_text(in_eq.read_text().replace("&end", " F0 = 3.0\n&end"))
+    run = tmp_path / "newrun"
+    run.mkdir()
+    (run / "shotfile.py").write_text(SHOTFILE)
+    np.savetxt(run / "bnd.dat", _ellipse())
+    return site, run
+
+
+def _temperature_parts(box):
+    controls, buttons, status, log, canvas = box.children
+    boxes, alpha, beta = controls.children
+    core, edge = boxes.children
+    return (core, edge, alpha, beta), buttons.children, status, log, canvas
+
+
+def test_temperature_figure_draws_the_profile_and_its_pressure():
+    psi_n = np.linspace(0, 1.2, 30)
+    have = (psi_n, np.full(30, 100.0))
+    fig = viewer.temperature_figure(500.0, 20.0, 1.0, 2.0, 1e18, inputs=have)
+    ax_t, ax_p = fig.axes
+    model_t = next(l for l in ax_t.get_lines() if l.get_label() == "these values")
+    model_p = next(l for l in ax_p.get_lines() if l.get_label() == "these values")
+    assert model_t.get_ydata()[0] == 500.0 and model_t.get_ydata()[-1] == 20.0
+    np.testing.assert_allclose(model_p.get_ydata(), model_t.get_ydata() * 1e18 * 1.602176634e-19)
+    assert any(l.get_label() == "T_prof.dat" for l in ax_t.get_lines())
+    assert len(viewer.temperature_figure(50.0, 5.0, 1.0, 2.0, 1e18).axes[0].get_lines()) == 1
+
+
+def test_temperature_tuner_saves_regenerates_and_resets(
+    synthetic_campaign, tmp_path, symlinks_maybe_bypassed
+):
+    pytest.importorskip("ipywidgets")
+    from ashen.shotfile import load_shotfile
+
+    site, run = _temperature_run(synthetic_campaign, tmp_path)
+    box = viewer.temperature_tuner(run, site=site)
+    (core, edge, alpha, beta), (save, regenerate, reset), status, log, canvas = _temperature_parts(box)
+
+    # SHOTFILE has T_method = "const", T_const = 100: the controls start there
+    assert (core.value, edge.value, alpha.value, beta.value) == (100.0, 100.0, 1.0, 2.0)
+    assert "so these values are not what the run uses" in status.value
+
+    core.value, edge.value, alpha.value = 37.5, 2.5, 4.0
+    save.click()
+    saved = load_shotfile(run / "shotfile.py")
+    assert (saved.T_method, saved.T_core, saved.T_edge, saved.T_alpha, saved.T_beta) == (
+        "parametric", 37.5, 2.5, 4.0, 2.0)
+    assert "saved to" in log.value and "no T_prof.dat" in status.value
+
+    regenerate.click()
+    assert status.value == "", status.value                 # sliders, shotfile, file agree
+    psi_n, t_eV = viewer.temperature_inputs(run, saved.rho_const)
+    assert t_eV[0] == pytest.approx(37.5, rel=1e-6) and t_eV[-1] == pytest.approx(2.5, rel=1e-6)
+    assert psi_n[-1] > 1.0                                  # the vacuum of the extended boundary
+
+    core.value = 80.0
+    assert "not saved" in status.value
+    save.click()
+    assert "out of date" in status.value                    # T_prof.dat is the 37.5 eV one
+    core.value = 12.0
+    reset.click()
+    assert core.value == 80.0 and "sliders back" in log.value
+    assert bytes(canvas.children[0].value[:4]) == b"\x89PNG"
+
+
+def test_temperature_status_messages(synthetic_campaign, tmp_path):
+    _, run = _temperature_run(synthetic_campaign, tmp_path)
+    assert "T_method = 'const'" in viewer.temperature_status(run, 1, 1, 1, 2)[0]
+    (run / "shotfile.py").write_text(
+        SHOTFILE.replace('T_method = "const"', 'T_method = "parametric"\nT_core = 30.0\nT_edge = 3.0'))
+    notes = viewer.temperature_status(run, 30.0, 3.0, 1.0, 2.0)
+    assert len(notes) == 1 and "no T_prof.dat" in notes[0]
+    notes = viewer.temperature_status(run, 31.0, 3.0, 1.0, 2.0)
+    assert "T_core = 30" in notes[0] and "not saved" in notes[0]
+
+
+def test_case_viewer_has_the_temperature_section():
+    assert any("Temperature profile" in title for title, _, _ in viewer._SECTIONS)

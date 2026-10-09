@@ -556,9 +556,18 @@ def prepare_run(
         )
         if params.extend_bnd:
             t_prof = bnd_mod.extend_prof(t_prof, extended_idx_range)   # edge value outside
+    elif params.T_method == "parametric":
+        t_prof = cur_mod.temperature_to_jorek(
+            cur_mod.parametric_temperature(
+                psi_n, params.T_core, params.T_edge, params.T_alpha, params.T_beta
+            ),
+            rho_const_jorek,
+        )
+        if params.extend_bnd:
+            t_prof = bnd_mod.extend_prof(t_prof, extended_idx_range)   # T_edge outside
     else:
         raise NotImplementedError(f"T_method={params.T_method!r} not implemented")
-    if params.T_method == "file":
+    if params.T_method in ("file", "parametric"):
         # as for the current: no overshoot where the profile meets the vacuum
         x_out = np.linspace(psi_n_export.min(), psi_n_export.max(), PROFILE_POINTS)
         t_data = np.column_stack(

@@ -1081,3 +1081,60 @@ def test_t_file_is_required_for_the_method(synthetic_campaign):
     site, template_dir, params = synthetic_campaign
     with pytest.raises(ShotfileError, match="T_file"):
         dataclasses.replace(params, T_method="file")
+
+
+# --- T from four numbers ------------------------------------------------------------
+
+
+def _t_parametric_params(params, run_dir, template_dir, **changes):
+    fields = dict(T_method="parametric", T_core=500.0, T_edge=20.0, T_const=None)
+    return _q_li_params(params, run_dir, template_dir, **(fields | changes))
+
+
+def test_t_parametric_writes_the_profile_and_holds_the_edge_value_in_the_vacuum(
+    synthetic_campaign, tmp_path, symlinks_maybe_bypassed
+):
+    from ashen.physics import MU_0
+
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    result = prepare_run(_t_parametric_params(params, run_dir, template_dir), site, run_dir)
+
+    to_jorek = 1.602176634e-19 * MU_0 * 1e18            # eV -> JOREK, n_0 = rho_const = 1e18
+    t_prof = np.loadtxt(run_dir / "T_prof.dat")
+    assert t_prof[0, 1] == pytest.approx(500.0 * to_jorek, rel=1e-9)
+    outside = t_prof[:, 0] >= result.real_psi_edge
+    assert outside.any()
+    np.testing.assert_allclose(t_prof[outside, 1], 20.0 * to_jorek, rtol=1e-9)
+    x = t_prof[~outside, 0] / result.real_psi_edge       # the plasma's own psi_N
+    np.testing.assert_allclose(                           # default shape: (1 - psi_N)^2
+        t_prof[~outside, 1], (20.0 + 480.0 * (1 - x) ** 2) * to_jorek, rtol=2e-3
+    )
+    assert np.all(np.diff(t_prof[:, 1]) <= 1e-18)        # falls, then flat: no overshoot
+
+
+def test_t_parametric_shape_numbers_reach_the_file(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    site, template_dir, params = synthetic_campaign
+    run_dir = tmp_path / "rundir"
+    prepare_run(
+        _t_parametric_params(params, run_dir, template_dir, T_alpha=4.0, T_beta=2.0,
+                             extend_bnd=False),
+        site, run_dir,
+    )
+    t_prof = np.loadtxt(run_dir / "T_prof.dat")
+    mid = np.interp(0.5, t_prof[:, 0], t_prof[:, 1]) / t_prof[0, 1]
+    assert mid == pytest.approx((20.0 + 480.0 * (1 - 0.5**4) ** 2) / 500.0, rel=1e-3)
+    assert mid > 0.85                                      # a flat core, unlike the parabola's 0.28
+
+
+@pytest.mark.parametrize("changes, message", [
+    (dict(T_core=None), "T_core and T_edge"),
+    (dict(T_edge=None), "T_core and T_edge"),
+    (dict(T_edge=0.0), "positive"),
+    (dict(T_beta=0.0), "T_alpha and T_beta"),
+])
+def test_t_parametric_needs_its_numbers(synthetic_campaign, changes, message):
+    _, _, params = synthetic_campaign
+    fields = dict(T_method="parametric", T_core=500.0, T_edge=20.0) | changes
+    with pytest.raises(ShotfileError, match=message):
+        dataclasses.replace(params, **fields)
