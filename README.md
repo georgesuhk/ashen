@@ -352,6 +352,14 @@ python ~/ashen/bin/run_jorek shotfile.py --run_r                 # prepare the f
 python ~/ashen/bin/run_jorek shotfile.py --run_r --keep-inputs   # restart with the folder as it is
 ```
 
+`--run` and `--run_r` queue with the shotfile's `jobscript`. `-job NAME`
+uses another file from site.toml's jobscripts folder for that one launch,
+without changing the shotfile:
+
+```bash
+python ~/ashen/bin/run_jorek shotfile.py --run_r -job 2h
+```
+
 `--run_r` prepares the folder from the shotfile like every other stage and
 then submits `in_main_r`. For a run prepared by the ashen you have now,
 that rewrites the same files.

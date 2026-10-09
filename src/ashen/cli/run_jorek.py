@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from pathlib import Path
 
 from ashen.case_notebook import NOTEBOOK_NAME, write_case_notebook
@@ -60,6 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     stages.add_argument("--run", action="store_true", help="submit the main run")
     stages.add_argument("--run_i", action="store_true", help="main run, interactive")
     stages.add_argument("--run_r", action="store_true", help="submit a restart run")
+    stages.add_argument("-job", "--job", default=None, metavar="NAME",
+                        help="jobscript for --run and --run_r, a file in site.toml's "
+                             "jobscripts folder (e.g. 2h, 23h), instead of the shotfile's "
+                             "jobscript. The shotfile is not changed.")
     stages.add_argument("--keep-inputs", action="store_true",
                         help="with --run_r: do not prepare the folder again. Only tstep_n, "
                              "nstep_n and nout of in_main_r are set from the shotfile; "
@@ -81,6 +86,25 @@ def _submit(args, paths, site, params, *, dry_run: bool) -> None:
         submit_restart(paths, site, params, dry_run=dry_run)
     if args.run_sw:
         submit_starwall(paths, site, params, dry_run=dry_run)
+
+
+def _with_job(args, params, site):
+    """``params`` with -job's jobscript in place of the shotfile's. Raises
+    FileNotFoundError, naming the ones there are, if the folder has no such file."""
+    if args.job is None:
+        return params
+    if not (site.jobscripts / args.job).is_file():
+        have = sorted(p.name for p in site.jobscripts.iterdir() if p.is_file()) \
+            if site.jobscripts.is_dir() else []
+        raise FileNotFoundError(
+            f"-job {args.job}: no such jobscript in {site.jobscripts}"
+            + (f" (it has: {', '.join(have)})" if have else "")
+        )
+    # a copy with one field changed: dataclasses.replace would run the
+    # shotfile's checks, and their warnings, a second time
+    params = copy.copy(params)
+    params.jobscript = args.job
+    return params
 
 
 def _restart_keeping_inputs(args, params, site, run_dir: Path) -> int:
@@ -145,7 +169,7 @@ def _run_scan(args) -> int:
     for run in written:
         _ensure_notebook(run.run_dir)
         try:
-            params = load_shotfile(run.run_dir / "shotfile.py")
+            params = _with_job(args, load_shotfile(run.run_dir / "shotfile.py"), site)
             result = prepare_run(params, site, run.run_dir, run_sw=args.run_sw)
             print(f"  prepared {run.name}")
             _submit(args, result.paths, site, params, dry_run=False)
@@ -174,6 +198,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.show_config:
         return show_config(args.site)
+
+    if args.job is not None and not (args.run or args.run_r):
+        error("-job chooses the jobscript for --run or --run_r; add one of them")
+        return 1
 
     if args.scan is not None:
         if args.shot_file is not None or args.dry_run or args.keep_inputs:
@@ -208,6 +236,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         site = load_site(args.site)
     except SiteConfigError as exc:
+        error(str(exc))
+        return 1
+
+    try:
+        params = _with_job(args, params, site)
+    except FileNotFoundError as exc:
         error(str(exc))
         return 1
 

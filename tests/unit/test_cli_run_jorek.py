@@ -297,3 +297,51 @@ def test_keep_inputs_dry_run_writes_nothing(cli_campaign, submitted, symlinks_ma
     assert _snapshot(cli_campaign) == before
     out = capsys.readouterr().out
     assert "set_fields ['in_main_r']" in out and "would run:" in out
+
+
+# --- -job -----------------------------------------------------------------------
+
+
+def _jobscripts(cli_campaign) -> Path:
+    from ashen.config import load_site
+
+    folder = load_site(None).jobscripts
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("2h", "23h"):
+        (folder / name).write_text("#!/bin/bash\n")
+    return folder
+
+
+def test_job_overrides_the_shotfile_jobscript_for_run_and_run_r(
+    cli_campaign, submitted, symlinks_maybe_bypassed
+):
+    _jobscripts(cli_campaign)
+    shotfile = (cli_campaign / "shotfile.py").read_text()
+
+    assert main(["shotfile.py", "--run", "-job", "2h"]) == 0
+    assert main(["shotfile.py", "--run_r", "--job", "2h"]) == 0
+    assert main(["shotfile.py", "--run"]) == 0
+
+    assert "jobscripts/2h ./exe/jorek_test_exe ./in_main log" in submitted[0]
+    assert "jobscripts/2h ./exe/jorek_test_exe ./in_main_r log" in submitted[1]
+    assert "jobscripts/23h " in submitted[2]                    # the shotfile's own
+    assert (cli_campaign / "shotfile.py").read_text() == shotfile
+
+
+def test_job_works_with_keep_inputs(cli_campaign, submitted, symlinks_maybe_bypassed):
+    _jobscripts(cli_campaign)
+    assert main(["shotfile.py"]) == 0
+    assert main(["shotfile.py", "--run_r", "--keep-inputs", "-job", "2h"]) == 0
+    assert "jobscripts/2h " in submitted[0] and "./in_main_r" in submitted[0]
+
+
+def test_job_must_exist_and_needs_a_batch_stage(cli_campaign, submitted, capsys):
+    _jobscripts(cli_campaign)
+    assert main(["shotfile.py", "--run", "-job", "9h"]) == 1
+    err = capsys.readouterr().err
+    assert "-job 9h: no such jobscript" in err and "2h, 23h" in err.replace("23h, 2h", "2h, 23h")
+
+    assert main(["shotfile.py", "-job", "2h"]) == 1
+    assert main(["shotfile.py", "--run_i", "-job", "2h"]) == 1
+    assert "add one of them" in capsys.readouterr().err
+    assert submitted == []
