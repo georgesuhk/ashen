@@ -3536,6 +3536,7 @@ def test_re_current_diag_saves_its_figure_and_prints_the_split(campaign, capsys)
     _re_current_caches(campaign)
     assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "re_current"]) == 0
     assert (campaign / "profiles" / "re_current.png").is_file()
+    assert (campaign / "profiles" / "re_current_ratio.png").is_file()
     out = capsys.readouterr().out
     assert "step 200: total 400.00 kA, runaway 100.00 kA, thermal 300.00 kA" in out
 

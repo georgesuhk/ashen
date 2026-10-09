@@ -333,6 +333,13 @@ last step's three totals.
   resistivity acts on `zj - zj_RE`.
 - **It is a cut, not a flux-surface average**, and it does not give the
   current enclosed by a surface.
+- **`profiles/re_current_ratio.png`: thermal / runaway against time and
+  psi_N**, as a colour map (two steps or more). Red is more runaway
+  current, green more thermal, yellow equal; the scale is logarithmic and
+  saturates at a factor 100 either way. Hatching marks where the thermal
+  current runs against the runaway current. Grey is where there is no
+  current to take a ratio of (beyond the plasma of an extended boundary),
+  or where a step's profile does not reach.
 - **Steps** are the case's `steps`, or its own:
 
   ```toml

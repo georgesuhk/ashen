@@ -9,6 +9,8 @@ reference and would re-import the real function fresh in the child process.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -366,3 +368,47 @@ def test_gather_profiles_on_progress_fires_per_success(jrun, paths, monkeypatch)
 
     assert len(progress) == 2
     assert all(total == 2 for _, total, *_ in progress)
+
+
+def test_two_variables_of_one_step_do_not_share_a_collected_file(jrun, tmp_path, monkeypatch):
+    """jorek2_postproc names its output by step and cut only. Collected into
+    one shared folder, two variables gathered at once overwrote each other:
+    a call read the other's table ("no ['currdens'] column"), or a file
+    half copied (StopIteration, which ended the whole gather)."""
+    from ashen.jorek2 import ToolResult
+
+    shared = tmp_path / "scratch"
+    seen = []
+
+    def fake_run_tool(run, tool, *, step, dest_dir, stdin_text, **kwargs):
+        var = next(l for l in stdin_text.splitlines() if "expressions" in l).split()[-1]
+        seen.append(Path(dest_dir))
+        out = Path(dest_dir) / "exprs_outer-midplane_s000000.dat"
+        value = 1.0 if var == "currdens" else 2.0
+        out.write_text(f"# Psi_N {var}\n# time step #000000\n0.0 {value}\n1.0 {value}\n")
+        return ToolResult(outputs={"postproc/exprs_outer-midplane_s000000.dat": out})
+
+    monkeypatch.setattr(profiles_mod, "run_tool", fake_run_tool)
+    kwargs = dict(n_points=10, tor_mode="midplane outer", dest_dir=shared)
+    _, total = profiles_mod.extract_profile(jrun, 0, "currdens", "Psi_N", **kwargs)
+    _, runaway = profiles_mod.extract_profile(jrun, 0, "recurrdens", "Psi_N", **kwargs)
+
+    assert list(total) == [1.0, 1.0] and list(runaway) == [2.0, 2.0]
+    assert seen[0] != seen[1] and all(d.parent == shared for d in seen)
+    assert list(shared.iterdir()) == []                       # each call tidies its own folder
+
+
+def test_an_empty_postproc_table_is_a_jorek2error_not_a_crash(jrun, tmp_path, monkeypatch):
+    from ashen.jorek2 import ToolResult
+
+    def fake_run_tool(run, tool, *, step, dest_dir, **kwargs):
+        out = Path(dest_dir) / "exprs_outer-midplane_s000000.dat"
+        out.write_text("")
+        return ToolResult(outputs={"postproc/exprs_outer-midplane_s000000.dat": out})
+
+    monkeypatch.setattr(profiles_mod, "run_tool", fake_run_tool)
+    with pytest.raises(Jorek2Error, match="is empty"):
+        profiles_mod.extract_profile(
+            jrun, 0, "currdens", "Psi_N", n_points=10, tor_mode="midplane outer",
+            dest_dir=tmp_path / "scratch",
+        )

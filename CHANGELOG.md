@@ -4,6 +4,47 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-09: fixed: two profile variables of one step overwrote each other
+
+- Seen on the HPC with `analyse --diag re_current`: warnings such as
+  "output for step 10200 has no ['currdens'] column(s) (got ['Psi_N',
+  'recurrdens'])", then a `StopIteration` that ended the whole gather.
+- Cause: jorek2_postproc names its output file by step and cut only, not
+  by expression. Each call ran in its own folder but its result was then
+  copied into one shared folder, so with several workers the two
+  variables of a step landed on the same file. A call read the other's
+  table, or an empty file caught mid-copy.
+- Now each call collects into a folder of its own
+  (`profiles.extract_profile`). An empty table is a per-step warning, not
+  a crash.
+- `analyse --diag profiles` with several `vars` and more than one worker
+  had the same fault.
+- **Profiles already gathered in parallel**: a mixed-up table was nearly
+  always refused, because the column names are checked. A table swapped
+  between reading its header and its rows would not have been caught.
+  That window is very small, but to be sure, gather again with `--force`:
+  `analyse --case X --diag re_current --force` (and `--diag profiles`
+  where several vars were gathered at once).
+
+## 2026-10-09: `re_current`: thermal / runaway against time and psi_N
+
+- `plot --diag re_current` also writes `profiles/re_current_ratio.png`,
+  and the viewer's section shows it under the profiles: a colour map of
+  `|j_thermal / j_RE|` with time across and psi_N (outer midplane) up, in
+  the manner of the connection-length map.
+- **Red: more runaway current. Green: more thermal. Yellow: equal.** The
+  colour scale is logarithmic, from 100 times more runaway to 100 times
+  more thermal, and saturates beyond (`plotting.re_current.RATIO_RANGE`).
+- **Hatched**: the thermal current runs against the runaway current there
+  (the ratio is negative; the colour is its size).
+- **Grey**: no ratio. Either that step's profile does not reach that
+  psi_N, or the total current density there is below 1/1000 of that
+  step's largest, where the ratio is noise (the vacuum of an extended
+  boundary). No runaway current at all counts as all thermal (deep green).
+- Needs profiles at two steps or more.
+  (`diagnostics.re_current.current_ratio_map`)
+- Tested on synthetic profiles only, like the profile panel.
+
 ## 2026-10-09: `run_jorek -job NAME`
 
 - `run_jorek shotfile.py --run -job 2h` (or `--run_r -job 2h`) queues
