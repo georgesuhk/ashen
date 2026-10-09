@@ -3511,3 +3511,45 @@ def test_four_delta_b_at_edge_draws_the_domain_edge_value(campaign, monkeypatch,
     assert "@ domain edge (r = 1.000 m)" in kwargs["ylabel"]
     assert (campaign / "four_dir" / "delta_b_edge_modes_step.png").is_file()
     assert not (campaign / "four_dir" / "delta_b_modes_step.png").exists()
+
+
+# --- re_current -------------------------------------------------------------------
+
+
+def _re_current_caches(run_dir, *, zerod=True):
+    from ashen.diagnostics import re_current as rc
+    from ashen.paths import RunPaths
+
+    paths = RunPaths(run_dir, pad_width=6)
+    psi_n = np.linspace(0.0, 1.0, 21)
+    for step in (100, 200):
+        np.savez(paths.profile_cache("Psi_N", "currdens", step, rc.TOR_MODE), x=psi_n, y=1 - psi_n)
+        np.savez(paths.profile_cache("Psi_N", "recurrdens", step, rc.TOR_MODE),
+                 x=psi_n, y=0.25 * (1 - psi_n))
+        if zerod:
+            paths.zero_d(step).write_text(
+                f"Time Ip_tot Ipre_tot\n{step * 1e-6} 4.0e5 -1.0e5\n", encoding="utf-8")
+    (run_dir / "in_main").write_text(" &in1\n vpar_re_sign = 1\n&end\n", encoding="utf-8")
+
+
+def test_re_current_diag_saves_its_figure_and_prints_the_split(campaign, capsys):
+    _re_current_caches(campaign)
+    assert plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "re_current"]) == 0
+    assert (campaign / "profiles" / "re_current.png").is_file()
+    out = capsys.readouterr().out
+    assert "step 200: total 400.00 kA, runaway 100.00 kA, thermal 300.00 kA" in out
+
+
+def test_re_current_is_silent_for_a_case_without_it_unless_asked(campaign, capsys, monkeypatch):
+    # a bare `plot --case X` runs every diag: a case with no RE profiles gets
+    # no figure, no message and no zeroD gather from this one
+    gathered = []
+    monkeypatch.setattr(plot_cli, "_ensure_zero_d", lambda *a, **k: gathered.append(a))
+    case = plot_cli.Case(name="qa2.1_g2.3/eta1e-3_RE", steps=[100, 200])
+    paths = plot_cli.RunPaths(campaign, pad_width=6)
+    plot_cli._plot_re_current(case, paths, [100, 200], dpi=None, explicit=False)
+    assert gathered == [] and capsys.readouterr().out == ""
+    assert not (campaign / "profiles" / "re_current.png").exists()
+
+    plot_cli._plot_re_current(case, paths, [100, 200], dpi=None, explicit=True)
+    assert "run analyse --diag re_current" in capsys.readouterr().out

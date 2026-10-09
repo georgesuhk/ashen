@@ -309,6 +309,42 @@ x_label  = "eta"
   already there is not edited: when a scan has grown, the lines it should
   now have are printed for you to paste.
 
+## Runaway and thermal current (`re_current`)
+
+For a run with the RE fluid (`with_refluid = True`): how much of the
+toroidal current the runaways carry and how much the thermal plasma.
+
+```bash
+python ~/ashen/bin/analyse --case "qa3.3_g3.2/eta1e-3_adv0.1" --diag re_current
+python ~/ashen/bin/plot    --case "qa3.3_g3.2/eta1e-3_adv0.1" --diag re_current
+```
+
+or the **Run analyse --diag re_current** button in the case viewer.
+`plot` writes `profiles/re_current.png` in the run folder and prints the
+last step's three totals.
+
+- **Left panel: totals against time.** `Ip_tot` and the runaway current
+  from the zeroD files, and their difference.
+- **Right panel: per radial position.** Total, runaway and thermal
+  toroidal current density against psi_N along the outer midplane
+  (JOREK-grid psi_N; the dashed line is the plasma edge of an extended
+  boundary).
+- **Thermal = total - runaway.** This is the model's own split: JOREK's
+  resistivity acts on `zj - zj_RE`.
+- **It is a cut, not a flux-surface average**, and it does not give the
+  current enclosed by a surface.
+- **Steps** are the case's `steps`, or its own:
+
+  ```toml
+  [cases."qa3.3_g3.2/eta1e-3_adv0.1".re_current]
+  steps = { first_last = true }
+  ```
+
+- **Needs** a `jorek2_postproc` built with the RE fluid (for
+  `recurrdens`) and `vpar_re_sign` in the run's `in_main` (for the sign of
+  the runaway total: JOREK's `Ipre_tot` has the opposite sign convention
+  to `Ip_tot`).
+
 ## Restarting a run
 
 ```bash

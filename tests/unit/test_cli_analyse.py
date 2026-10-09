@@ -496,3 +496,44 @@ def test_only_cases_that_gathered_are_plotted(chained, capsys):
 def test_a_failing_plot_fails_the_run(chained):
     chained["plot_status"] = 1
     assert analyse_cli.main(["--diag", "four", "-plot", "four"]) == 1
+
+
+# --- re_current -------------------------------------------------------------------
+
+
+def test_re_current_gathers_zerod_and_both_profiles_for_its_own_steps(
+    case_and_run_dir, monkeypatch, capsys
+):
+    _, run_dir = case_and_run_dir
+    case = Case(name="myrun", steps=[100, 200], n_points=77, diag_steps={"re_current": [200]})
+    seen = {}
+
+    def fake_zero_d(jrun, step, paths):
+        seen.setdefault("zerod", []).append(step)
+        paths.zero_d(step).parent.mkdir(parents=True, exist_ok=True)
+        paths.zero_d(step).write_text("Time Ip_tot\n1.0 1.0\n", encoding="utf-8")
+
+    def fake_gather(jrun, paths, steps, **kwargs):
+        seen.update(steps=steps, **kwargs)
+        return 2
+
+    monkeypatch.setattr(analyse_cli, "run_zero_d", fake_zero_d)
+    monkeypatch.setattr(analyse_cli.re_current_diag, "gather_re_current", fake_gather)
+
+    analyse_cli._run_case(case, diags=["re_current"], force=False, n_workers=1, omp_threads=1)
+
+    assert seen["zerod"] == [200] and seen["steps"] == [200] and seen["n_points"] == 77
+    assert "warning" not in capsys.readouterr().out
+
+
+def test_re_current_says_when_the_postproc_build_lacks_recurrdens(
+    case_and_run_dir, monkeypatch, capsys
+):
+    case, _ = case_and_run_dir
+    monkeypatch.setattr(analyse_cli, "run_zero_d", lambda jrun, step, paths: None)
+    monkeypatch.setattr(analyse_cli.re_current_diag, "gather_re_current", lambda *a, **k: 2)
+
+    analyse_cli._run_case(case, diags=["re_current"], force=False, n_workers=1, omp_threads=1)
+
+    out = capsys.readouterr().out
+    assert "re_current has 2 of 4 profiles" in out and "with_refluid" in out

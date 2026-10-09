@@ -39,13 +39,14 @@ from ashen.config import SiteConfigError, load_site
 from ashen.diagnostics import four as four_diag
 from ashen.diagnostics import poincare as poincare_diag
 from ashen.diagnostics import profiles as profiles_diag
+from ashen.diagnostics import re_current as re_current_diag
 from ashen.diagnostics import qprofile as qprofile_diag
 from ashen.jorek2 import Jorek2Run, enable_tool_output, run_zero_d
 from ashen.paths import RunPaths, read_float
 from ashen.postproc import zero_d_is_usable
 from ashen.shotfile import load_shotfile
 
-DIAG_CHOICES = ("zerod", "poincare", "profiles", "four")
+DIAG_CHOICES = ("zerod", "poincare", "profiles", "four", "re_current")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -226,6 +227,9 @@ def _run_case(
         zerod_steps.update(case.steps_for("zerod"))
     if "poincare" in diags:
         zerod_steps.update(case.steps_for("poincare"))
+    if "re_current" in diags:
+        # the current totals (Ip_tot, Ipre_tot) are zeroD quantities
+        zerod_steps.update(case.steps_for("re_current"))
     if zerod_steps:
         _gather_zero_d(jrun, paths, sorted(zerod_steps), force=force, n_workers=n_workers)
 
@@ -289,6 +293,23 @@ def _run_case(
                         "surfaces no longer close; try lowering "
                         "profile_rad_range's upper bound (see KNOWN_ISSUES.md #9)"
                     )
+
+    if "re_current" in diags:
+
+        def _re_current_progress(done: int, total: int, step: int, var: str, mode: str) -> None:
+            print(f"  re_current {done}/{total}: step {step} {var}")
+
+        steps = case.steps_for("re_current")
+        n_ok = re_current_diag.gather_re_current(
+            jrun, paths, steps, n_points=case.n_points, n_workers=n_workers, force=force,
+            on_progress=_re_current_progress,
+        )
+        wanted = len(steps) * len(re_current_diag.VARIABLES)
+        if n_ok < wanted:
+            print(
+                f"  warning: re_current has {n_ok} of {wanted} profiles. `recurrdens` exists "
+                "only in a jorek2_postproc built with the RE fluid (with_refluid)."
+            )
 
     if "four" in diags:
         four_steps = case.steps_for("four")

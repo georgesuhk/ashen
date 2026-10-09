@@ -1,0 +1,164 @@
+"""ashen.diagnostics.re_current -- the runaway / thermal split of the current."""
+
+from __future__ import annotations
+
+import matplotlib
+
+matplotlib.use("Agg")
+
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+
+from ashen.diagnostics import re_current as rc  # noqa: E402
+from ashen.paths import RunPaths  # noqa: E402
+
+STEPS = [0, 100, 200]
+
+
+def _folder(tmp_path, *, sign="1", re_share=(1.0, 0.6, 0.2)):
+    """A run folder with both profiles and a zeroD file per step. The total
+    current is 400 kA throughout; the runaways carry ``re_share`` of it."""
+    run = tmp_path / "run"
+    (run / "postproc").mkdir(parents=True)
+    if sign is not None:
+        (run / "in_main").write_text(f" &in1\n vpar_re_sign = {sign}\n&end\n")
+    paths = RunPaths(run, pad_width=6)
+    psi_n = np.linspace(0.0, 1.0, 41)
+    j_total = 2e6 * (1 - psi_n**2)
+    for step, share in zip(STEPS, re_share):
+        np.savez(paths.profile_cache("Psi_N", "currdens", step, rc.TOR_MODE), x=psi_n, y=j_total)
+        # written back to front: the reader must not rely on the order
+        np.savez(paths.profile_cache("Psi_N", "recurrdens", step, rc.TOR_MODE),
+                 x=psi_n[::-1], y=(share * j_total)[::-1])
+        ipre = -float(sign or 1) * share * 4e5       # JOREK's own sign for Ipre_tot
+        paths.zero_d(step).write_text(
+            f"Time Ip_tot Ipre_tot\n{step * 1e-6} 4.0e5 {ipre}\n"
+        )
+    return run, paths
+
+
+def test_thermal_density_is_total_minus_runaway(tmp_path):
+    _, paths = _folder(tmp_path)
+    series = rc.current_density_series(paths, STEPS)
+    assert sorted(series) == STEPS
+    for step, share in zip(STEPS, (1.0, 0.6, 0.2)):
+        d = series[step]
+        assert np.all(np.diff(d.psi_n) > 0)
+        np.testing.assert_allclose(d.re, share * d.total)
+        np.testing.assert_allclose(d.thermal, (1 - share) * d.total, atol=1e-6)
+    assert series[0].total[0] == pytest.approx(2e6)
+
+
+def test_a_step_missing_one_profile_is_left_out(tmp_path):
+    _, paths = _folder(tmp_path)
+    paths.profile_cache("Psi_N", "recurrdens", 100, rc.TOR_MODE).unlink()
+    assert sorted(rc.current_density_series(paths, STEPS)) == [0, 200]
+
+
+@pytest.mark.parametrize("sign", ["1", "-1"])
+def test_total_runaway_current_is_put_in_ip_tot_s_sign_convention(tmp_path, sign):
+    """Ipre_tot carries -sign(vpar_re_sign) relative to Ip_tot (see the
+    module docstring): a run that is all runaway current has re == total,
+    whichever way the runaways go."""
+    _, paths = _folder(tmp_path, sign=sign)
+    assert rc.vpar_re_sign(paths) == float(sign)
+    totals = rc.current_totals(paths, STEPS, rc.vpar_re_sign(paths))
+    np.testing.assert_allclose(totals.total, 4e5)
+    np.testing.assert_allclose(totals.re, [4e5, 2.4e5, 0.8e5])
+    np.testing.assert_allclose(totals.thermal, [0.0, 1.6e5, 3.2e5], atol=1e-6)
+    np.testing.assert_allclose(totals.time, [0.0, 1e-4, 2e-4])
+
+
+def test_the_real_run_s_numbers():
+    """qa3.3_g3.2/eta1e-3_adv0.1, step 26000 (vpar_re_sign = 1): Ip_tot =
+    439827.87 A, Ipre_tot = -437498.51 A. The runaways carry all but 2.3 kA."""
+    assert rc.total_re_current(-437498.5103886531, 1.0) == pytest.approx(437498.51, abs=0.01)
+    assert 439827.8748655455 - rc.total_re_current(-437498.5103886531, 1.0) == pytest.approx(
+        2329.36, abs=0.01)
+
+
+def test_without_vpar_re_sign_the_runaway_total_is_not_guessed(tmp_path):
+    _, paths = _folder(tmp_path, sign=None)
+    assert rc.vpar_re_sign(paths) is None
+    totals = rc.current_totals(paths, STEPS, None)
+    assert np.isfinite(totals.total).all()
+    assert np.isnan(totals.re).all() and np.isnan(totals.thermal).all()
+
+
+def test_a_step_without_zerod_is_nan(tmp_path):
+    _, paths = _folder(tmp_path)
+    paths.zero_d(100).unlink()
+    totals = rc.current_totals(paths, STEPS, 1.0)
+    assert np.isnan(totals.total[1]) and np.isfinite(totals.total[[0, 2]]).all()
+
+
+def test_gather_asks_for_both_expressions_on_the_outer_midplane(tmp_path, monkeypatch):
+    asked = {}
+
+    def fake(run, paths, steps, variables, **kwargs):
+        asked.update(steps=steps, variables=variables, **kwargs)
+        return {rc.TOR_MODE: 6}
+
+    monkeypatch.setattr(rc, "gather_profiles", fake)
+    assert rc.gather_re_current("run", "paths", STEPS, n_points=80, n_workers=1) == 6
+    assert asked["variables"] == ["currdens", "recurrdens"]
+    assert (asked["coords_var"], asked["tor_modes"], asked["n_points"]) == (
+        "Psi_N", ["midplane outer"], 80)
+
+
+# --- figure, CLI, viewer ----------------------------------------------------------
+
+
+def test_figure_draws_three_species_in_both_panels(tmp_path):
+    from matplotlib.figure import Figure
+
+    from ashen.plotting.re_current import COLORS, plot_re_current, re_current_figure
+
+    _, paths = _folder(tmp_path)
+    totals = rc.current_totals(paths, STEPS, 1.0)
+    densities = rc.current_density_series(paths, STEPS)
+    fig = re_current_figure(Figure(), totals, densities, step=100, real_psi_edge=0.8)
+    ax_t, ax_j = fig.axes
+    for ax in (ax_t, ax_j):
+        colours = {line.get_color() for line in ax.get_lines()}
+        assert set(COLORS.values()) <= colours
+    assert "step 100" in ax_j.get_title(loc="left") and ax_t.get_xlabel() == "t [ms]"
+    thermal = next(l for l in ax_j.get_lines() if l.get_color() == COLORS["thermal"])
+    np.testing.assert_allclose(thermal.get_ydata(), densities[100].thermal / 1e6)
+
+    out = plot_re_current(totals, densities, tmp_path / "figs" / "re_current.png")
+    assert out.is_file() and out.stat().st_size > 1000
+
+
+def test_figure_says_what_is_missing(tmp_path):
+    from matplotlib.figure import Figure
+
+    from ashen.plotting.re_current import re_current_figure
+
+    _, paths = _folder(tmp_path, sign=None)
+    fig = re_current_figure(Figure(), rc.current_totals(paths, STEPS, None), {})
+    ax_t, ax_j = fig.axes
+    assert "vpar_re_sign" in ax_t.texts[0].get_text()
+    assert "no currdens / recurrdens profile" in ax_j.texts[0].get_text()
+
+
+def test_viewer_section(tmp_path, monkeypatch):
+    w = pytest.importorskip("ipywidgets")
+    pytest.importorskip("h5py")
+    from ashen import viewer
+
+    run, paths = _folder(tmp_path)
+    assert viewer.re_current_steps(run) == STEPS
+    assert len(viewer.re_current_figure(run, 100).axes) == 2
+
+    button, _, holder = viewer.re_current_view(run).children
+    assert button.description == "Run analyse --diag re_current"
+    step, canvas = holder.children[0].children
+    before = bytes(canvas.children[0].value)
+    step.value = 0
+    assert bytes(canvas.children[0].value) != before
+    assert any("re_current" in title for title, _, _ in viewer._SECTIONS)
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert isinstance(viewer.re_current_view(empty).children[2].children[0], w.HTML)
