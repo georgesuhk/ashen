@@ -4,6 +4,25 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-09: magnetic energies in the case viewer
+
+- New section "Magnetic energies (live data)": the magnetic energy of
+  each toroidal harmonic against time, read from the run's
+  `macroscopic_vars.dat`, as `plot_live_data.sh -q magnetic_energies`
+  draws it. Time in ms and the labels (`E_mag,00`, ...) are the file's
+  own; the energies stay normalised, as in plot_live_data.
+- **Reload** reads the file again for a run still going. **log scale**
+  starts as the file says (on for the energies). With ipympl the figure
+  zooms and pans.
+- Nothing is gathered and no cases.toml entry is needed: JOREK writes
+  this file itself at every step.
+- Where a run was restarted from an earlier step, the rows it overwrote
+  are dropped, so each time appears once.
+- Other quantities of the file from a cell of your own:
+  `viewer.energies_view(".", quantity="kinetic_energies")`.
+- Read on the local qa3.3_g3.2/eta1e-3_adv0.1 run: 26569 steps from a
+  79 MB file in 0.25 s. (`diagnostics/live_data.py`)
+
 ## 2026-10-09: `T_method = "parametric"`: a temperature profile from four numbers
 
 - In the shotfile:

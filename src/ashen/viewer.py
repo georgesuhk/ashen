@@ -48,6 +48,8 @@ __all__ = [
     "case_viewer",
     "default_four_modes",
     "equilibrium_figure",
+    "energies_figure",
+    "energies_view",
     "equilibrium_view",
     "folder_name_mismatches",
     "four_figure",
@@ -1078,6 +1080,40 @@ def temperature_figure(
     return fig
 
 
+def draw_energies(ax, live, *, log: bool | None = None) -> None:
+    """One live-data quantity (diagnostics.live_data.LiveData) against time,
+    a line per toroidal harmonic, as util/plot_live_data.sh draws it."""
+    log = live.logy if log is None else log
+    for i, label in enumerate(live.labels):
+        y = live.values[:, i]
+        if log:
+            y = np.where(y > 0, y, np.nan)       # a log axis has no zero
+        ax.plot(live.x, y, lw=1.5, label=f"${label}$" if "{" in label else label)
+    if log:
+        ax.set_yscale("log")
+    _style(ax, live.xlabel, live.ylabel, live.quantity.replace("_", " "))
+    ax.legend(frameon=False, labelcolor=_INK, fontsize=8)
+
+
+def energies_figure(run_dir: Path | str, quantity: str = "magnetic_energies", *,
+                    log: bool | None = None):
+    """A quantity of the run's ``macroscopic_vars.dat`` against time: by
+    default the magnetic energy of each toroidal harmonic, what
+    ``plot_live_data.sh -q magnetic_energies`` shows. ``log`` None follows
+    the file's own choice of axis."""
+    from matplotlib.figure import Figure
+
+    from ashen.diagnostics.live_data import LIVE_DATA_FILE, read_live_data
+
+    fig = Figure(figsize=(9, 4.6), layout="constrained")
+    ax = fig.subplots()
+    try:
+        draw_energies(ax, read_live_data(Path(run_dir) / LIVE_DATA_FILE, quantity), log=log)
+    except (OSError, ValueError) as exc:
+        ax.text(0.5, 0.5, str(exc), ha="center", transform=ax.transAxes, wrap=True, fontsize=9)
+    return fig
+
+
 # --- notebook wrappers ----------------------------------------------------------
 
 
@@ -1598,6 +1634,13 @@ _SECTIONS = [
         "Contours are drawn on the grid nodes: good for looking, not for measuring.",
         lambda run_dir, step: equilibrium_view(run_dir),
     ),
+    (
+        "Magnetic energies (live data)",
+        "The magnetic energy of each toroidal harmonic against time, from "
+        "<code>macroscopic_vars.dat</code>, as <code>plot_live_data.sh -q magnetic_energies</code> "
+        "shows it. <b>Reload</b> reads the file again for a run still going.",
+        lambda run_dir, step: energies_view(run_dir),
+    ),
     ("Fourier modes (analyse --diag four)", "", lambda run_dir, step: four_view(run_dir)),
     ("Radial profiles (analyse --diag profiles)", "", lambda run_dir, step: profiles_view(run_dir)),
     (
@@ -1784,3 +1827,42 @@ def temperature_tuner(run_dir: Path | str = ".", *, site=None):
     redraw()
     return w.VBox([w.VBox([w.HBox([core, edge]), alpha, beta]),
                    w.HBox([save, regenerate, reset]), status, log_out.widget, figure_out])
+
+
+def energies_view(run_dir: Path | str = ".", *, quantity: str = "magnetic_energies"):
+    """JOREK's live data against time (energies_figure): the magnetic energy
+    of each toroidal harmonic unless another ``quantity`` of
+    ``macroscopic_vars.dat`` is named. **Reload** reads the file again, for
+    a run still going. With ipympl the figure can be zoomed and panned.
+    """
+    from ashen.diagnostics.live_data import LIVE_DATA_FILE, read_live_data
+
+    w = _widgets()
+    path = Path(run_dir) / LIVE_DATA_FILE
+    reload = w.Button(description="Reload", tooltip=f"Read {LIVE_DATA_FILE} again")
+    log = w.Checkbox(value=True, description="log scale", indent=False,
+                     layout=w.Layout(width="auto"))
+    note, holder = w.HTML(), w.VBox([])
+    state = {}
+
+    def load(*_):
+        try:
+            live = read_live_data(path, quantity)
+        except (OSError, ValueError) as exc:
+            holder.children = (w.HTML(f"<pre>{html.escape(str(exc))}</pre>"),)
+            note.value = ""
+            return
+        if "first" not in state:
+            state["first"] = True
+            log.value = live.logy           # start as plot_live_data would
+        fig, widget, draw = _live_figure(w, (9, 4.6))
+        draw_energies(fig.subplots(), live, log=log.value)
+        holder.children = (widget,)
+        draw()
+        note.value = (f"<small>{len(live.x)} time steps, to {live.xlabel.split('[')[0].strip()} "
+                      f"= {live.x[-1]:.4g}</small>")
+
+    reload.on_click(load)
+    load()
+    log.observe(load, names="value")
+    return w.VBox([w.HBox([reload, log, note]), holder])
