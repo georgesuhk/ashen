@@ -10,13 +10,17 @@ from pathlib import Path
 
 import numpy as np
 
-from ashen.diagnostics.re_current import CurrentDensity, CurrentTotals
+from ashen.diagnostics.re_current import CurrentDensity, CurrentTotals, RatioMap
 from ashen.plotting import DEFAULT_DPI, style
 
 __all__ = [
-    "COLORS", "draw_current_density", "draw_current_totals", "plot_re_current",
-    "re_current_figure",
+    "COLORS", "RATIO_RANGE", "draw_current_density", "draw_current_ratio_map",
+    "draw_current_totals", "plot_current_ratio_map", "plot_re_current", "ratio_map_figure", "re_current_figure",
 ]
+
+#: Where the ratio map's log colour scale saturates: 100 times more runaway
+#: current than thermal (deep red) to 100 times more thermal (deep green).
+RATIO_RANGE = (1e-2, 1e2)
 
 #: One colour per species, the same in both panels.
 COLORS = {"total": "#52514e", "re": "#c8442f", "thermal": "#2a78d6"}
@@ -107,6 +111,83 @@ def plot_re_current(
     with style():
         fig = plt.figure(figsize=figsize)
         re_current_figure(fig, totals, densities, step=step, real_psi_edge=real_psi_edge)
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    return out_path
+
+
+def draw_current_ratio_map(
+    ax, ratio_map: RatioMap, x, *, xlabel: str = "", real_psi_edge: float = 1.0,
+):
+    """|j_thermal / j_RE| against time (or step) and psi_N as a colour map,
+    as plotting.connection_length draws LC. Returns the mappable.
+
+    Red: more runaway current; green: more thermal; yellow: equal. The
+    scale is logarithmic and saturates at RATIO_RANGE. Hatched where the
+    thermal current runs against the runaway current (a negative ratio,
+    drawn by its size). Grey where there is no current to take a ratio of.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm
+
+    Z = ratio_map.ratio.T                       # (n_psi, n_steps)
+    size = np.ma.masked_invalid(np.abs(np.where(np.isinf(Z), np.nan, Z)))
+    # no runaway current at all: all thermal, off the top of the scale
+    size = np.ma.where(np.isinf(Z), RATIO_RANGE[1] * 10, size)
+    size = np.ma.masked_where(np.isnan(Z), size)
+    X, Y = np.meshgrid(np.asarray(x, dtype=float), ratio_map.psi_n)
+    cmap = plt.get_cmap("RdYlGn").with_extremes(bad="#d9d7d2")
+    pcm = ax.pcolormesh(X, Y, size, cmap=cmap, shading="auto",
+                        norm=LogNorm(vmin=RATIO_RANGE[0], vmax=RATIO_RANGE[1]))
+    against = np.where(np.isfinite(Z), Z < 0, False)
+    if against.any() and against.shape[1] > 1:
+        ax.contourf(X, Y, against.astype(float), levels=[0.5, 1.5], colors="none",
+                    hatches=["///"])
+    if real_psi_edge < 1.0:
+        ax.axhline(real_psi_edge, color="black", lw=1, ls="--")
+    ax.set_ylabel(r"$\psi_N$ (JOREK grid), outer midplane")
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    ax.set_title("Thermal / runaway current density", loc="left", fontsize=11, fontweight="bold")
+    return pcm
+
+
+def ratio_map_figure(fig, ratio_map: RatioMap, time=None, *, real_psi_edge: float = 1.0):
+    """The ratio map with its colour bar on ``fig``. ``time`` (seconds, one
+    per step) is the x axis when every step has one, else the step index."""
+    ax = fig.subplots()
+    if len(ratio_map.steps) < 2:
+        ax.text(0.5, 0.5, "the ratio map needs currdens / recurrdens profiles at two steps "
+                "or more\n(analyse --diag re_current)", ha="center", transform=ax.transAxes)
+        return fig
+    by_time = time is not None and bool(np.isfinite(np.asarray(time, dtype=float)).all())
+    x = np.asarray(time) * 1e3 if by_time else np.asarray(ratio_map.steps, dtype=float)
+    pcm = draw_current_ratio_map(ax, ratio_map, x, xlabel="t [ms]" if by_time else "Time step",
+                                 real_psi_edge=real_psi_edge)
+    bar = fig.colorbar(pcm, ax=ax, extend="both")
+    bar.set_label(r"$|j_\mathrm{thermal}\,/\,j_\mathrm{RE}|$   "
+                  "(red: more runaway, green: more thermal)")
+    return fig
+
+
+def plot_current_ratio_map(
+    ratio_map: RatioMap,
+    out_path: Path | str,
+    *,
+    time=None,
+    real_psi_edge: float = 1.0,
+    figsize: tuple[float, float] = (8, 5),
+    dpi: int = DEFAULT_DPI,
+) -> Path:
+    """Draw and save the ratio map."""
+    import matplotlib.pyplot as plt
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with style():
+        fig = plt.figure(figsize=figsize)
+        ratio_map_figure(fig, ratio_map, time, real_psi_edge=real_psi_edge)
         fig.tight_layout()
         fig.savefig(out_path, dpi=dpi)
     plt.close(fig)

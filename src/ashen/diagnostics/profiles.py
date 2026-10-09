@@ -12,6 +12,8 @@ scatter) -- KNOWN_ISSUES.md #8.
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 import warnings
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -103,17 +105,37 @@ def extract_profile(
         surfaces=surfaces, rad_range=rad_range, nmaxsteps=nmaxsteps,
         deltaphi=deltaphi, nsmallsteps=nsmallsteps,
     )
-    collected = run_tool(
-        run,
-        "jorek2_postproc",
-        step=step,
-        dest_dir=dest_dir,
-        outputs=[f"postproc/{out_name}"],
-        stdin_text=script,
-        restart_name=run.restart_path(step).name,
-        copy_exe=True,
-    )
-    headers, blocks = read_postproc_profile(collected[f"postproc/{out_name}"])
+    # A folder of this call's own to collect into. jorek2_postproc names its
+    # output after the step and the cut only, not the expression, so two
+    # variables of one step gathered at once (gather_profiles' pool) used to
+    # land on the same file in dest_dir: one call then read the other's
+    # table, or a file caught half copied.
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    own_dir = Path(tempfile.mkdtemp(prefix=f"{var}_", dir=dest_dir))
+    try:
+        collected = run_tool(
+            run,
+            "jorek2_postproc",
+            step=step,
+            dest_dir=own_dir,
+            outputs=[f"postproc/{out_name}"],
+            stdin_text=script,
+            restart_name=run.restart_path(step).name,
+            copy_exe=True,
+        )
+        try:
+            headers, blocks = read_postproc_profile(collected[f"postproc/{out_name}"])
+        except StopIteration:
+            raise Jorek2Error(
+                f"jorek2_postproc's {tor_mode!r} output for step {step} is empty"
+            ) from None
+    finally:
+        shutil.rmtree(own_dir, ignore_errors=True)
+    if step not in blocks or blocks[step].size == 0:
+        raise Jorek2Error(
+            f"jorek2_postproc's {tor_mode!r} output for step {step} has no data rows"
+        )
     data = blocks[step]
     missing = [name for name in (coords_var, var) if name not in headers]
     if missing:

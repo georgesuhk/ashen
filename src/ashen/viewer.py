@@ -63,6 +63,7 @@ __all__ = [
     "profiles_figure",
     "profiles_view",
     "re_current_figure",
+    "re_current_ratio_figure",
     "re_current_view",
     "restart_nodes",
     "run_analyse",
@@ -962,6 +963,23 @@ def re_current_figure(run_dir: Path | str, step: int | None = None):
     return fig
 
 
+def re_current_ratio_figure(run_dir: Path | str):
+    """thermal / runaway current density against time and psi_N, as a
+    colour map over every gathered step (plotting.re_current)."""
+    from matplotlib.figure import Figure
+
+    from ashen.diagnostics import re_current as rc
+    from ashen.plotting.re_current import ratio_map_figure
+
+    paths = _paths(run_dir)
+    steps = re_current_steps(run_dir)
+    ratio_map = rc.current_ratio_map(rc.current_density_series(paths, steps))
+    totals = rc.current_totals(paths, ratio_map.steps, None)
+    fig = Figure(figsize=(9, 4.8), layout="constrained")
+    ratio_map_figure(fig, ratio_map, totals.time, real_psi_edge=_real_psi_edge(paths))
+    return fig
+
+
 # --- notebook wrappers ----------------------------------------------------------
 
 
@@ -1523,7 +1541,9 @@ def re_current_view(run_dir: Path | str = "."):
 
         step.observe(redraw, names="value")
         redraw()
-        return w.VBox([step, out])
+        ratio = _canvas(w)
+        _show(ratio, lambda: re_current_ratio_figure(run_dir))
+        return w.VBox([step, out, ratio])
 
     return _gathering(
         w, "Run analyse --diag re_current", lambda: run_analyse(run_dir, ["re_current"]), build

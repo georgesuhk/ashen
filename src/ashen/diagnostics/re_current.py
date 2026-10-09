@@ -42,8 +42,8 @@ from ashen.postproc import read_zeroD
 
 __all__ = [
     "COORDS_VAR", "TOR_MODE", "VARIABLES",
-    "CurrentDensity", "CurrentTotals",
-    "current_density_series", "current_totals", "gather_re_current",
+    "CurrentDensity", "CurrentTotals", "RatioMap",
+    "current_density_series", "current_ratio_map", "current_totals", "gather_re_current",
     "total_re_current", "vpar_re_sign",
 ]
 
@@ -72,6 +72,18 @@ class CurrentTotals:
     total: np.ndarray     #: Ip_tot
     re: np.ndarray        #: in Ip_tot's sign convention (total_re_current)
     thermal: np.ndarray   #: total - re
+
+
+@dataclass(frozen=True)
+class RatioMap:
+    """thermal / runaway current density against step and psi_N."""
+
+    steps: list[int]
+    psi_n: np.ndarray     #: the common grid, shape (n_psi,)
+    #: shape (n_steps, n_psi). nan where the step's profile does not reach
+    #: that psi_N or carries no current there (see current_ratio_map);
+    #: +-inf where there is current but no runaway current at all.
+    ratio: np.ndarray
 
 
 def gather_re_current(
@@ -114,6 +126,34 @@ def current_density_series(paths: RunPaths, steps: list[int]) -> dict[int, Curre
         j_re = np.interp(psi_n, psi_re[order_re], j_re[order_re])
         series[step] = CurrentDensity(psi_n, j_total, j_re, j_total - j_re)
     return series
+
+
+def current_ratio_map(
+    densities: dict[int, CurrentDensity], *, n_psi: int = 200, floor: float = 1e-3,
+) -> RatioMap:
+    """j_thermal / j_RE on one psi_N grid for every step in ``densities``.
+
+    Each step's profile is put on a common grid from 0 to the largest
+    psi_N any step reaches; a step is nan beyond its own range, never
+    extrapolated. Where a step's total current density is below ``floor``
+    times that step's largest, the ratio is nan: with next to no current
+    (the vacuum of an extended boundary) it is one small number over another.
+    """
+    steps = sorted(densities)
+    if not steps:
+        return RatioMap([], np.linspace(0.0, 1.0, n_psi), np.empty((0, n_psi)))
+    psi_n = np.linspace(0.0, max(float(densities[s].psi_n.max()) for s in steps), n_psi)
+    ratio = np.full((len(steps), n_psi), np.nan)
+    for i, step in enumerate(steps):
+        d = densities[step]
+        total = np.interp(psi_n, d.psi_n, d.total, left=np.nan, right=np.nan)
+        runaway = np.interp(psi_n, d.psi_n, d.re, left=np.nan, right=np.nan)
+        peak = np.nanmax(np.abs(d.total)) if d.total.size else 0.0
+        carries = np.abs(total) >= floor * peak if peak > 0 else np.zeros(n_psi, dtype=bool)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            row = (total - runaway) / runaway
+        ratio[i] = np.where(carries, row, np.nan)
+    return RatioMap(steps, psi_n, ratio)
 
 
 def vpar_re_sign(paths: RunPaths) -> float | None:

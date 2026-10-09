@@ -153,7 +153,7 @@ def test_viewer_section(tmp_path, monkeypatch):
 
     button, _, holder = viewer.re_current_view(run).children
     assert button.description == "Run analyse --diag re_current"
-    step, canvas = holder.children[0].children
+    step, canvas, _ = holder.children[0].children
     before = bytes(canvas.children[0].value)
     step.value = 0
     assert bytes(canvas.children[0].value) != before
@@ -162,3 +162,73 @@ def test_viewer_section(tmp_path, monkeypatch):
     empty = tmp_path / "empty"
     empty.mkdir()
     assert isinstance(viewer.re_current_view(empty).children[2].children[0], w.HTML)
+
+
+# --- thermal / runaway against time and psi_N ---------------------------------------
+
+
+def test_ratio_map_is_thermal_over_runaway_on_one_grid(tmp_path):
+    _, paths = _folder(tmp_path, re_share=(0.8, 0.5, 0.2))
+    ratio_map = rc.current_ratio_map(rc.current_density_series(paths, STEPS), n_psi=50)
+    assert ratio_map.steps == STEPS and ratio_map.ratio.shape == (3, 50)
+    inside = ratio_map.psi_n < 0.9
+    for row, share in zip(ratio_map.ratio, (0.8, 0.5, 0.2)):
+        np.testing.assert_allclose(row[inside], (1 - share) / share)
+    # j_total = 0 at psi_N = 1: no current to take a ratio of
+    assert np.isnan(ratio_map.ratio[:, -1]).all()
+
+
+def test_ratio_map_special_values():
+    psi_n = np.linspace(0, 1, 11)
+    one = np.ones(11)
+    densities = {
+        0: rc.CurrentDensity(psi_n, one, 0 * one, one),                  # no runaways at all
+        1: rc.CurrentDensity(psi_n, one, 2 * one, -one),                 # thermal runs against
+        2: rc.CurrentDensity(psi_n[:6], one[:6], one[:6] / 2, one[:6] / 2),   # reaches 0.5 only
+    }
+    ratio_map = rc.current_ratio_map(densities, n_psi=11)
+    assert np.isposinf(ratio_map.ratio[0]).all()
+    np.testing.assert_allclose(ratio_map.ratio[1], -0.5)
+    np.testing.assert_allclose(ratio_map.ratio[2, :6], 1.0)
+    assert np.isnan(ratio_map.ratio[2, 6:]).all()                        # not extrapolated
+    assert rc.current_ratio_map({}).ratio.shape[0] == 0
+
+
+def test_ratio_map_figure_colours_red_for_runaway_and_green_for_thermal(tmp_path):
+    from matplotlib.figure import Figure
+
+    from ashen.plotting.re_current import (
+        RATIO_RANGE, plot_current_ratio_map, ratio_map_figure,
+    )
+
+    _, paths = _folder(tmp_path, re_share=(0.999, 0.5, 0.001))
+    ratio_map = rc.current_ratio_map(rc.current_density_series(paths, STEPS), n_psi=40)
+    fig = ratio_map_figure(Figure(), ratio_map, [0.0, 1e-4, 2e-4], real_psi_edge=0.8)
+    ax = fig.axes[0]
+    mesh = ax.collections[0]
+    assert (mesh.norm.vmin, mesh.norm.vmax) == RATIO_RANGE and ax.get_xlabel() == "t [ms]"
+    colour = lambda ratio: mesh.cmap(mesh.norm(ratio))        # noqa: E731
+    r, g, _, _ = colour(1e-3)
+    assert r > 0.6 and g < 0.3                                # all runaway: red
+    r, g, _, _ = colour(1e3)
+    assert g > 0.3 and r < 0.2                                # all thermal: green
+    values = mesh.get_array().reshape(40, 3)
+    assert values[5, 0] < 0.01 and values[5, 1] == pytest.approx(1.0) and values[5, 2] > 100
+
+    out = plot_current_ratio_map(ratio_map, tmp_path / "f" / "ratio.png", time=None)
+    assert out.is_file()
+
+    one_step = rc.current_ratio_map({0: rc.current_density_series(paths, STEPS)[0]})
+    assert "two steps" in ratio_map_figure(Figure(), one_step).axes[0].texts[0].get_text()
+
+
+def test_viewer_shows_the_ratio_map_under_the_profiles(tmp_path):
+    pytest.importorskip("ipywidgets")
+    pytest.importorskip("h5py")
+    from ashen import viewer
+
+    run, _ = _folder(tmp_path)
+    assert len(viewer.re_current_ratio_figure(run).axes) == 2          # map and colour bar
+    _, _, holder = viewer.re_current_view(run).children
+    assert len(holder.children[0].children) == 3
+    assert bytes(holder.children[0].children[2].children[0].value[:4]) == b"\x89PNG"

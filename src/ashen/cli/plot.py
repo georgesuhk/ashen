@@ -1186,7 +1186,7 @@ def _plot_re_current(
     densities against psi_N at the last gathered step
     (diagnostics.re_current; ``profiles/re_current.png``)."""
     from ashen.diagnostics import re_current as rc
-    from ashen.plotting.re_current import plot_re_current
+    from ashen.plotting.re_current import plot_current_ratio_map, plot_re_current
 
     densities = rc.current_density_series(paths, steps)
     if not densities:
@@ -1209,6 +1209,18 @@ def _plot_re_current(
         real_psi_edge=real_psi_edge, **_dpi_kwargs(dpi),
     )
     print(f"  saved {out}")
+    if len(densities) >= 2:
+        # the totals are on `steps`; the map only has the steps with profiles
+        time_by_step = dict(zip(totals.steps, totals.time))
+        ratio_map = rc.current_ratio_map(densities)
+        out = plot_current_ratio_map(
+            ratio_map, paths.profile_figures_dir / "re_current_ratio.png",
+            time=[time_by_step[step] for step in ratio_map.steps],
+            real_psi_edge=real_psi_edge, **_dpi_kwargs(dpi),
+        )
+        print(f"  saved {out}")
+    elif densities:
+        print("  ratio map (thermal / runaway against time and psi_N) needs two steps or more")
     if densities and np.isfinite(totals.re).any():
         last = int(np.flatnonzero(np.isfinite(totals.re))[-1])
         print(f"  step {totals.steps[last]}: total {totals.total[last] / 1e3:.2f} kA, "
