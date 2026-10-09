@@ -4,6 +4,19 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-09: `run_jorek -job NAME`
+
+- `run_jorek shotfile.py --run -job 2h` (or `--run_r -job 2h`) queues
+  with that jobscript from site.toml's jobscripts folder instead of the
+  shotfile's `jobscript`, as `ptrace -job` does. `--job` is the same.
+- The shotfile is not changed; the next run without `-job` uses its own
+  `jobscript` again.
+- Works with `--keep-inputs` and with `--scan ... --apply --run`.
+- A name not in the jobscripts folder is refused, listing those there.
+  `-job` without `--run` or `--run_r` is refused: the interactive stages
+  use no jobscript.
+- Tested with the submit command intercepted; not run on the HPC.
+
 ## 2026-10-08: `re_current`: runaway and thermal current
 
 - New diagnostic for runs with the RE fluid:
