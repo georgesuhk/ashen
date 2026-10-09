@@ -142,6 +142,7 @@ from ashen.ptracing import LOG_FILE, other_traces, ptrace_dir, ptrace_label, tra
 DIAG_CHOICES = (
     "poincare", "connection_length", "four", "profiles", "theta_hist", "wetted_fraction",
     "scan_map", "particles", "particle_exits", "particle_wetted", "particle_loss",
+    "re_current",
 )
 
 #: Diags with a registered --compare renderer -- asking for one without (e.g.
@@ -1175,6 +1176,43 @@ def _draw_profile_variant(
             print(f"  {ylabel!r}: fewer than two steps, skipping animation")
         else:
             print(f"  {gif_out}")
+
+
+def _plot_re_current(
+    case: Case, paths: RunPaths, steps: list[int], *, dpi: int | None, n_workers: int = 1,
+    explicit: bool = True,
+) -> None:
+    """Runaway and thermal current: totals against time, and the current
+    densities against psi_N at the last gathered step
+    (diagnostics.re_current; ``profiles/re_current.png``)."""
+    from ashen.diagnostics import re_current as rc
+    from ashen.plotting.re_current import plot_re_current
+
+    densities = rc.current_density_series(paths, steps)
+    if not densities:
+        if not explicit:
+            # a bare `plot --case X` asks for every diag: say nothing, gather
+            # nothing and draw nothing for a case that never asked for this one
+            return
+        print("  no currdens/recurrdens profiles cached (run analyse --diag re_current)")
+    _ensure_zero_d(case, paths, steps, n_workers=n_workers)
+    sign = rc.vpar_re_sign(paths)
+    if sign is None:
+        print(f"  vpar_re_sign not found in {paths.in_main}: total RE current not drawn")
+    totals = rc.current_totals(paths, steps, sign)
+    try:
+        real_psi_edge = read_float(paths.real_psi_edge)
+    except (OSError, ValueError):
+        real_psi_edge = 1.0
+    out = plot_re_current(
+        totals, densities, paths.profile_figures_dir / "re_current.png",
+        real_psi_edge=real_psi_edge, **_dpi_kwargs(dpi),
+    )
+    print(f"  saved {out}")
+    if densities and np.isfinite(totals.re).any():
+        last = int(np.flatnonzero(np.isfinite(totals.re))[-1])
+        print(f"  step {totals.steps[last]}: total {totals.total[last] / 1e3:.2f} kA, "
+              f"runaway {totals.re[last] / 1e3:.2f} kA, thermal {totals.thermal[last] / 1e3:.2f} kA")
 
 
 def _plot_profiles(
@@ -2258,6 +2296,11 @@ def _run_case(
             case, paths, steps or case.steps_for("four"), log=four_log, dpi=dpi,
             n_workers=n_workers, radial_log=four_radial_log,
             radial_quantity=four_radial_quantity,
+        )
+    if "re_current" in diags:
+        _plot_re_current(
+            case, paths, steps or case.steps_for("re_current"), dpi=dpi, n_workers=n_workers,
+            explicit=explicit_diags,
         )
     if "profiles" in diags:
         _plot_profiles(

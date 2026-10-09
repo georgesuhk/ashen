@@ -62,6 +62,8 @@ __all__ = [
     "profiles_available",
     "profiles_figure",
     "profiles_view",
+    "re_current_figure",
+    "re_current_view",
     "restart_nodes",
     "run_analyse",
     "shotfile_qa",
@@ -929,6 +931,37 @@ def profiles_figure(run_dir: Path | str, key: ProfileKey, *, step: int | None = 
     return fig
 
 
+def re_current_steps(run_dir: Path | str) -> list[int]:
+    """Steps with both current-density profiles cached (analyse --diag re_current)."""
+    from ashen.diagnostics import re_current as rc
+
+    paths = _paths(run_dir)
+    found = []
+    for path in paths.postproc_dir.glob("*.npz"):
+        match = re.fullmatch(rf"{rc.COORDS_VAR}_recurrdens_midplane-outer_(\d+)", path.stem)
+        if match:
+            found.append(int(match.group(1)))
+    return sorted(rc.current_density_series(paths, sorted(found)))
+
+
+def re_current_figure(run_dir: Path | str, step: int | None = None):
+    """Total, runaway and thermal current against time, and their densities
+    against psi_N on the outer midplane at ``step`` (default: the last one
+    gathered). See diagnostics.re_current for what the split means."""
+    from matplotlib.figure import Figure
+
+    from ashen.diagnostics import re_current as rc
+    from ashen.plotting.re_current import re_current_figure as build
+
+    paths = _paths(run_dir)
+    steps = re_current_steps(run_dir)
+    fig = Figure(figsize=(14, 4.6), layout="constrained")
+    totals = rc.current_totals(paths, steps, rc.vpar_re_sign(paths))
+    build(fig, totals, rc.current_density_series(paths, steps), step=step,
+          real_psi_edge=_real_psi_edge(paths))
+    return fig
+
+
 # --- notebook wrappers ----------------------------------------------------------
 
 
@@ -1442,6 +1475,12 @@ _SECTIONS = [
     ),
     ("Fourier modes (analyse --diag four)", "", lambda run_dir, step: four_view(run_dir)),
     ("Radial profiles (analyse --diag profiles)", "", lambda run_dir, step: profiles_view(run_dir)),
+    (
+        "Runaway and thermal current (analyse --diag re_current)",
+        "Thermal = total &minus; runaway, the current JOREK's resistivity acts on. Densities are "
+        "a cut along the outer midplane, not a flux-surface average.",
+        lambda run_dir, step: re_current_view(run_dir),
+    ),
 ]
 
 
@@ -1464,3 +1503,28 @@ def case_viewer(run_dir: Path | str = ".", *, step: int = 0):
                 f"{html.escape(str(exc))}</pre>"
             ))
     return w.VBox(children)
+
+
+def re_current_view(run_dir: Path | str = "."):
+    """Runaway and thermal current (re_current_figure) with a step selector,
+    under a button that runs ``analyse --diag re_current`` for this run."""
+    w = _widgets()
+
+    def build():
+        steps = re_current_steps(run_dir)
+        if not steps:
+            return w.HTML("no currdens / recurrdens profiles yet (a run with the RE fluid only)")
+        step = w.SelectionSlider(options=steps, value=steps[-1], description="step",
+                                 continuous_update=False)
+        out = _canvas(w)
+
+        def redraw(*_):
+            _show(out, lambda: re_current_figure(run_dir, step.value))
+
+        step.observe(redraw, names="value")
+        redraw()
+        return w.VBox([step, out])
+
+    return _gathering(
+        w, "Run analyse --diag re_current", lambda: run_analyse(run_dir, ["re_current"]), build
+    )

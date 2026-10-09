@@ -56,7 +56,9 @@ _CASE_KEYS = (
 )
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
-_DIAG_NAMES = ("zerod", "poincare", "profiles", "four", "connection_length", "theta_hist")
+_DIAG_NAMES = (
+    "zerod", "poincare", "profiles", "four", "connection_length", "theta_hist", "re_current",
+)
 
 
 class CasesError(RuntimeError):

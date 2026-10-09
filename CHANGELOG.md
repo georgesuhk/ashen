@@ -4,6 +4,35 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-08: `re_current`: runaway and thermal current
+
+- New diagnostic for runs with the RE fluid:
+  `analyse --case X --diag re_current`, then
+  `plot --case X --diag re_current` (`profiles/re_current.png`), and a
+  section in the case viewer with its own gather button.
+- **Per radial position**: total, runaway and thermal toroidal current
+  density [A/m^2] against psi_N on the outer midplane, from
+  jorek2_postproc's `currdens` and `recurrdens` (two calls per step,
+  cached as ordinary profiles). Thermal = total - runaway: the current
+  JOREK's resistive term acts on, `eta (zj - zj_RE)`.
+- **In total**: `Ip_tot` and `Ipre_tot` from the zeroD caches against
+  time. JOREK gives these two opposite sign conventions (`Ipre_tot`
+  integrates `|Vlight|`), so the runaway current is taken as
+  `-sign(vpar_re_sign) * Ipre_tot`, with `vpar_re_sign` read from the
+  run's `in_main`. Without it the runaway total is not drawn.
+- Steps: the case's `steps`, or `[cases.NAME.re_current]`; points along
+  the midplane: `n_points`.
+- `recurrdens` exists only in a jorek2_postproc built with the RE fluid;
+  `analyse` says so when it gets no such profile.
+- Not included: the current enclosed by each flux surface. A midplane cut
+  cannot give it; it needs the poloidal plane (jorek2_postproc's
+  `rectangle`), which is not built yet.
+- Checked: the sign rule against the zeroD files of the local
+  qa3.3_g3.2/eta1e-3_adv0.1 run (total 439.83 kA, runaway 437.50 kA,
+  thermal 2.33 kA at step 26000). The profile half is tested on synthetic
+  caches only: no `recurrdens` profile has been gathered from a real run.
+  (`diagnostics/re_current.py`, `plotting/re_current.py`)
+
 ## 2026-10-08: `--run_r --keep-inputs`; a guard on `--run_r`; stale shotfile reads
 
 - `run_jorek shotfile.py --run_r --keep-inputs` restarts a run without
