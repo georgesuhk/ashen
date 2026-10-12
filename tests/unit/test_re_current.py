@@ -145,6 +145,15 @@ def test_figure_draws_only_the_species_asked_for(tmp_path):
         assert [t.get_text() for t in ax.get_legend().get_texts()] == [
             "runaway", "thermal (total $-$ runaway)"]
 
+    # with a selection the y range follows the drawn curves, not the zero
+    # line: the total current here is 400 kA at every step
+    full = re_current_figure(Figure(), totals, densities, step=100)
+    one = re_current_figure(Figure(), totals, densities, step=100, show=["total"])
+    lo, hi = one.axes[0].get_ylim()
+    assert 0.0 < lo < 400.0 < hi
+    lo, hi = full.axes[0].get_ylim()
+    assert lo < 0.0 < 400.0 < hi                    # all three: zero stays in view
+
     # nothing ticked: empty panels, no legend, no error
     fig = re_current_figure(Figure(), totals, densities, step=100, show=[])
     for ax in fig.axes:

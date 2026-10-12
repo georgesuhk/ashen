@@ -29,6 +29,18 @@ _LABELS = {"total": "total", "re": "runaway", "thermal": "thermal (total $-$ run
 SPECIES = ("total", "re", "thermal")
 
 
+def _zero_line(ax, show) -> None:
+    """The line at zero. With all of SPECIES drawn it is part of the y
+    range, as before; with a selection the range follows the drawn curves
+    alone, so a curve far from zero fills the panel."""
+    if all(name in show for name in SPECIES):
+        ax.axhline(0.0, color="#898781", lw=0.6)
+        return
+    ylim = ax.get_ylim()
+    ax.axhline(0.0, color="#898781", lw=0.6)
+    ax.set_ylim(ylim)
+
+
 def draw_current_totals(
     ax, totals: CurrentTotals, *, mark_step: int | None = None, show=SPECIES,
 ) -> None:
@@ -41,7 +53,7 @@ def draw_current_totals(
                 label=_LABELS[name])
     if mark_step is not None and mark_step in totals.steps:
         ax.axvline(x[totals.steps.index(mark_step)], color="#898781", lw=1, ls="--")
-    ax.axhline(0.0, color="#898781", lw=0.6)
+    _zero_line(ax, show)
     ax.set_xlabel("t [ms]" if by_time else "Time step")
     ax.set_ylabel("toroidal current [kA]")
     ax.set_title("Current through the poloidal plane", loc="left", fontsize=11, fontweight="bold")
@@ -61,7 +73,7 @@ def draw_current_density(
                 label=_LABELS[name])
     if real_psi_edge < 1.0:
         ax.axvline(real_psi_edge, color="#898781", lw=1, ls="--")
-    ax.axhline(0.0, color="#898781", lw=0.6)
+    _zero_line(ax, show)
     ax.set_xlabel(r"$\psi_N$ (JOREK grid), outer midplane")
     ax.set_ylabel(r"toroidal current density [MA/m$^2$]")
     where = "" if step is None else f", step {step}"
