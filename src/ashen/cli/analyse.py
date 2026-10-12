@@ -300,6 +300,10 @@ def _run_case(
             print(f"  re_current {done}/{total}: step {step} {var}")
 
         steps = case.steps_for("re_current")
+        # q-profile gives the plasma's own l_i under plot's ratio map
+        # (diagnostics.equilibrium.li_series) -- gathered here, as poincare
+        # and four gather theirs, so re_current alone is enough for it.
+        _gather_qprofile(jrun, paths, steps, force=force, n_workers=n_workers)
         n_ok = re_current_diag.gather_re_current(
             jrun, paths, steps, n_points=case.n_points, n_workers=n_workers, force=force,
             on_progress=_re_current_progress,

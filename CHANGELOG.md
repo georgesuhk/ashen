@@ -4,6 +4,20 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-12: `analyse --diag re_current` gathers the q-profile too
+
+- `--diag re_current` now also gathers each of its steps' q-profile
+  (`postproc/qprofile_s<step>.dat`), as `--diag four` does. That is what
+  the plasma-only l_i under the thermal / runaway ratio map is computed
+  from, so `re_current` alone now gives both l_i curves; before, the
+  plasma's own appeared only for steps `four` had happened to gather.
+- The **Run analyse --diag re_current** button in the case viewer does the
+  same, since it runs this command.
+- Cached per step: steps that already have a q-profile are not rerun
+  (`--force` reruns them). A step whose restart is missing is warned
+  about and skipped, as for the other gathers.
+- Cost: one more short `jorek2_postproc` call per new step. Not timed.
+
 ## 2026-10-12: runaway density in the case viewer
 
 - New section "Runaway density (from the restart files)", above
