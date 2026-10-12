@@ -1008,13 +1008,15 @@ def re_current_steps(run_dir: Path | str) -> list[int]:
     return sorted(rc.current_density_series(paths, sorted(found)))
 
 
-def re_current_figure(run_dir: Path | str, step: int | None = None):
+def re_current_figure(run_dir: Path | str, step: int | None = None, *, show=None):
     """Total, runaway and thermal current against time, and their densities
     against psi_N on the outer midplane at ``step`` (default: the last one
-    gathered). See diagnostics.re_current for what the split means."""
+    gathered). ``show``: which of "total", "re", "thermal" to draw (default:
+    all three). See diagnostics.re_current for what the split means."""
     from matplotlib.figure import Figure
 
     from ashen.diagnostics import re_current as rc
+    from ashen.plotting.re_current import SPECIES
     from ashen.plotting.re_current import re_current_figure as build
 
     paths = _paths(run_dir)
@@ -1022,7 +1024,7 @@ def re_current_figure(run_dir: Path | str, step: int | None = None):
     fig = Figure(figsize=(14, 4.6), layout="constrained")
     totals = rc.current_totals(paths, steps, rc.vpar_re_sign(paths))
     build(fig, totals, rc.current_density_series(paths, steps), step=step,
-          real_psi_edge=_real_psi_edge(paths))
+          real_psi_edge=_real_psi_edge(paths), show=SPECIES if show is None else show)
     return fig
 
 
@@ -1674,8 +1676,9 @@ def case_viewer(run_dir: Path | str = ".", *, step: int = 0):
 
 
 def re_current_view(run_dir: Path | str = "."):
-    """Runaway and thermal current (re_current_figure) with a step selector,
-    under a button that runs ``analyse --diag re_current`` for this run."""
+    """Runaway and thermal current (re_current_figure) with a step selector
+    and a checkbox per current (total, runaway, thermal), under a button
+    that runs ``analyse --diag re_current`` for this run."""
     w = _widgets()
 
     def build():
@@ -1684,16 +1687,24 @@ def re_current_view(run_dir: Path | str = "."):
             return w.HTML("no currdens / recurrdens profiles yet (a run with the RE fluid only)")
         step = w.SelectionSlider(options=steps, value=steps[-1], description="step",
                                  continuous_update=False)
+        boxes = []
+        for name, label in (("total", "total"), ("re", "runaway"), ("thermal", "thermal")):
+            box = w.Checkbox(value=True, description=label, indent=False,
+                             layout=w.Layout(width="auto"))
+            box.species = name
+            boxes.append(box)
         out = _canvas(w)
 
         def redraw(*_):
-            _show(out, lambda: re_current_figure(run_dir, step.value))
+            show = [box.species for box in boxes if box.value]
+            _show(out, lambda: re_current_figure(run_dir, step.value, show=show))
 
-        step.observe(redraw, names="value")
+        for control in (step, *boxes):
+            control.observe(redraw, names="value")
         redraw()
         ratio = _canvas(w)
         _show(ratio, lambda: re_current_ratio_figure(run_dir))
-        return w.VBox([step, out, ratio])
+        return w.VBox([w.HBox([step, *boxes]), out, ratio])
 
     return _gathering(
         w, "Run analyse --diag re_current", lambda: run_analyse(run_dir, ["re_current"]), build

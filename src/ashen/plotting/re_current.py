@@ -14,7 +14,7 @@ from ashen.diagnostics.re_current import CurrentDensity, CurrentTotals, RatioMap
 from ashen.plotting import DEFAULT_DPI, style
 
 __all__ = [
-    "COLORS", "RATIO_RANGE", "draw_current_density", "draw_current_ratio_map", "draw_li",
+    "COLORS", "RATIO_RANGE", "SPECIES", "draw_current_density", "draw_current_ratio_map", "draw_li",
     "draw_current_totals", "plot_current_ratio_map", "plot_re_current", "ratio_map_figure", "re_current_figure",
 ]
 
@@ -25,14 +25,18 @@ RATIO_RANGE = (1e-2, 1e2)
 #: One colour per species, the same in both panels.
 COLORS = {"total": "#52514e", "re": "#c8442f", "thermal": "#2a78d6"}
 _LABELS = {"total": "total", "re": "runaway", "thermal": "thermal (total $-$ runaway)"}
+#: The three currents, in drawing order. ``show`` below is a subset of these.
+SPECIES = ("total", "re", "thermal")
 
 
-def draw_current_totals(ax, totals: CurrentTotals, *, mark_step: int | None = None) -> None:
+def draw_current_totals(
+    ax, totals: CurrentTotals, *, mark_step: int | None = None, show=SPECIES,
+) -> None:
     """Total, RE and thermal current against time (ms), or against step
-    when any step lacks its time."""
+    when any step lacks its time. ``show``: which of SPECIES to draw."""
     by_time = bool(np.isfinite(totals.time).all()) and len(totals.steps) > 0
     x = totals.time * 1e3 if by_time else np.asarray(totals.steps, dtype=float)
-    for name in ("total", "re", "thermal"):
+    for name in (name for name in SPECIES if name in show):
         ax.plot(x, getattr(totals, name) / 1e3, color=COLORS[name], marker="o", markersize=3,
                 label=_LABELS[name])
     if mark_step is not None and mark_step in totals.steps:
@@ -42,14 +46,17 @@ def draw_current_totals(ax, totals: CurrentTotals, *, mark_step: int | None = No
     ax.set_ylabel("toroidal current [kA]")
     ax.set_title("Current through the poloidal plane", loc="left", fontsize=11, fontweight="bold")
     ax.grid(True, linestyle=":", alpha=0.4)
-    ax.legend(frameon=False, fontsize=8)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(frameon=False, fontsize=8)
 
 
 def draw_current_density(
     ax, density: CurrentDensity, *, step: int | None = None, real_psi_edge: float = 1.0,
+    show=SPECIES,
 ) -> None:
-    """The three current densities against psi_N on the outer midplane."""
-    for name in ("total", "re", "thermal"):
+    """The current densities against psi_N on the outer midplane.
+    ``show``: which of SPECIES to draw."""
+    for name in (name for name in SPECIES if name in show):
         ax.plot(density.psi_n, getattr(density, name) / 1e6, color=COLORS[name], lw=1.8,
                 label=_LABELS[name])
     if real_psi_edge < 1.0:
@@ -60,7 +67,8 @@ def draw_current_density(
     where = "" if step is None else f", step {step}"
     ax.set_title(f"Current density{where}", loc="left", fontsize=11, fontweight="bold")
     ax.grid(True, linestyle=":", alpha=0.4)
-    ax.legend(frameon=False, fontsize=8)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(frameon=False, fontsize=8)
 
 
 def re_current_figure(
@@ -70,14 +78,15 @@ def re_current_figure(
     *,
     step: int | None = None,
     real_psi_edge: float = 1.0,
+    show=SPECIES,
 ):
     """Both panels on ``fig``. ``step`` picks the density profile; default:
-    the last step that has one."""
+    the last step that has one. ``show``: which of SPECIES both panels draw."""
     ax_t, ax_j = fig.subplots(1, 2)
     if step is None and densities:
         step = max(densities)
     if np.isfinite(totals.total).any():
-        draw_current_totals(ax_t, totals, mark_step=step)
+        draw_current_totals(ax_t, totals, mark_step=step, show=show)
         if not np.isfinite(totals.re).any():
             ax_t.text(0.5, 0.04, "runaway share not shown: vpar_re_sign not found in in_main,\n"
                       "or the zeroD files have no Ipre_tot", ha="center", va="bottom",
@@ -86,7 +95,8 @@ def re_current_figure(
         ax_t.text(0.5, 0.5, "no zeroD cache (analyse --diag re_current)", ha="center",
                   transform=ax_t.transAxes)
     if step in densities:
-        draw_current_density(ax_j, densities[step], step=step, real_psi_edge=real_psi_edge)
+        draw_current_density(ax_j, densities[step], step=step, real_psi_edge=real_psi_edge,
+                             show=show)
     else:
         ax_j.text(0.5, 0.5, "no currdens / recurrdens profile for this step\n"
                   "(analyse --diag re_current)", ha="center", transform=ax_j.transAxes)
