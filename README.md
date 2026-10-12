@@ -551,6 +551,15 @@ not know whether the equilibrium shown was run from the current inputs.
   looking, not for measuring.
 - The viewer has not been run over Remote SSH on the HPC yet.
 
+**Runaway density.** For a run with the RE fluid, the "Runaway density
+(from the restart files)" section maps n_RE in the poloidal plane at a
+chosen step and toroidal angle, read from the restart itself (no gather
+step). Beside the map are the axisymmetric density against psi_N, with the
+first restart in grey, and the size of each toroidal mode. The line above
+the figure gives e c ∫ n_RE dA, its change since the first restart, and
+JOREK's own `Ipre_tot`: if runaways leave the domain, the first two fall.
+Values are on the grid nodes, linear in between.
+
 **Setting the steps.** The "Steps to analyse (cases.toml)" section sets
 this run's `steps` in the campaign's cases.toml from a step size: it writes
 `steps = { start = 0, step = <size> }`, every restart at a multiple of the
