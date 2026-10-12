@@ -368,6 +368,7 @@ next to the step slider choose which of the three curves both panels draw.
   Underneath, on the same time axis: `l_i(3)` from JOREK's zeroD (whole
   domain, vacuum included with an extended boundary) and, for steps with
   a q-profile cache, the l_i of the plasma only (cylinder definition).
+  `analyse --diag re_current` gathers that q-profile for its steps itself.
 - **Steps** are the case's `steps`, or its own:
 
   ```toml

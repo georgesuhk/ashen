@@ -513,16 +513,28 @@ def test_re_current_gathers_zerod_and_both_profiles_for_its_own_steps(
         paths.zero_d(step).parent.mkdir(parents=True, exist_ok=True)
         paths.zero_d(step).write_text("Time Ip_tot\n1.0 1.0\n", encoding="utf-8")
 
+    def fake_qprofile(jrun, step, paths):
+        # the q-profile the plasma's own l_i under the ratio map comes from
+        seen.setdefault("qprofile", []).append(step)
+        paths.qprofile(step).parent.mkdir(parents=True, exist_ok=True)
+        paths.qprofile(step).write_text("# Psi_n q\n0.5 1.0\n", encoding="utf-8")
+
     def fake_gather(jrun, paths, steps, **kwargs):
         seen.update(steps=steps, **kwargs)
         return 2
 
     monkeypatch.setattr(analyse_cli, "run_zero_d", fake_zero_d)
+    monkeypatch.setattr(analyse_cli.qprofile_diag, "run_qprofile_step", fake_qprofile)
     monkeypatch.setattr(analyse_cli.re_current_diag, "gather_re_current", fake_gather)
 
     analyse_cli._run_case(case, diags=["re_current"], force=False, n_workers=1, omp_threads=1)
 
     assert seen["zerod"] == [200] and seen["steps"] == [200] and seen["n_points"] == 77
+    assert seen["qprofile"] == [200]
+
+    # cached now: a second pass runs neither tool again
+    analyse_cli._run_case(case, diags=["re_current"], force=False, n_workers=1, omp_threads=1)
+    assert seen["zerod"] == [200] and seen["qprofile"] == [200]
     assert "warning" not in capsys.readouterr().out
 
 
@@ -531,6 +543,7 @@ def test_re_current_says_when_the_postproc_build_lacks_recurrdens(
 ):
     case, _ = case_and_run_dir
     monkeypatch.setattr(analyse_cli, "run_zero_d", lambda jrun, step, paths: None)
+    monkeypatch.setattr(analyse_cli, "_gather_qprofile", lambda *a, **k: None)
     monkeypatch.setattr(analyse_cli.re_current_diag, "gather_re_current", lambda *a, **k: 2)
 
     analyse_cli._run_case(case, diags=["re_current"], force=False, n_workers=1, omp_threads=1)
