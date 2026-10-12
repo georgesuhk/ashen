@@ -1041,3 +1041,60 @@ def test_temperature_status_messages(synthetic_campaign, tmp_path):
 
 def test_case_viewer_has_the_temperature_section():
     assert any("Temperature profile" in title for title, _, _ in viewer._SECTIONS)
+
+
+# --- steps of the case in cases.toml ------------------------------------------------
+
+
+def test_steps_view_previews_and_saves_a_step_size(tmp_path):
+    pytest.importorskip("ipywidgets")
+    from ashen.cases import load_cases
+
+    run = tmp_path / "qa2.1" / "eta1e-3"
+    run.mkdir(parents=True)
+    for step in range(0, 2001, 200):
+        (run / f"jorek{step:05d}.h5").write_bytes(b"")
+    cases = tmp_path / "cases.toml"
+    cases.write_text('# keep me\n[cases."qa2.1/eta1e-3"]\nsteps = [0, 200]\n', encoding="utf-8")
+
+    now, row, preview, log = viewer.steps_view(run).children
+    size, save = row.children
+    assert size.value == 200                                   # the restart spacing
+    assert "steps = [0, 200]" in now.value and "2 steps: 0, 200" in now.value
+    assert "11 restarts in this folder, 0 to 2000" in now.value
+
+    size.value = 400
+    assert "{ start = 0, step = 400 }" in preview.value and "6 steps: 0, 400" in preview.value
+    assert cases.read_text().count("steps = [0, 200]") == 1    # nothing written yet
+    size.value = 600
+    assert "the last restart, 2000, is not a multiple of 600" in preview.value
+
+    size.value = 400
+    save.click()
+    assert cases.read_text() == (
+        '# keep me\n[cases."qa2.1/eta1e-3"]\nsteps = { start = 0, step = 400 }\n')
+    assert "saved to" in log.value and "6 steps" in now.value
+    assert load_cases(cases, run_root=tmp_path)["qa2.1/eta1e-3"].steps == list(range(0, 2001, 400))
+    # opened again, the box starts at the saved size
+    assert viewer.steps_view(run).children[1].children[0].value == 400
+
+
+def test_steps_view_adds_a_case_and_says_when_there_is_no_cases_toml(tmp_path):
+    w = pytest.importorskip("ipywidgets")
+    run = tmp_path / "camp" / "new"
+    run.mkdir(parents=True)
+    view = viewer.steps_view(run)
+    assert isinstance(view, w.HTML) and "no cases.toml above" in view.value
+
+    cases = tmp_path / "camp" / "cases.toml"
+    cases.write_text('[cases."other"]\nsteps = [0]\n', encoding="utf-8")
+    now, row, _, _ = viewer.steps_view(run).children
+    assert "saving adds it" in now.value and "no restarts in this folder yet" in now.value
+    row.children[1].click()
+    assert cases.read_text().endswith('\n[cases."new"]\nsteps = { start = 0, step = 1 }\n')
+
+
+def test_steps_section_sits_between_the_inputs_and_the_gathered_views():
+    titles = [title for title, _, _ in viewer._SECTIONS]
+    at = next(i for i, title in enumerate(titles) if title.startswith("Steps to analyse"))
+    assert titles[at - 1] == "Equilibrium" and titles[at + 1].startswith("Magnetic energies")

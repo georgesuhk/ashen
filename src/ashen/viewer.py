@@ -68,6 +68,7 @@ __all__ = [
     "re_current_ratio_figure",
     "re_current_view",
     "restart_nodes",
+    "steps_view",
     "run_analyse",
     "shotfile_qa",
     "starwall_wall",
@@ -412,6 +413,18 @@ def temperature_status(
 # --- gathering what a view needs -------------------------------------------------
 
 
+def _campaign(run_dir: Path | str) -> tuple[Path, str]:
+    """(campaign folder, case name) of a run folder: the nearest folder
+    above it holding a cases.toml, and the run's path below that."""
+    run_dir = Path(run_dir).resolve()
+    root = next((f for f in run_dir.parents if (f / "cases.toml").is_file()), None)
+    if root is None:
+        raise ShotfileError(
+            f"no cases.toml above {run_dir}: analyse needs one in the campaign folder"
+        )
+    return root, run_dir.relative_to(root).as_posix()
+
+
 def analyse_command(run_dir: Path | str, diags: list[str]) -> tuple[list[str], Path]:
     """(command, folder to run it in) for ``analyse --case <this run> --diag ...``.
 
@@ -419,13 +432,7 @@ def analyse_command(run_dir: Path | str, diags: list[str]) -> tuple[list[str], P
     the case is the run folder's path below it. Raises ShotfileError, with
     the lines to add, if there is no cases.toml or the run is not in it.
     """
-    run_dir = Path(run_dir).resolve()
-    root = next((f for f in run_dir.parents if (f / "cases.toml").is_file()), None)
-    if root is None:
-        raise ShotfileError(
-            f"no cases.toml above {run_dir}: analyse needs one in the campaign folder"
-        )
-    name = run_dir.relative_to(root).as_posix()
+    root, name = _campaign(run_dir)
     import tomllib
 
     try:
@@ -1637,6 +1644,14 @@ _SECTIONS = [
         lambda run_dir, step: equilibrium_view(run_dir),
     ),
     (
+        "Steps to analyse (cases.toml)",
+        "Which restart steps <code>analyse</code> and <code>plot</code> use for this run: every "
+        "<i>step size</i>-th step from 0 to the last restart. <b>Save to cases.toml</b> writes "
+        "that as this case's <code>steps</code>; restarts written later are picked up without "
+        "saving again.",
+        lambda run_dir, step: steps_view(run_dir),
+    ),
+    (
         "Magnetic energies (live data)",
         "The magnetic energy of each toroidal harmonic against time, from "
         "<code>macroscopic_vars.dat</code>, as <code>plot_live_data.sh -q magnetic_energies</code> "
@@ -1673,6 +1688,140 @@ def case_viewer(run_dir: Path | str = ".", *, step: int = 0):
                 f"{html.escape(str(exc))}</pre>"
             ))
     return w.VBox(children)
+
+
+def _steps_summary(steps: list[int]) -> str:
+    """'61 steps: 0, 200, 400, ..., 11800, 12000'."""
+    if not steps:
+        return "no steps"
+    shown = [str(s) for s in steps]
+    if len(shown) > 7:
+        shown = shown[:4] + ["&hellip;"] + shown[-2:]
+    return f"{len(steps)} step{'s' if len(steps) != 1 else ''}: " + ", ".join(shown)
+
+
+def steps_view(run_dir: Path | str = "."):
+    """Set this case's ``steps`` in the campaign's cases.toml from a step
+    size: ``{ start = 0, step = <size> }``, which ashen.cases reads as every
+    restart at a multiple of the size, from 0 to the run's last restart.
+
+    Shows the entry as it is now and what the chosen size would give before
+    anything is written. A case not yet in cases.toml is added.
+    """
+    import tomllib
+
+    from ashen import cases
+    from ashen.cases_edit import format_steps_table, set_case_steps
+    from ashen.padding import restart_steps
+
+    w = _widgets()
+    run_dir = Path(run_dir).resolve()
+    try:
+        root, name = _campaign(run_dir)
+    except ShotfileError as exc:
+        return w.HTML(f"<pre>{html.escape(str(exc))}</pre>")
+    path = root / "cases.toml"
+
+    def resolve(spec):
+        return cases._steps_from_spec(spec, case_name=name, source=path, run_dir=run_dir)
+
+    def entry():
+        """(the case's own steps, [defaults]' steps, diags with their own steps)."""
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        raw = data.get("cases", {}).get(name)
+        own = None if raw is None else raw.get("steps")
+        overrides = sorted(
+            key for key, value in (raw or {}).items()
+            if isinstance(value, dict) and "steps" in value
+        )
+        return raw is not None, own, data.get("defaults", {}).get("steps"), overrides
+
+    available = restart_steps(run_dir)
+    spacing = min((b - a for a, b in zip(available, available[1:])), default=1)
+    try:
+        _, own, _, _ = entry()
+    except Exception:
+        own = None
+    first = own.get("step") if isinstance(own, dict) else None
+    size = w.BoundedIntText(value=first if isinstance(first, int) and first >= 1 else spacing,
+                            min=1, max=10**9, step=spacing, description="step size",
+                            layout=w.Layout(width="200px"))
+    save = w.Button(description="Save to cases.toml", button_style="primary",
+                    layout=w.Layout(width="auto"),
+                    tooltip="Writes this case's steps; the rest of the file stays as it is")
+    now, preview, log = w.HTML(), w.HTML(), _Log(w)
+
+    def spec():
+        return {"start": 0, "step": int(size.value)}
+
+    def refresh_now():
+        code = html.escape(f'[cases."{name}"]')
+        try:
+            listed, own, default, overrides = entry()
+            if own is not None:
+                text = (f"<code>steps = {html.escape(_toml_value(own))}</code> &rarr; "
+                        f"{_steps_summary(resolve(own))}")
+            elif default is not None:
+                text = (f"no <code>steps</code> of its own; <code>[defaults]</code> gives "
+                        f"{_steps_summary(resolve(default))}")
+            elif listed:
+                text = "no <code>steps</code> yet"
+            else:
+                text = "not in the file yet: saving adds it"
+            if overrides:
+                text += ("<br>These diags have their own steps, which saving does not change: "
+                         + ", ".join(f"<code>{html.escape(d)}</code>" for d in overrides))
+        except Exception as exc:
+            text = (f"<span style='color:{_RED}'>{html.escape(type(exc).__name__)}: "
+                    f"{html.escape(str(exc))}</span>")
+        restarts = (f"{len(available)} restarts in this folder, {available[0]} to "
+                    f"{available[-1]}" if available else "no restarts in this folder yet")
+        now.value = (f"<code>{html.escape(str(path))}</code>, <code>{code}</code><br>"
+                     f"now: {text}<br>{restarts}")
+
+    def refresh_preview(*_):
+        chosen = resolve(spec())
+        line = (f"would write <code>steps = {html.escape(format_steps_table(spec()))}</code> "
+                f"&rarr; {_steps_summary(chosen)}")
+        if available and not chosen:
+            line += (f"<br><span style='color:{_RED}'>no restart is at a multiple of "
+                     f"{int(size.value)} from 0</span>")
+        elif available and chosen[-1] != available[-1]:
+            line += (f"<br>the last restart, {available[-1]}, is not a multiple of "
+                     f"{int(size.value)} and is left out")
+        preview.value = line
+
+    def on_save(_):
+        with log:
+            try:
+                done = set_case_steps(path, name, spec())
+            except Exception as exc:
+                print(f"not saved: {exc}")
+                return
+            print(f"saved to {path}: steps = {format_steps_table(spec())} ({done}).")
+        refresh_now()
+
+    size.observe(refresh_preview, names="value")
+    save.on_click(on_save)
+    refresh_now()
+    refresh_preview()
+    return w.VBox([now, w.HBox([size, save]), preview, log.widget])
+
+
+def _toml_value(value) -> str:
+    """A steps value (list, range table or a mix) as one line of TOML."""
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        return "{ " + ", ".join(f"{k} = {_toml_value(v)}" for k, v in value.items()) + " }"
+    if isinstance(value, list):
+        items = [_toml_value(v) for v in value]
+        if len(items) > 9:
+            items = items[:5] + ["..."] + items[-2:]
+        return "[" + ", ".join(items) + "]"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def re_current_view(run_dir: Path | str = "."):

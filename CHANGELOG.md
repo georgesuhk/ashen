@@ -4,6 +4,33 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-12: set a case's `steps` from the case viewer
+
+- New section "Steps to analyse (cases.toml)", after Equilibrium and
+  before the gathered views. Choose a **step size** and press **Save to
+  cases.toml**: the run's case gets `steps = { start = 0, step = <size> }`,
+  which is every restart at a multiple of the size, from 0 to the run's
+  last restart. Restarts written later are picked up without saving again.
+- Before saving, the section shows the entry as it is now, how many
+  restarts the folder has, and the steps the chosen size would give. It
+  says so when the last restart is not a multiple of the size (it is then
+  left out), or when no restart matches at all.
+- The box starts at the size already saved, else at the spacing of the
+  restarts.
+- The rest of cases.toml stays as written, comments included. Only the
+  case's own `steps` value is replaced (a list over several lines too; a
+  comment on that value goes with it). A case that took its steps from
+  `[defaults]` gets its own `steps` line; a run not in the file is added
+  at the end. Per-diag overrides (`[cases.NAME.four]` ...) are not
+  changed, and the section lists them.
+- Safety: the edited text must parse to the old file with that one value
+  changed, or nothing is written and the section says to edit by hand
+  (for example a case written as an inline table under `[cases]`).
+- The cases.toml used is the nearest one above the run folder, as for the
+  **Run analyse** buttons. (`cases_edit.set_case_steps`, `viewer.steps_view`)
+- Tested on files made for the tests; not yet tried on your real
+  cases.toml or in a live notebook.
+
 ## 2026-10-12: choose which currents the case viewer's re_current plot draws
 
 - The "Runaway and thermal current" section has three checkboxes next to
