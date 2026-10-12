@@ -9,8 +9,11 @@ and flag named here.
 - The "Runaway and thermal current" section has three checkboxes next to
   the step slider: **total**, **runaway**, **thermal**. Unticking one
   removes that curve from both panels (current against time, current
-  density against psi_N), so the remaining curves set the y range. All
-  three start ticked.
+  density against psi_N). All three start ticked.
+- With a selection, the y axis of each panel fits the curves still drawn:
+  the line at zero no longer holds zero in view, so runaway alone at
+  700-790 kA fills the panel instead of sitting at the top of 0-800. With
+  all three ticked the range is as before (zero included).
 - The thermal / runaway ratio map underneath is not affected.
 - From a cell of your own: `viewer.re_current_figure(".", step, show=["re", "thermal"])`.
   `plotting.re_current`'s `draw_current_totals`, `draw_current_density` and
