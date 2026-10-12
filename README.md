@@ -345,6 +345,8 @@ python ~/ashen/bin/plot    --case "qa3.3_g3.2/eta1e-3_adv0.1" --diag re_current
 or the **Run analyse --diag re_current** button in the case viewer.
 `plot` writes `profiles/re_current.png` in the run folder and prints the
 last step's three totals.
+In the case viewer, the **total**, **runaway** and **thermal** checkboxes
+next to the step slider choose which of the three curves both panels draw.
 
 - **Left panel: totals against time.** `Ip_tot` and the runaway current
   from the zeroD files, and their difference.

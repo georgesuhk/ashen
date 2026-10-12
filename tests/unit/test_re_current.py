@@ -130,6 +130,28 @@ def test_figure_draws_three_species_in_both_panels(tmp_path):
     assert out.is_file() and out.stat().st_size > 1000
 
 
+def test_figure_draws_only_the_species_asked_for(tmp_path):
+    from matplotlib.figure import Figure
+
+    from ashen.plotting.re_current import COLORS, re_current_figure
+
+    _, paths = _folder(tmp_path)
+    totals = rc.current_totals(paths, STEPS, 1.0)
+    densities = rc.current_density_series(paths, STEPS)
+    fig = re_current_figure(Figure(), totals, densities, step=100, show=["re", "thermal"])
+    for ax in fig.axes:
+        colours = {line.get_color() for line in ax.get_lines()}
+        assert {COLORS["re"], COLORS["thermal"]} <= colours and COLORS["total"] not in colours
+        assert [t.get_text() for t in ax.get_legend().get_texts()] == [
+            "runaway", "thermal (total $-$ runaway)"]
+
+    # nothing ticked: empty panels, no legend, no error
+    fig = re_current_figure(Figure(), totals, densities, step=100, show=[])
+    for ax in fig.axes:
+        assert ax.get_legend() is None
+        assert not set(COLORS.values()) & {line.get_color() for line in ax.get_lines()}
+
+
 def test_figure_says_what_is_missing(tmp_path):
     from matplotlib.figure import Figure
 
@@ -153,9 +175,17 @@ def test_viewer_section(tmp_path, monkeypatch):
 
     button, _, holder = viewer.re_current_view(run).children
     assert button.description == "Run analyse --diag re_current"
-    step, canvas, _ = holder.children[0].children
+    controls, canvas, _ = holder.children[0].children
+    step, *boxes = controls.children
     before = bytes(canvas.children[0].value)
     step.value = 0
+    assert bytes(canvas.children[0].value) != before
+
+    # a checkbox per current: unticking one redraws without it
+    assert [box.description for box in boxes] == ["total", "runaway", "thermal"]
+    assert all(box.value for box in boxes)
+    before = bytes(canvas.children[0].value)
+    boxes[0].value = False
     assert bytes(canvas.children[0].value) != before
     assert any("re_current" in title for title, _, _ in viewer._SECTIONS)
 

@@ -4,6 +4,20 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-12: choose which currents the case viewer's re_current plot draws
+
+- The "Runaway and thermal current" section has three checkboxes next to
+  the step slider: **total**, **runaway**, **thermal**. Unticking one
+  removes that curve from both panels (current against time, current
+  density against psi_N), so the remaining curves set the y range. All
+  three start ticked.
+- The thermal / runaway ratio map underneath is not affected.
+- From a cell of your own: `viewer.re_current_figure(".", step, show=["re", "thermal"])`.
+  `plotting.re_current`'s `draw_current_totals`, `draw_current_density` and
+  `re_current_figure` take the same `show`.
+- `plot --diag re_current` is unchanged: `profiles/re_current.png` still
+  draws all three.
+
 ## 2026-10-09: magnetic energies in the case viewer
 
 - New section "Magnetic energies (live data)": the magnetic energy of
