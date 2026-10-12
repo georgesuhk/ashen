@@ -551,6 +551,13 @@ not know whether the equilibrium shown was run from the current inputs.
   looking, not for measuring.
 - The viewer has not been run over Remote SSH on the HPC yet.
 
+**Setting the steps.** The "Steps to analyse (cases.toml)" section sets
+this run's `steps` in the campaign's cases.toml from a step size: it writes
+`steps = { start = 0, step = <size> }`, every restart at a multiple of the
+size from 0 to the last one, and shows what that gives before you press
+**Save to cases.toml**. Comments and every other line of the file are kept;
+per-diag step overrides are left alone.
+
 **Trying it without JOREK.** `notebooks/case_viewer_demo.ipynb` writes a
 made-up campaign into `notebooks/demo_campaign/` (`ashen.demo.
 make_demo_campaign`) and shows every view on it. The run's inputs come from
