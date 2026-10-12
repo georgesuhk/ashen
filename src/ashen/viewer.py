@@ -67,6 +67,8 @@ __all__ = [
     "re_current_figure",
     "re_current_ratio_figure",
     "re_current_view",
+    "re_density_figure",
+    "re_density_view",
     "restart_nodes",
     "steps_view",
     "run_analyse",
@@ -632,6 +634,15 @@ def boundary_figure(run_dir: Path | str):
     return fig
 
 
+def _node_psi_n(psi: np.ndarray, zj: np.ndarray) -> tuple[int, np.ndarray]:
+    """(axis node, psi_N on the nodes) from the axisymmetric psi and zj: the
+    axis is the node of largest |zj|, the boundary the node whose psi is
+    furthest from the axis's."""
+    axis = int(np.argmax(np.abs(zj)))
+    bnd_psi = psi[np.argmax(np.abs(psi - psi[axis]))]
+    return axis, (psi - psi[axis]) / (bnd_psi - psi[axis])
+
+
 def equilibrium_figure(run_dir: Path | str, step: int = 0, *, levels: int = 14):
     """psi_N contours of one restart with the plasma edge marked, the
     q-profile, and the toroidal current density on the nodes."""
@@ -639,9 +650,7 @@ def equilibrium_figure(run_dir: Path | str, step: int = 0, *, levels: int = 14):
     paths = _paths(run_dir)
     nodes = restart_nodes(paths.restart(step))
     R, Z, psi, zj = nodes["R"], nodes["Z"], nodes["psi"], nodes["zj"]
-    axis = int(np.argmax(np.abs(zj)))
-    bnd_psi = psi[np.argmax(np.abs(psi - psi[axis]))]
-    psi_n = (psi - psi[axis]) / (bnd_psi - psi[axis])
+    axis, psi_n = _node_psi_n(psi, zj)
     edge = _real_psi_edge(paths)
 
     fig = plt.figure(figsize=(14, 6))
@@ -679,6 +688,130 @@ def equilibrium_figure(run_dir: Path | str, step: int = 0, *, levels: int = 14):
         ax.set_xlim(0, 1)
         if edge < 1.0:
             ax.axvline(edge, color=_GREY, lw=1, ls="--")
+    fig.tight_layout()
+    return fig
+
+
+#: in_main fields that only a run with the RE fluid sets.
+_RE_FLUID_FIELDS = ("vpar_re_sign", "re_initialize", "initial_re_current_fraction")
+
+
+def _has_re_fluid(paths: RunPaths) -> bool:
+    """Whether in_main sets any RE-fluid field. A restart does not say which
+    variable is which, so this is what stands between the density view and
+    showing some other model's last variable as n_RE."""
+    for name in _RE_FLUID_FIELDS:
+        try:
+            read_field(paths.in_main, name)
+            return True
+        except (OSError, NamelistError):
+            continue
+    return False
+
+
+def re_density_figure(
+    run_dir: Path | str, step: int, *, phi: float = 0.0, perturbation: bool = False,
+    reference_step: int | None = None, levels: int = 24,
+):
+    """The runaway density of the RE fluid at one restart, read from the
+    restart file itself (diagnostics.re_density).
+
+    Left: n_RE in the poloidal plane at toroidal angle ``phi`` (degrees),
+    every toroidal harmonic summed, over the axisymmetric psi_N contours;
+    ``perturbation`` shows the n > 0 part alone. Right, top: the
+    axisymmetric density on the nodes against psi_N, with
+    ``reference_step``'s (default: the first restart) in grey. Right,
+    bottom: the largest amplitude of each toroidal mode. The title gives
+    e c times the density's integral next to JOREK's own Ipre_tot.
+
+    Drawn on the grid nodes: good for looking, not for measuring.
+    """
+    from matplotlib.tri import Triangulation
+
+    from ashen.diagnostics.re_density import read_re_density
+
+    plt = _plt()
+    paths = _paths(run_dir)
+    if not _has_re_fluid(paths):
+        raise ValueError(
+            f"{paths.in_main.name} sets none of {', '.join(_RE_FLUID_FIELDS)}: not a run with "
+            "the RE fluid, so its restarts hold no runaway density"
+        )
+    now = read_re_density(paths.restart(step))
+    if reference_step is None:
+        reference_step = restart_steps(paths.run_dir)[0]
+    ref = now if reference_step == step else read_re_density(paths.restart(reference_step))
+    edge = _real_psi_edge(paths)
+    axis, psi_n = _node_psi_n(now.psi, now.zj)
+    peak = float(ref.n0.max())
+    if peak <= 0.0:
+        raise ValueError(f"step {reference_step} holds no runaway density")
+    scale = 10.0 ** np.floor(np.log10(peak))
+    unit = rf"$10^{{{int(np.log10(scale))}}}$ m$^{{-3}}$"
+
+    fig = plt.figure(figsize=(14, 6))
+    grid = fig.add_gridspec(2, 2, width_ratios=(1.0, 1.15))
+    ax_map = fig.add_subplot(grid[:, 0])
+    ax_n = fig.add_subplot(grid[0, 1])
+    ax_modes = fig.add_subplot(grid[1, 1])
+
+    mesh = Triangulation(now.R, now.Z, now.triangles)
+    field = now.at(np.deg2rad(phi), perturbation=perturbation)
+    if perturbation:
+        # its own power of ten: the n > 0 part can be many orders below the n = 0 one
+        top = max(float(np.abs(field).max()), 1e-300)
+        own = 10.0 ** np.floor(np.log10(top))
+        filled = ax_map.tricontourf(mesh, field / own,
+                                    levels=np.linspace(-top / own, top / own, levels + 1),
+                                    cmap="RdBu_r")
+        label = rf"$n_{{RE}}$, n > 0 part [$10^{{{int(np.log10(own))}}}$ m$^{{-3}}$]"
+    else:
+        # one scale for every step, the reference step's: runaways lost show as a dimmer map
+        filled = ax_map.tricontourf(mesh, field / scale,
+                                    levels=np.linspace(0.0, peak / scale, levels + 1),
+                                    cmap="YlOrRd", extend="both")
+        label = rf"$n_{{RE}}$ [{unit}]"
+    fig.colorbar(filled, ax=ax_map, label=label, fraction=0.046, pad=0.02)
+    ax_map.tricontour(mesh, psi_n, levels=np.linspace(0.0, 1.0, 11)[1:-1], colors=_GREY,
+                      linewidths=0.5)
+    if edge < 1.0:
+        ax_map.tricontour(mesh, psi_n, levels=[edge], colors=_INK, linewidths=1.2)
+    ax_map.plot(now.R[axis], now.Z[axis], "+", color=_INK, ms=9, mew=1.5)
+    ax_map.set_aspect("equal")
+    when = "" if not np.isfinite(now.time) else f", t = {now.time * 1e3:.4g} ms"
+    _style(ax_map, "R [m]", "Z [m]", rf"Runaway density at $\phi$ = {phi:g}°, step {step}{when}")
+
+    if ref is not now:
+        _, ref_psi_n = _node_psi_n(ref.psi, ref.zj)
+        ax_n.scatter(ref_psi_n, ref.n0 / scale, s=3, color=_GREY, alpha=0.6, linewidths=0,
+                     label=f"step {reference_step}")
+    ax_n.scatter(psi_n, now.n0 / scale, s=3, color=_RED, alpha=0.7, linewidths=0,
+                 label=f"step {step}")
+    ax_n.set_xlim(0, 1)
+    if edge < 1.0:
+        ax_n.axvline(edge, color=_GREY, lw=1, ls="--")
+    ax_n.legend(frameon=False, labelcolor=_INK, fontsize=8, markerscale=3)
+    _style(ax_n, r"$\psi_N$ (JOREK grid)", rf"$n_{{RE}}$, n = 0 [{unit}]",
+           "Axisymmetric runaway density on the nodes")
+
+    modes = now.mode_amplitudes()
+    shown = {n: a for n, a in modes.items() if a > 0.0}
+    if len(shown) > 1:
+        ax_modes.bar([str(n) for n in shown], [a / modes[0] for a in shown.values()], color=_RED)
+        ax_modes.set_yscale("log")
+    else:
+        ax_modes.text(0.5, 0.5, "axisymmetric: no n > 0 runaway density in this restart",
+                      ha="center", va="center", transform=ax_modes.transAxes, color=_INK)
+    _style(ax_modes, "toroidal mode number n", "largest amplitude / n = 0 peak",
+           "How three-dimensional the runaway density is")
+
+    held, first = now.current(), ref.current()
+    line = f"e c ∫ n_RE dA = {held / 1e3:.2f} kA"
+    if ref is not now and first > 0.0:
+        line += f" ({100 * (held - first) / first:+.2f}% against step {reference_step})"
+    if np.isfinite(now.ipre_tot):
+        line += f";  JOREK's Ipre_tot at this step: {now.ipre_tot / 1e3:.2f} kA"
+    fig.suptitle(line, x=0.01, ha="left", fontsize=10, color=_INK)
     fig.tight_layout()
     return fig
 
@@ -1661,6 +1794,14 @@ _SECTIONS = [
     ("Fourier modes (analyse --diag four)", "", lambda run_dir, step: four_view(run_dir)),
     ("Radial profiles (analyse --diag profiles)", "", lambda run_dir, step: profiles_view(run_dir)),
     (
+        "Runaway density (from the restart files)",
+        "The RE fluid's density on the grid nodes, read from the restart itself: nothing is "
+        "gathered. Grey lines are the axisymmetric &psi;<sub>N</sub>; the colour scale is the first "
+        "restart's at every step, so lost runaways show as a dimmer map. Good for looking, not "
+        "for measuring.",
+        lambda run_dir, step: re_density_view(run_dir),
+    ),
+    (
         "Runaway and thermal current (analyse --diag re_current)",
         "Thermal = total &minus; runaway, the current JOREK's resistivity acts on. Densities are "
         "a cut along the outer midplane, not a flux-surface average.",
@@ -1688,6 +1829,34 @@ def case_viewer(run_dir: Path | str = ".", *, step: int = 0):
                 f"{html.escape(str(exc))}</pre>"
             ))
     return w.VBox(children)
+
+
+def re_density_view(run_dir: Path | str = "."):
+    """The runaway density map (re_density_figure) with a step selector, a
+    toroidal angle and a switch to the n > 0 part alone."""
+    w = _widgets()
+    steps = restart_steps(Path(run_dir))
+    if not steps:
+        return w.HTML(f"no restart files in {Path(run_dir).resolve()}")
+    if not _has_re_fluid(_paths(run_dir)):
+        return w.HTML("in_main sets no RE-fluid field (" + ", ".join(_RE_FLUID_FIELDS)
+                      + "): not a run with the RE fluid")
+    step = w.SelectionSlider(options=steps, value=steps[-1], description="step",
+                             continuous_update=False)
+    phi = w.IntSlider(value=0, min=0, max=355, step=5, description="φ [°]",
+                      continuous_update=False)
+    part = w.Checkbox(value=False, description="n > 0 part only", indent=False,
+                      layout=w.Layout(width="auto"))
+    out = _canvas(w)
+
+    def redraw(*_):
+        _show(out, lambda: re_density_figure(run_dir, step.value, phi=phi.value,
+                                             perturbation=part.value))
+
+    for control in (step, phi, part):
+        control.observe(redraw, names="value")
+    redraw()
+    return w.VBox([w.HBox([step, phi, part]), out])
 
 
 def _steps_summary(steps: list[int]) -> str:

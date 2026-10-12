@@ -4,6 +4,39 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-12: runaway density in the case viewer
+
+- New section "Runaway density (from the restart files)", above
+  "Runaway and thermal current". It reads n_RE of the RE fluid straight
+  from the restart file, every toroidal harmonic, so nothing is gathered
+  and any step with a restart can be looked at.
+- Controls: **step**, toroidal angle **φ**, and **n > 0 part only**.
+- Left: n_RE in the poloidal plane at that angle, over the axisymmetric
+  psi_N contours (plasma edge darker). The colour scale is the first
+  restart's at every step, so lost runaways show as a dimmer map. With
+  **n > 0 part only** it shows the non-axisymmetric part on its own scale.
+- Right, top: the axisymmetric density on the nodes against psi_N, with
+  the first restart in grey. Flattening or loss shows here.
+- Right, bottom: the largest amplitude of each toroidal mode relative to
+  the n = 0 peak.
+- Title line: e c ∫ n_RE dA for this step, its change against the first
+  restart in percent, and JOREK's own `Ipre_tot` for the step. A falling
+  percentage means runaways have left the domain.
+- Units and conventions are JOREK's own: m^-3 as `jorek2_postproc`'s `nre`
+  expression, harmonics as cos/sin of n·φ. n_RE is taken as the restart's
+  last variable (model600 with the RE fluid); the view refuses a run whose
+  in_main sets none of `vpar_re_sign`, `re_initialize`,
+  `initial_re_current_fraction`.
+- Checked on the local qa3.3_g3.2/eta1e-3_adv0.1 run: the integral gives
+  437.19 kA against JOREK's 437.46 kA (0.06% apart: linear between nodes,
+  and without B_phi/|B|), and the restart's time equals the zeroD file's.
+  That run's local restarts stop before the instability, so the view has
+  not yet been seen on a crash.
+- Drawn on the grid nodes with linear interpolation between them: good
+  for looking, not for measuring. From a cell of your own:
+  `viewer.re_density_figure(".", step, phi=90, perturbation=True)`.
+  (`diagnostics/re_density.py`, `viewer.re_density_view`)
+
 ## 2026-10-12: set a case's `steps` from the case viewer
 
 - New section "Steps to analyse (cases.toml)", after Equilibrium and
