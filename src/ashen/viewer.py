@@ -1779,7 +1779,8 @@ _SECTIONS = [
     (
         "Steps to analyse (cases.toml)",
         "Which restart steps <code>analyse</code> and <code>plot</code> use for this run: every "
-        "<i>step size</i>-th step from 0 to the last restart. <b>Save to cases.toml</b> writes "
+        "<i>step size</i>-th step from the <i>start step</i> to the last restart. "
+        "<b>Save to cases.toml</b> writes "
         "that as this case's <code>steps</code>; restarts written later are picked up without "
         "saving again.",
         lambda run_dir, step: steps_view(run_dir),
@@ -1870,12 +1871,13 @@ def _steps_summary(steps: list[int]) -> str:
 
 
 def steps_view(run_dir: Path | str = "."):
-    """Set this case's ``steps`` in the campaign's cases.toml from a step
-    size: ``{ start = 0, step = <size> }``, which ashen.cases reads as every
-    restart at a multiple of the size, from 0 to the run's last restart.
+    """Set this case's ``steps`` in the campaign's cases.toml from a start
+    step and a step size: ``{ start = <start>, step = <size> }``, which
+    ashen.cases reads as every restart at start, start + size, ..., up to
+    the run's last restart.
 
-    Shows the entry as it is now and what the chosen size would give before
-    anything is written. A case not yet in cases.toml is added.
+    Shows the entry as it is now and what the chosen values would give
+    before anything is written. A case not yet in cases.toml is added.
     """
     import tomllib
 
@@ -1911,17 +1913,23 @@ def steps_view(run_dir: Path | str = "."):
         _, own, _, _ = entry()
     except Exception:
         own = None
-    first = own.get("step") if isinstance(own, dict) else None
-    size = w.BoundedIntText(value=first if isinstance(first, int) and first >= 1 else spacing,
-                            min=1, max=10**9, step=spacing, description="step size",
-                            layout=w.Layout(width="200px"))
+    saved = own if isinstance(own, dict) else {}
+    saved_start, saved_size = saved.get("start"), saved.get("step")
+    start = w.BoundedIntText(
+        value=saved_start if isinstance(saved_start, int) and saved_start >= 0 else 0,
+        min=0, max=10**9, step=spacing, description="start step",
+        layout=w.Layout(width="200px"))
+    size = w.BoundedIntText(
+        value=saved_size if isinstance(saved_size, int) and saved_size >= 1 else spacing,
+        min=1, max=10**9, step=spacing, description="step size",
+        layout=w.Layout(width="200px"))
     save = w.Button(description="Save to cases.toml", button_style="primary",
                     layout=w.Layout(width="auto"),
                     tooltip="Writes this case's steps; the rest of the file stays as it is")
     now, preview, log = w.HTML(), w.HTML(), _Log(w)
 
     def spec():
-        return {"start": 0, "step": int(size.value)}
+        return {"start": int(start.value), "step": int(size.value)}
 
     def refresh_now():
         code = html.escape(f'[cases."{name}"]')
@@ -1952,12 +1960,15 @@ def steps_view(run_dir: Path | str = "."):
         chosen = resolve(spec())
         line = (f"would write <code>steps = {html.escape(format_steps_table(spec()))}</code> "
                 f"&rarr; {_steps_summary(chosen)}")
-        if available and not chosen:
-            line += (f"<br><span style='color:{_RED}'>no restart is at a multiple of "
-                     f"{int(size.value)} from 0</span>")
+        first, every = int(start.value), int(size.value)
+        pattern = f"a multiple of {every}" if first == 0 else f"{first} plus a multiple of {every}"
+        if available and first > available[-1]:
+            line += (f"<br><span style='color:{_RED}'>the start step is after the last "
+                     f"restart, {available[-1]}</span>")
+        elif available and not chosen:
+            line += f"<br><span style='color:{_RED}'>no restart is at {pattern}</span>"
         elif available and chosen[-1] != available[-1]:
-            line += (f"<br>the last restart, {available[-1]}, is not a multiple of "
-                     f"{int(size.value)} and is left out")
+            line += f"<br>the last restart, {available[-1]}, is not {pattern} and is left out"
         preview.value = line
 
     def on_save(_):
@@ -1970,11 +1981,12 @@ def steps_view(run_dir: Path | str = "."):
             print(f"saved to {path}: steps = {format_steps_table(spec())} ({done}).")
         refresh_now()
 
-    size.observe(refresh_preview, names="value")
+    for control in (start, size):
+        control.observe(refresh_preview, names="value")
     save.on_click(on_save)
     refresh_now()
     refresh_preview()
-    return w.VBox([now, w.HBox([size, save]), preview, log.widget])
+    return w.VBox([now, w.HBox([start, size, save]), preview, log.widget])
 
 
 def _toml_value(value) -> str:

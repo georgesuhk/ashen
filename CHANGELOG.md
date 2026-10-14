@@ -4,6 +4,18 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-14: a start step for the case viewer's steps section
+
+- "Steps to analyse (cases.toml)" has a **start step** box beside **step
+  size**. It writes `steps = { start = <start>, step = <size> }`: the
+  restarts at start, start + size, ... up to the last restart, picked up
+  as the run goes on, as before.
+- Both boxes open at the values already saved for the case, else at 0 and
+  the restart spacing.
+- The preview says when the start is after the last restart, when no
+  restart is at start plus a multiple of the size, and when the last
+  restart is left out.
+
 ## 2026-10-14: `plot --step all`: every cached step
 
 - `plot --step all` draws, for each diag, every step that diag already has

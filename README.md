@@ -562,9 +562,10 @@ JOREK's own `Ipre_tot`: if runaways leave the domain, the first two fall.
 Values are on the grid nodes, linear in between.
 
 **Setting the steps.** The "Steps to analyse (cases.toml)" section sets
-this run's `steps` in the campaign's cases.toml from a step size: it writes
-`steps = { start = 0, step = <size> }`, every restart at a multiple of the
-size from 0 to the last one, and shows what that gives before you press
+this run's `steps` in the campaign's cases.toml from a start step and a
+step size: it writes `steps = { start = <start>, step = <size> }`, the
+restarts at start, start + size, ... up to the last one, and shows what
+that gives before you press
 **Save to cases.toml**. Comments and every other line of the file are kept;
 per-diag step overrides are left alone.
 
