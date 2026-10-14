@@ -4,6 +4,23 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-14: Poincaré plots in the case viewer
+
+- New section "Poincaré plots (analyse --diag poincare)", before the
+  Fourier modes. It shows one step's cached punctures at a time, drawn as
+  `plot --diag poincare` draws them (coloured by each line's starting
+  psi_N), with the plasma and JOREK grid boundaries over them.
+- **◀** / **▶** step to the previous / next cached step; the slider jumps
+  to any. **point size** sets the marker size (log scale, default 0.1, the
+  cases.toml default).
+- Steps are those with a Poincaré cache (the same lookup as
+  `plot --step all`). The title gives the step's time when its zeroD cache
+  has one, and a note gives the number of lines and punctures.
+- **Run analyse --diag poincare** above it gathers for this run's case,
+  then redraws. Tracing can take long; it runs in the notebook until done.
+- From a cell of your own: `viewer.poincare_figure(".", step, point_size=0.3)`.
+  Tested on synthetic caches only.
+
 ## 2026-10-14: a start step for the case viewer's steps section
 
 - "Steps to analyse (cases.toml)" has a **start step** box beside **step
