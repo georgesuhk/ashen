@@ -1058,8 +1058,8 @@ def test_steps_view_previews_and_saves_a_step_size(tmp_path):
     cases.write_text('# keep me\n[cases."qa2.1/eta1e-3"]\nsteps = [0, 200]\n', encoding="utf-8")
 
     now, row, preview, log = viewer.steps_view(run).children
-    size, save = row.children
-    assert size.value == 200                                   # the restart spacing
+    start, size, save = row.children
+    assert (start.value, size.value) == (0, 200)               # from 0, at the restart spacing
     assert "steps = [0, 200]" in now.value and "2 steps: 0, 200" in now.value
     assert "11 restarts in this folder, 0 to 2000" in now.value
 
@@ -1075,8 +1075,22 @@ def test_steps_view_previews_and_saves_a_step_size(tmp_path):
         '# keep me\n[cases."qa2.1/eta1e-3"]\nsteps = { start = 0, step = 400 }\n')
     assert "saved to" in log.value and "6 steps" in now.value
     assert load_cases(cases, run_root=tmp_path)["qa2.1/eta1e-3"].steps == list(range(0, 2001, 400))
-    # opened again, the box starts at the saved size
-    assert viewer.steps_view(run).children[1].children[0].value == 400
+    # a later start: from 600, every 400 steps
+    start.value = 600
+    assert "{ start = 600, step = 400 }" in preview.value and "4 steps: 600, 1000, 1400, 1800" in preview.value
+    assert "the last restart, 2000, is not 600 plus a multiple of 400" in preview.value
+    start.value = 3000
+    assert "the start step is after the last restart, 2000" in preview.value
+    start.value = 100
+    assert "no restart is at 100 plus a multiple of 400" in preview.value
+    start.value = 400
+    save.click()
+    assert "steps = { start = 400, step = 400 }" in cases.read_text()
+    assert load_cases(cases, run_root=tmp_path)["qa2.1/eta1e-3"].steps == [400, 800, 1200, 1600, 2000]
+
+    # opened again, the boxes start at the saved values
+    start, size, _ = viewer.steps_view(run).children[1].children
+    assert (start.value, size.value) == (400, 400)
 
 
 def test_steps_view_adds_a_case_and_says_when_there_is_no_cases_toml(tmp_path):
@@ -1090,7 +1104,7 @@ def test_steps_view_adds_a_case_and_says_when_there_is_no_cases_toml(tmp_path):
     cases.write_text('[cases."other"]\nsteps = [0]\n', encoding="utf-8")
     now, row, _, _ = viewer.steps_view(run).children
     assert "saving adds it" in now.value and "no restarts in this folder yet" in now.value
-    row.children[1].click()
+    row.children[2].click()
     assert cases.read_text().endswith('\n[cases."new"]\nsteps = { start = 0, step = 1 }\n')
 
 
