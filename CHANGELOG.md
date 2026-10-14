@@ -4,6 +4,30 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-14: `plot --step all`: every cached step
+
+- `plot --step all` draws, for each diag, every step that diag already has
+  a cache for, per case, instead of the steps cases.toml lists. Example:
+  `plot --case NAME --diag four --step all`.
+- What counts as cached, per diag:
+  - poincare, connection_length, theta_hist, wetted_fraction: the Poincare
+    caches (`poinc_dir/poinc_s<step>.h5`, or the legacy `.npz` set);
+  - four: `four_dir/four_s<step>.h5`;
+  - profiles: a cache for any of the case's `vars` and `tor_mode`s;
+  - re_current: steps with both `currdens` and `recurrdens`.
+  Any step padding is recognised. Figures in the same folders are not
+  mistaken for caches.
+- It is a value of the existing `--step` flag, so it takes precedence over
+  per-diag `[cases.NAME.<diag>]` steps, as `--step N` does. `--step all`
+  with step numbers next to it is refused.
+- Works with `--compare` too, per member case. A scan_map quantity that
+  reduces over no diag (eta, q95, ...) uses the steps with a zeroD cache.
+- Each diag prints how many steps it found, e.g.
+  `poincare: --step all, 3 cached step(s) (100 to 300)`. A diag with none
+  is skipped with a message rather than drawn empty.
+- Nothing is gathered; the particle diags take no steps and are unchanged.
+  (`diagnostics/cached_steps.py`)
+
 ## 2026-10-12: `analyse --diag re_current` gathers the q-profile too
 
 - `--diag re_current` now also gathers each of its steps' q-profile

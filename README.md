@@ -887,6 +887,14 @@ touching the gathering path.
 - `--step N` (repeatable) restricts every diag drawn this run to specific
   steps, overriding any configured per-diag steps (default: each diag's own
   steps -- see below).
+- `--step all` draws every step each diag already has cached, per case,
+  whatever cases.toml lists: the Poincare caches for poincare,
+  connection_length, theta_hist and wetted_fraction; `four_s*.h5` for four;
+  the case's variables for profiles; both current densities for
+  re_current. It gathers nothing, prints how many steps each diag found
+  (skipping a diag with none),
+  and also works with `--compare` (scan_map quantities that reduce over no
+  diag use the zeroD-cached steps). It can't be combined with step numbers.
 - `--linear` / `--smooth` control the connection-length colour maps.
 - `--psi-range MIN MAX` further bounds-filters whichever psi_n_in list is
   already in effect for connection-length -- plot-time only, no re-gather
