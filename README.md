@@ -552,6 +552,11 @@ not know whether the equilibrium shown was run from the current inputs.
   looking, not for measuring.
 - The viewer has not been run over Remote SSH on the HPC yet.
 
+**Poincaré plots.** The "Poincaré plots" section shows each step's cached
+punctures in turn: **◀** / **▶** step through the cached steps, the slider
+jumps to any, and **point size** sets the marker size. **Run analyse
+--diag poincare** above it gathers more.
+
 **Runaway density.** For a run with the RE fluid, the "Runaway density
 (from the restart files)" section maps n_RE in the poloidal plane at a
 chosen step and toroidal angle, read from the restart itself (no gather

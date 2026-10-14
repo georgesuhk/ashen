@@ -47,13 +47,14 @@ def _steps_named_like(example: Path, step_str: str) -> set[int]:
     }
 
 
-def cached_steps(diag: str, case: Case, paths: RunPaths) -> list[int]:
+def cached_steps(diag: str, case: Case | None, paths: RunPaths) -> list[int]:
     """Every step ``diag`` has a cache for in this run, ascending.
 
     - poincare, connection_length, theta_hist, wetted_fraction: the Poincare
       caches (``poinc_s<step>.h5``, or the legacy ``poinc_t<step>_*.npz``).
     - four: ``four_s<step>.h5``.
-    - profiles: a cache for any of the case's variables and tor_modes.
+    - profiles: a cache for any of the case's variables and tor_modes (the
+      one diag that needs ``case``; the others take None).
     - re_current: both current-density profiles (``currdens`` and
       ``recurrdens``).
     - zerod: the zeroD files.
@@ -67,6 +68,8 @@ def cached_steps(diag: str, case: Case, paths: RunPaths) -> list[int]:
     if diag == "four":
         return sorted(_steps_named_like(paths.four_cache(0), zero))
     if diag == "profiles":
+        if case is None:
+            raise ValueError("profiles' cached steps depend on the case's vars and tor_modes")
         steps: set[int] = set()
         for var in expand_compound_vars(case.vars):
             for mode in case.tor_mode:

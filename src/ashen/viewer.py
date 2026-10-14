@@ -63,6 +63,9 @@ __all__ = [
     "profile_tuner",
     "profiles_available",
     "profiles_figure",
+    "poincare_figure",
+    "poincare_steps",
+    "poincare_view",
     "profiles_view",
     "re_current_figure",
     "re_current_ratio_figure",
@@ -1792,6 +1795,12 @@ _SECTIONS = [
         "shows it. <b>Reload</b> reads the file again for a run still going.",
         lambda run_dir, step: energies_view(run_dir),
     ),
+    (
+        "Poincaré plots (analyse --diag poincare)",
+        "Every step with a Poincaré cache. <b>&#9664;</b> and <b>&#9654;</b> step through them; "
+        "each field line's punctures are coloured by the &psi;<sub>N</sub> it started from.",
+        lambda run_dir, step: poincare_view(run_dir),
+    ),
     ("Fourier modes (analyse --diag four)", "", lambda run_dir, step: four_view(run_dir)),
     ("Radial profiles (analyse --diag profiles)", "", lambda run_dir, step: profiles_view(run_dir)),
     (
@@ -1830,6 +1839,83 @@ def case_viewer(run_dir: Path | str = ".", *, step: int = 0):
                 f"{html.escape(str(exc))}</pre>"
             ))
     return w.VBox(children)
+
+
+def poincare_steps(run_dir: Path | str) -> list[int]:
+    """Steps with a Poincare cache (analyse --diag poincare)."""
+    from ashen.diagnostics.cached_steps import cached_steps
+
+    return cached_steps("poincare", None, _paths(run_dir))
+
+
+def poincare_figure(run_dir: Path | str, step: int, *, point_size: float = 0.1):
+    """One step's cached Poincare punctures (plotting.poincare.draw_poincare,
+    as `plot --diag poincare` draws them), with the plasma and grid
+    boundaries, and the step's time when its zeroD cache has one."""
+    from matplotlib.figure import Figure
+
+    from ashen.diagnostics.poincare_cache import read_step
+    from ashen.plotting.poincare import draw_poincare
+    from ashen.postproc import read_zeroD
+
+    paths = _paths(run_dir)
+    records = read_step(paths, step)
+    if not records:
+        raise ValueError(f"no Poincare cache for step {step}")
+    fig = Figure(figsize=(7.5, 7.5), layout="constrained")
+    ax = fig.subplots()
+    draw_poincare(ax, records, s=point_size)
+    _draw_boundaries(ax, case_boundaries(run_dir), only=("plasma", "JOREK grid"))
+    when = ""
+    try:
+        when = f", t = {read_zeroD(paths.zero_d(step))['Time'] * 1e3:.4g} ms"
+    except (OSError, ValueError, KeyError):
+        pass
+    punctures = sum(len(record.R) for record in records.values())
+    starts = len({key.psi_n for key in records})
+    _style(ax, "R [m]", "Z [m]", f"Poincaré, step {step}{when}")
+    ax.text(0.01, 0.01, f"{len(records)} field lines from {starts} psi_N, "
+            f"{punctures} punctures", transform=ax.transAxes, fontsize=8, color=_INK)
+    return fig
+
+
+def poincare_view(run_dir: Path | str = "."):
+    """The cached Poincare plots one step at a time: a step slider with
+    previous / next buttons and a point size, under a button that runs
+    ``analyse --diag poincare`` for this run."""
+    w = _widgets()
+
+    def build():
+        steps = poincare_steps(run_dir)
+        if not steps:
+            return w.HTML("no Poincaré cache yet")
+        step = w.SelectionSlider(options=steps, value=steps[-1], description="step",
+                                 continuous_update=False, layout=w.Layout(width="420px"))
+        back = w.Button(description="◀", layout=w.Layout(width="40px"), tooltip="previous step")
+        forward = w.Button(description="▶", layout=w.Layout(width="40px"), tooltip="next step")
+        size = w.FloatLogSlider(value=0.1, base=10, min=-2, max=1, step=0.25,
+                                description="point size", continuous_update=False,
+                                readout_format=".2g")
+        out = _canvas(w)
+
+        def redraw(*_):
+            _show(out, lambda: poincare_figure(run_dir, step.value, point_size=size.value))
+
+        def move(by):
+            at = steps.index(step.value) + by
+            if 0 <= at < len(steps):
+                step.value = steps[at]
+
+        back.on_click(lambda _: move(-1))
+        forward.on_click(lambda _: move(+1))
+        for control in (step, size):
+            control.observe(redraw, names="value")
+        redraw()
+        return w.VBox([w.HBox([back, step, forward, size]), out])
+
+    return _gathering(
+        w, "Run analyse --diag poincare", lambda: run_analyse(run_dir, ["poincare"]), build
+    )
 
 
 def re_density_view(run_dir: Path | str = "."):

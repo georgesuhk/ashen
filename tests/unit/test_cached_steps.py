@@ -58,3 +58,7 @@ def test_nothing_cached_is_an_empty_list_and_other_diags_are_refused(tmp_path):
         assert cached_steps(diag, case, paths) == []
     with pytest.raises(ValueError, match="not drawn over restart steps"):
         cached_steps("particles", case, paths)
+    # every diag but profiles works without a case
+    assert cached_steps("poincare", None, paths) == []
+    with pytest.raises(ValueError, match="depend on the case"):
+        cached_steps("profiles", None, paths)
