@@ -1506,6 +1506,62 @@ def test_raw_variables_get_no_caption(campaign, monkeypatch):
 # --- per-diag steps override: default -> case -> case+diag tree -------------------
 
 
+def test_step_all_plots_every_cached_step_whatever_the_case_lists(campaign, capsys):
+    cases_toml = campaign.parent.parent / "cases.toml"
+    cases_toml.write_text(
+        '[cases."qa2.1_g2.3/eta1e-3_RE"]\n'
+        'steps = [100]\n'
+        'psi_n_in = [0.2, 0.5]\n'
+        '[cases."qa2.1_g2.3/eta1e-3_RE".poincare]\n'
+        'steps = [100]\n',
+        encoding="utf-8",
+    )
+    _write_cache(campaign, 300)                     # cached, though no restart is listed for it
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare", "--step", "ALL"]
+    ) == 0
+    for step in (100, 200, 300):
+        assert (campaign / "poinc_dir" / f"{step}_poincare.png").is_file()
+    assert "poincare: --step all, 3 cached step(s) (100 to 300)" in capsys.readouterr().out
+
+
+def test_step_all_reaches_comparisons_per_member(comparison_campaign, monkeypatch):
+    # the fixture caches step 100 for both; one member also has 200
+    _write_crossing_cache(comparison_campaign / "qa2.1_g2.3" / "eta1e-3_RE", 200)
+    captured = []
+    original = plot_cli.pooled_crossing_angles
+
+    def spy(records_by_step, steps, **kwargs):
+        captured.append(list(steps))
+        return original(records_by_step, steps, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "pooled_crossing_angles", spy)
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "theta_hist", "--step", "all"]) == 0
+    assert captured == [[100, 200], [100]]
+
+
+def test_step_all_skips_a_diag_with_nothing_cached(campaign, capsys):
+    # the campaign has Poincare caches but no re_current profiles
+    assert plot_cli.main(
+        ["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "re_current", "--step", "all"]
+    ) == 0
+    assert "re_current: --step all, no cached steps, skipped" in capsys.readouterr().out
+    assert not (campaign / "profiles" / "re_current.png").exists()
+
+
+@pytest.mark.parametrize("argv, message", [
+    (["--step", "all", "--step", "100"], "--step all takes no step numbers beside it"),
+    (["--step", "every"], "expected a step number or 'all'"),
+])
+def test_step_all_is_not_mixed_with_numbers(campaign, capsys, argv, message):
+    try:
+        status = plot_cli.main(["--case", "qa2.1_g2.3/eta1e-3_RE", "--diag", "poincare", *argv])
+    except SystemExit as exc:                       # argparse refuses a bad value itself
+        status = exc.code
+    assert status not in (0, None) and message in capsys.readouterr().err
+    assert not list((campaign / "poinc_dir").glob("*_poincare.png"))
+
+
 def test_per_diag_steps_override_restricts_poincare_only(campaign):
     cases_toml = campaign.parent.parent / "cases.toml"
     cases_toml.write_text(

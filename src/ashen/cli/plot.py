@@ -48,6 +48,7 @@ from ashen.castor_io import load_two_col_data
 from ashen.namelist import NamelistError, read_boundary_points
 from ashen.comparisons import Comparison, Dataset, load_comparisons
 from ashen.config import SiteConfigError, load_site
+from ashen.diagnostics.cached_steps import CACHED_STEP_DIAGS, cached_steps
 from ashen.diagnostics.connection_length import connection_length_matrix
 from ashen.diagnostics.four_modes import (
     DELTA_B,
@@ -202,6 +203,49 @@ def _mode_colors(
     return colors
 
 
+#: What ``--step all`` resolves to: each diag's own cached steps, per case.
+ALL_STEPS = "all"
+
+
+def _step_value(text: str) -> int | str:
+    """``--step``'s argument: a restart step, or ``all``."""
+    if text.strip().lower() == ALL_STEPS:
+        return ALL_STEPS
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected a step number or 'all', got {text!r}"
+        ) from None
+
+
+def _resolve_step_flag(values: list[int | str] | None) -> list[int] | str | None:
+    """``--step`` as given: None (not given), ALL_STEPS, or step numbers.
+    Raises ValueError for ``all`` mixed with numbers."""
+    if not values:
+        return None
+    if ALL_STEPS in values:
+        if len(set(values)) > 1:
+            raise ValueError("--step all takes no step numbers beside it")
+        return ALL_STEPS
+    return values
+
+
+def _diag_steps(
+    steps: list[int] | str | None, case: Case, paths: RunPaths, diag: str,
+) -> list[int]:
+    """The steps one diag draws for one case: ``--step``'s numbers, every
+    step it has cached for ``--step all``, else the case's
+    ``[cases.NAME.<diag>]`` steps or its plain steps."""
+    if steps == ALL_STEPS:
+        found = cached_steps(diag, case, paths)
+        print(f"  {diag}: --step all, "
+              + (f"{len(found)} cached step(s) ({found[0]} to {found[-1]})" if found
+                 else "no cached steps, skipped"))
+        return found
+    return steps or case.steps_for(diag)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="plot",
@@ -221,10 +265,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="which figure(s) to draw (repeatable; default: all)",
     )
     parser.add_argument(
-        "--step", type=int, action="append", dest="steps",
+        "--step", type=_step_value, action="append", dest="steps", metavar="STEP|all",
         help="restart step to plot (repeatable; applies to every diag drawn "
         "this run, overriding any [cases.NAME.<diag>] steps override; "
-        "default: each diag's own steps, or the case's steps)",
+        "default: each diag's own steps, or the case's steps). "
+        "'--step all': every step each diag already has cached, per case",
     )
     parser.add_argument("--dpi", type=int, default=None, help="override figure DPI")
     parser.add_argument(
@@ -1521,7 +1566,7 @@ def _compare_theta_hist(
     psi_range: tuple[float, float] | None,
     n_cols: int | None,
     dpi: int | None,
-    steps: list[int] | None,
+    steps: list[int] | str | None,
 ) -> None:
     """One panel per member case, each pooling that case's own theta_hist
     steps (or `--step`, if given, applied uniformly across every member).
@@ -1568,7 +1613,7 @@ def _compare_theta_hist(
             psi_range, comparison.theta_psi_n_range, case.theta_psi_n_range
         )
 
-        case_steps = steps or case.steps_for("theta_hist")
+        case_steps = _diag_steps(steps, case, paths, "theta_hist")
         records_by_step = {step: read_step(paths, step) for step in case_steps}
         result = pooled_crossing_angles(
             records_by_step, case_steps,
@@ -1621,7 +1666,7 @@ def _wetted_fraction_xy(
     bins: int | None,
     psi_range: tuple[float, float] | None,
     threshold: float | None,
-    steps: list[int] | None,
+    steps: list[int] | str | None,
 ) -> tuple[list[float], list[float]]:
     """One (x, wetted fraction) point per case in `labelled_cases` -- the
     per-case computation shared by both a flat comparison's single series
@@ -1669,7 +1714,7 @@ def _wetted_fraction_xy(
             psi_range, comparison.theta_psi_n_range, case.theta_psi_n_range
         )
 
-        case_steps = steps or case.steps_for("theta_hist")
+        case_steps = _diag_steps(steps, case, paths, "theta_hist")
         records_by_step = {step: read_step(paths, step) for step in case_steps}
         result = pooled_crossing_angles(
             records_by_step, case_steps,
@@ -1800,7 +1845,7 @@ def _compare_wetted_fraction(
     psi_range: tuple[float, float] | None,
     threshold: float | None,
     dpi: int | None,
-    steps: list[int] | None,
+    steps: list[int] | str | None,
     dataset_names: list[str] | None = None,
 ) -> None:
     """The fraction of each case's (pooled) theta_hist bins exceeding a
@@ -1828,7 +1873,7 @@ def _delta_b_xy(
     variable: str,
     quantity: str,
     mode: tuple[int, int] | None,
-    steps: list[int] | None,
+    steps: list[int] | str | None,
 ) -> tuple[list[float], list[float]]:
     """One (x, delta-B) point per case in `labelled_cases` -- the per-case
     computation shared by both a flat comparison's single series and each
@@ -1851,7 +1896,7 @@ def _delta_b_xy(
             continue
         paths = RunPaths.detect(run_dir)
 
-        case_steps = steps or case.steps_for("four")
+        case_steps = _diag_steps(steps, case, paths, "four")
         modes_filter = (
             [(mode[1], mode[0])] if mode is not None
             else ([(n, m) for m, n in case.modes] if case.modes else None)
@@ -1927,7 +1972,7 @@ def _compare_delta_b(
     quantity: str,
     mode: tuple[int, int] | None,
     dpi: int | None,
-    steps: list[int] | None,
+    steps: list[int] | str | None,
     dataset_names: list[str] | None = None,
 ) -> None:
     """Delta-B (or delta-B/B), one scalar per case (see _delta_b_xy),
@@ -1984,7 +2029,7 @@ def _quantity_context(
     quantity_name: str,
     *,
     comparison: Comparison,
-    cli_steps: list[int] | None,
+    cli_steps: list[int] | str | None,
     n_workers: int,
     edge_q_psi_n: float | None,
     equilibrium_step: int | None,
@@ -2010,7 +2055,12 @@ def _quantity_context(
     which reads steps_for("four").
     """
     q = quantity(quantity_name)
-    steps = cli_steps or (case.steps_for(q.steps_diag) if q.steps_diag else case.steps)
+    if cli_steps == ALL_STEPS:
+        # each quantity's own diag's cached steps; one that reduces over no
+        # diag (eta, q95, ...) reads the zeroD-cached steps
+        steps = _diag_steps(cli_steps, case, paths, q.steps_diag or "zerod")
+    else:
+        steps = cli_steps or (case.steps_for(q.steps_diag) if q.steps_diag else case.steps)
 
     # Only warn about theta_* shadowing for a quantity that actually reads
     # them -- otherwise a scan map of eta vs. q95 would print four
@@ -2128,7 +2178,7 @@ def _compare_scan_map(
     theta_wetted_threshold: float | None,
     delta_b_mode: tuple[int, int] | None,
     dpi: int | None,
-    steps: list[int] | None,
+    steps: list[int] | str | None,
     n_workers: int,
     dataset_names: list[str] | None,
     explicit: bool,
@@ -2263,7 +2313,7 @@ def _run_case(
     case: Case,
     *,
     diags: list[str],
-    steps: list[int] | None,
+    steps: list[int] | str | None,
     log: bool,
     smooth: bool,
     dpi: int | None,
@@ -2294,9 +2344,18 @@ def _run_case(
     # case+diag tree -- an explicit runtime request wins over any configured
     # override. Absent that, each diag falls back to its own steps_for(diag)
     # override (a [cases.NAME.<diag>] table) before the case's plain steps.
+    # --step all with nothing cached for a diag skips it rather than drawing
+    # an empty figure.
+    step_lists = {
+        diag: _diag_steps(steps, case, paths, diag)
+        for diag in diags if diag in CACHED_STEP_DIAGS
+    }
+    if steps == ALL_STEPS:
+        diags = [d for d in diags if d not in step_lists or step_lists[d]]
+
     if "poincare" in diags:
         _plot_poincare(
-            case, paths, steps or case.steps_for("poincare"), dpi=dpi,
+            case, paths, step_lists["poincare"], dpi=dpi,
             n_workers=n_workers, point_size=point_size,
         )
     if "connection_length" in diags:
@@ -2306,35 +2365,35 @@ def _run_case(
         # poincare steps to plot (same "no interpolation" rule lc_psi_n_in
         # already has) -- it never gathers new data on its own.
         _plot_connection_length(
-            case, paths, steps or case.steps_for("connection_length"),
+            case, paths, step_lists["connection_length"],
             log=log, smooth=smooth, dpi=dpi, psi_range=psi_range, n_workers=n_workers,
         )
     if "four" in diags:
         _plot_four_modes(
-            case, paths, steps or case.steps_for("four"), log=four_log, dpi=dpi,
+            case, paths, step_lists["four"], log=four_log, dpi=dpi,
             n_workers=n_workers, radial_log=four_radial_log,
             radial_quantity=four_radial_quantity,
         )
     if "re_current" in diags:
         _plot_re_current(
-            case, paths, steps or case.steps_for("re_current"), dpi=dpi, n_workers=n_workers,
+            case, paths, step_lists["re_current"], dpi=dpi, n_workers=n_workers,
             explicit=explicit_diags,
         )
     if "profiles" in diags:
         _plot_profiles(
-            case, paths, steps or case.steps_for("profiles"), dpi=dpi, n_workers=n_workers,
+            case, paths, step_lists["profiles"], dpi=dpi, n_workers=n_workers,
             mark_rational=mark_rational or case.mark_rational, cmap=profile_cmap,
             animate=animate or case.animate,
         )
     if "theta_hist" in diags:
         _plot_theta_hist(
-            case, paths, steps or case.steps_for("theta_hist"),
+            case, paths, step_lists["theta_hist"],
             target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
             n_cols=n_cols, dpi=dpi,
         )
     if "wetted_fraction" in diags:
         _plot_wetted_fraction(
-            case, paths, steps or case.steps_for("wetted_fraction"),
+            case, paths, step_lists["wetted_fraction"],
             target_psi=theta_target_psi, bins=theta_bins, psi_range=theta_psi_range,
             threshold=theta_wetted_threshold, dpi=dpi,
         )
@@ -3030,7 +3089,7 @@ def _run_comparisons(
     cases: dict[str, Case],
     *,
     diags: list[str],
-    steps: list[int] | None,
+    steps: list[int] | str | None,
     dpi: int | None,
     theta_target_psi: float | None,
     theta_bins: int | None,
@@ -3153,6 +3212,12 @@ def main(argv: list[str] | None = None) -> int:
                 size = f"{len(comparison.cases)} cases"
             print(f"{name} ({size}){note}")
         return 0
+
+    try:
+        args.steps = _resolve_step_flag(args.steps)
+    except ValueError as exc:
+        error(str(exc))
+        return 1
 
     diags = args.diags or list(DIAG_CHOICES)
     # Whether the user named diags explicitly. A default-everything run must
