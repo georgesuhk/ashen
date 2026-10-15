@@ -157,6 +157,9 @@ class ScanPoint:
     y: float
     c: float | None = None
     label: str = ""
+    #: One-sigma uncertainties, drawn as error bars; None = none known.
+    x_err: float | None = None
+    y_err: float | None = None
 
 
 def _color_values(points: Sequence[ScanPoint], *, log_c: bool) -> list[float]:
@@ -250,6 +253,16 @@ def draw_scan_map(
         kwargs["label"] = label
 
     has_c = any(p.c is not None for p in points)
+
+    # error bars under the markers, in the series colour
+    if any(p.x_err is not None or p.y_err is not None for p in points):
+        nan = float("nan")
+        ax.errorbar(
+            xs, ys,
+            xerr=[nan if p.x_err is None else p.x_err for p in points],
+            yerr=[nan if p.y_err is None else p.y_err for p in points],
+            fmt="none", ecolor=color, elinewidth=0.9, capsize=2.5, zorder=1,
+        )
 
     if encode == SIZE_ENCODING:
         if sizer is None:

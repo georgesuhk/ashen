@@ -2104,7 +2104,29 @@ def _quantity_context(
         ensure_zero_d=partial(_ensure_zero_d, case, paths, n_workers=n_workers),
         ensure_qprofile=partial(_ensure_qprofile, case, paths, n_workers=n_workers),
         ensure_b_ref=partial(_b_ref_for, case, paths),
+        particle_wetted=partial(_wetted_numbers_once, case, paths),
     )
+
+
+#: Each case's particle_wetted numbers, computed once per run of plot: a
+#: scan map asks for up to three measures and their errors per case.
+_WETTED_NUMBERS: dict[tuple[str, str], dict | None] = {}
+
+
+def _wetted_numbers_once(case: Case, paths: RunPaths) -> dict | None:
+    """_particle_wetted_numbers' numbers for one case, computed on first
+    use and said once: how many hits they rest on and the binning, since
+    f_tot is biased low with few hits per bin."""
+    key = (str(paths.run_dir), case.name)
+    if key not in _WETTED_NUMBERS:
+        done = _particle_wetted_numbers(case, paths, explicit=True)
+        numbers = None if done is None else done.numbers
+        if numbers is not None:
+            n_l, n_phi = numbers["bins"]
+            print(f"  {case.name}: particle_wetted from {numbers['n_hits']} hits of "
+                  f"{numbers['n_considered']} particles, {n_l} x {n_phi} bins")
+        _WETTED_NUMBERS[key] = numbers
+    return _WETTED_NUMBERS[key]
 
 
 def _scan_points(
@@ -2140,6 +2162,14 @@ def _scan_points(
             )
             return quantity(name).extract(ctx)
 
+        def _error(name: str | None) -> float | None:
+            if not name or quantity(name).error is None:
+                return None
+            ctx = _quantity_context(
+                case, paths, name, comparison=comparison, **context_kwargs,
+            )
+            return quantity(name).error(ctx)
+
         x = _value(x_quantity)
         y = _value(y_quantity)
         c = _value(c_quantity) if c_quantity else None
@@ -2154,11 +2184,16 @@ def _scan_points(
             print(f"  {case_name}: dropped from the scan map (missing {missing})")
             continue
 
-        summary = f"{x_quantity}={x:.3g}, {y_quantity}={y:.3g}"
+        x_err, y_err = _error(x_quantity), _error(y_quantity)
+
+        def shown(name, value, err=None):
+            return f"{name}={value:.3g}" + (f" ± {err:.2g}" if err is not None else "")
+
+        summary = f"{shown(x_quantity, x, x_err)}, {shown(y_quantity, y, y_err)}"
         if c_quantity:
-            summary += f", {c_quantity}={c:.3g}"
+            summary += f", {shown(c_quantity, c)}"
         print(f"  {case_name}: {summary}")
-        points.append(ScanPoint(x=x, y=y, c=c, label=label))
+        points.append(ScanPoint(x=x, y=y, c=c, label=label, x_err=x_err, y_err=y_err))
     return points
 
 
@@ -3007,28 +3042,30 @@ def _wetted_inputs(folder: Path, diag: Path, boundary, window, wall: Wall) -> We
     return inputs
 
 
-def _plot_particle_wetted(
-    case: Case, paths: RunPaths, *, dpi: int | None, explicit: bool, counts: bool = False,
-) -> None:
-    """How widely the traced particles wet the wall -- the plasma boundary
-    before extend_bnd -- poloidally, toroidally and in total (see
-    ashen.diagnostics.particle_wetted). Written into the ptrace folder as
-    particle_wetted.png, and the numbers as particle_wetted.json."""
+def _particle_wetted_numbers(
+    case: Case, paths: RunPaths, *, explicit: bool,
+) -> SimpleNamespace | None:
+    """The particle_wetted measures of one case's trace, as its figure
+    shows them: the hits on the wall (the plasma boundary before
+    extend_bnd), within the traced window and the case's
+    ptrace_initial_psi_n_range, binned at ptrace_wetted_bins. None, with a
+    note, when there is no trace, no wall or no hit. Shared by the figure
+    and the scan-map quantities, so the two cannot disagree."""
     if case.ptrace_exe is None:
         if explicit:
             print("  particle_wetted: case sets no ptrace_exe, skipped")
-        return
+        return None
     folder = ptrace_dir(case, paths.run_dir)
     diag = find_diag_file(folder)
     if diag is None:
         print(f"  particle_wetted: no particle diagnostics file ({', '.join(DIAG_FILES)}) "
               f"in {folder} (run bin/ptrace first), skipped")
         _note_other_traces(case, paths, diag="particle_wetted")
-        return
+        return None
     boundary = _original_boundary(case, paths, diag="particle_wetted")
     if boundary is None:
         print("  particle_wetted: the wall is the boundary before extend_bnd; skipped")
-        return
+        return None
 
     window = _traced_window(case, paths, folder, diag="particle_wetted")
     wall = Wall.from_points(boundary)
@@ -3040,7 +3077,7 @@ def _plot_particle_wetted(
     )
     selection = _initial_psi_mask(case, inputs.start_psi_n, inputs.n, diag="particle_wetted")
     if selection is None:
-        return
+        return None
     n_markers = inputs.n
     mask, selected, suffix = selection
     n_selected = n_markers if mask is None else int(np.count_nonzero(mask))
@@ -3049,7 +3086,7 @@ def _plot_particle_wetted(
     if hits.n == 0:
         print(f"  particle_wetted: none of {hits.n_considered} particles hit the wall"
               + (f" ({selected})" if selected else "") + ", skipped")
-        return
+        return None
     n_l, n_phi = case.ptrace_wetted_bins
     result = wetted_area(hits, wall, n_l=n_l, n_phi=n_phi)
     # How much of the trace the hits were collected over: the diagnostics
@@ -3057,14 +3094,6 @@ def _plot_particle_wetted(
     # fractions grow with it, so numbers from different spans don't compare.
     t_start, t_end = float(inputs.time[0]), float(inputs.time[-1])
     duration = t_end - t_start
-    # counts: a version of its own, so the fraction figure is kept beside it,
-    # and a colour range of its own, in particles rather than 1/m^2
-    out = plot_wetted_area(
-        result, hits, folder / f"particle_wetted{'_counts' if counts else ''}{suffix}.png",
-        density_range=case.ptrace_wetted_count_range if counts
-        else case.ptrace_wetted_density_range, duration=duration,
-        note=notes, counts=counts, **_dpi_kwargs(dpi),
-    )
     numbers = {
         **result.as_dict(),
         "n_hits": hits.n, "n_considered": hits.n_considered, "n_left_grid": hits.n_left_grid,
@@ -3079,11 +3108,34 @@ def _plot_particle_wetted(
         # for one that got to its end (or whose end is not known).
         "trace_fraction": trace_fraction,
     }
-    results_file = Path(WETTED_RESULTS_FILE)
-    (folder / f"{results_file.stem}{suffix}{results_file.suffix}").write_text(
-        json.dumps(numbers, indent=2) + "\n", encoding="utf-8"
+    return SimpleNamespace(result=result, hits=hits, numbers=numbers, folder=folder,
+                           suffix=suffix, notes=notes, duration=duration)
+
+
+def _plot_particle_wetted(
+    case: Case, paths: RunPaths, *, dpi: int | None, explicit: bool, counts: bool = False,
+) -> None:
+    """How widely the traced particles wet the wall -- the plasma boundary
+    before extend_bnd -- poloidally, toroidally and in total (see
+    ashen.diagnostics.particle_wetted). Written into the ptrace folder as
+    particle_wetted.png, and the numbers as particle_wetted.json."""
+    done = _particle_wetted_numbers(case, paths, explicit=explicit)
+    if done is None:
+        return
+    # counts: a version of its own, so the fraction figure is kept beside it,
+    # and a colour range of its own, in particles rather than 1/m^2
+    out = plot_wetted_area(
+        done.result, done.hits,
+        done.folder / f"particle_wetted{'_counts' if counts else ''}{done.suffix}.png",
+        density_range=case.ptrace_wetted_count_range if counts
+        else case.ptrace_wetted_density_range, duration=done.duration,
+        note=done.notes, counts=counts, **_dpi_kwargs(dpi),
     )
-    caption = wetted_caption(result, hits, duration=duration, note=notes)
+    results_file = Path(WETTED_RESULTS_FILE)
+    (done.folder / f"{results_file.stem}{done.suffix}{results_file.suffix}").write_text(
+        json.dumps(done.numbers, indent=2) + "\n", encoding="utf-8"
+    )
+    caption = wetted_caption(done.result, done.hits, duration=done.duration, note=done.notes)
     print(f"  particle_wetted: {caption.replace(chr(10), '; ')} -> {out}")
 
 

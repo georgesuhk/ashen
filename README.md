@@ -1355,6 +1355,23 @@ about). A comparison may still carry `x_values` for its `wetted_fraction`/
 `four` figures alongside `x_quantity`/`y_quantity` for its `scan_map` --
 the two coexist without conflict.
 
+**The particle wetted area** (`f_tot`, `f_pol`, `f_tor`, `s`, `area`) is
+available as quantities too, computed exactly as the case's own
+`--diag particle_wetted` figure computes it (same wall, trace window,
+`ptrace_initial_psi_n_range` and `ptrace_wetted_bins`). Their bootstrap
+errors are drawn as error bars on x and y, and each case prints how many
+hits its numbers rest on:
+
+```bash
+python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta*0.1' --diag scan_map --x-quantity eta --y-quantity f_tot
+python ~/ashen/bin/plot --compare 'qa2.1_g2.8/*' --diag scan_map --x-quantity f_pol --y-quantity f_tor --c-quantity s
+```
+
+Compare cases at similar hit counts and the same bins: with N hits over K
+cells, even a perfectly uniform deposition reads f_tot ≈ 1 / (1 + (K − 1)/N)
+(0.24 for 400 hits on 36 × 36 cells), and `s` falls with it. The error bars
+show scatter, not this bias; coarser `ptrace_wetted_bins` reduce it.
+
 **The two encodings** (`map_encoding`, default `"color"`):
 
 | encoding | third quantity shown as | datasets told apart by |

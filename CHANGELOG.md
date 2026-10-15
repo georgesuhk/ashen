@@ -4,6 +4,25 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-15: the particle wetted area on scan maps, with error bars
+
+- New scan-map quantities `f_tot`, `f_pol`, `f_tor`, `s` and `area`
+  (m²): the `particle_wetted` measures, computed by the same code as the
+  per-case figure, so the numbers are identical to its caption and
+  `particle_wetted.json`. Example, with a case pattern:
+  `plot --compare 'qa2.1_g2.8/eta*0.1' --diag scan_map --x-quantity eta --y-quantity f_tot`.
+- Scan maps now draw error bars for quantities that have an uncertainty:
+  these five, from their bootstrap errors. Other quantities are unchanged.
+  The printed summary gives `value ± error`.
+- Each case says once how many hits its numbers rest on and the bins,
+  e.g. `particle_wetted from 400 hits of 400 particles, 36 x 36 bins`,
+  since f_tot and s are biased low when hits are few for the bins (see
+  the README). A case without a trace or without hits drops out of the
+  map with a note, as for other missing quantities.
+- `--list-quantities` lists them. The computation is shared through
+  `cli/plot.py::_particle_wetted_numbers`, which `--diag particle_wetted`
+  now also uses; its figure and JSON are unchanged.
+
 ## 2026-10-15: `plot --compare` takes a case pattern
 
 - `--compare` accepts the same selectors as `--case` when no
