@@ -81,7 +81,7 @@ def max_amplitude_series(
     of every key found across the requested steps' caches.
     """
     per_step: list[dict[ModeKey, fc.FourRecord]] = [
-        fc.read_cache(paths.four_cache(step)) for step in steps
+        fc.read_cache(paths.four_cache(step), variables) for step in steps
     ]
     keys = _select_keys(per_step, variables, modes)
 
@@ -162,7 +162,7 @@ def radial_amplitude_series(
     """
     _check_radial_quantity(quantity)
     per_step: list[dict[ModeKey, fc.FourRecord]] = [
-        fc.read_cache(paths.four_cache(step)) for step in steps
+        fc.read_cache(paths.four_cache(step), variables) for step in steps
     ]
     keys = _select_keys(per_step, variables, modes)
 
@@ -208,7 +208,7 @@ def rational_surface_series(
     wanted_modes = [(int(n), int(m)) for n, m in modes if int(n) != 0]
 
     per_step_four: list[dict[ModeKey, fc.FourRecord]] = [
-        fc.read_cache(paths.four_cache(step)) for step in steps
+        fc.read_cache(paths.four_cache(step), variables) for step in steps
     ]
     per_step_q: list[tuple[np.ndarray, np.ndarray] | None] = []
     for step in steps:
@@ -315,7 +315,8 @@ def delta_b_series(
     q-profile and zeroD caches r needs, is nan.
     """
     target = DELTA_B if b_ref is None else DELTA_B_OVER_B
-    per_step = [fc.read_cache(paths.four_cache(step)) for step in steps]
+    # Psi only: the other variables are most of each file and never used here
+    per_step = [fc.read_cache(paths.four_cache(step), ["Psi"]) for step in steps]
     radii = [minor_radius_profile(paths, step, f0=f0, r_axis=r_axis) for step in steps]
     keys = _select_keys(per_step, ["Psi"], modes)
 
@@ -356,7 +357,7 @@ def edge_minor_radius(
     has what it needs. None if no step does."""
     for step in steps:
         radius = minor_radius_profile(paths, step, f0=f0, r_axis=r_axis)
-        records = fc.read_cache(paths.four_cache(step))
+        records = fc.read_cache(paths.four_cache(step), ["Psi"])
         psi_n = next((r.psi_n for k, r in records.items() if k[0] == "Psi" and r.psi_n.size), None)
         if radius is None or psi_n is None:
             continue

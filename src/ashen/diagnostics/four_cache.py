@@ -86,19 +86,27 @@ def write_cache(
     tmp.replace(path)
 
 
-def read_cache(path: Path | str) -> dict[tuple[str, int, int], FourRecord]:
-    """Load every record from a cache file. Returns ``{}`` if it doesn't exist."""
+def read_cache(
+    path: Path | str, variables=None,
+) -> dict[tuple[str, int, int], FourRecord]:
+    """Load the records of a cache file: every one, or only those of
+    ``variables`` -- each variable is read as a whole or not at all, so
+    asking for Psi alone skips the other variables' data entirely (most of
+    a file). Returns ``{}`` if it doesn't exist."""
     path = Path(path)
     if not path.is_file():
         return {}
 
     h5py = _h5py()
+    wanted = None if variables is None else set(variables)
     records: dict[tuple[str, int, int], FourRecord] = {}
     with h5py.File(path, "r") as f:
         schema = int(f.attrs.get("schema", -1))
         if schema != SCHEMA_VERSION:
             raise FourCacheError(f"{path}: schema {schema}, expected {SCHEMA_VERSION}")
         for variable, var_group in f["records"].items():
+            if wanted is not None and variable not in wanted:
+                continue
             for n_name, n_group in var_group.items():
                 n = int(n_name[1:])
                 for m_name, m_group in n_group.items():
