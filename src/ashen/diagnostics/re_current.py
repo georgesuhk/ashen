@@ -10,7 +10,8 @@ model's own:
     j_thermal = j_total - j_RE
 
 Per radial position, from two jorek2_postproc expressions gathered on the
-outer midplane against Psi_N (SI units, A/m^2, toroidally averaged):
+outer midplane (SI units, A/m^2, toroidally averaged), against Psi_N or,
+with the case's ``re_current_coords``, against R as well:
 
 - ``currdens``    = -zj / (R mu0)            the total toroidal current density
 - ``recurrdens``  = -zj_RE / (R mu0)         the runaways' share of it
@@ -41,14 +42,17 @@ from ashen.paths import RunPaths
 from ashen.postproc import read_zeroD
 
 __all__ = [
-    "COORDS_VAR", "TOR_MODE", "VARIABLES",
+    "COORDS", "COORDS_VAR", "TOR_MODE", "VARIABLES",
     "CurrentDensity", "CurrentTotals", "RatioMap",
     "current_density_series", "current_ratio_map", "current_totals", "gather_re_current",
     "total_re_current", "vpar_re_sign",
 ]
 
-#: The two postproc expressions, their radial coordinate and the cut.
+#: The two postproc expressions, their radial coordinates and the cut.
 VARIABLES = ("currdens", "recurrdens")
+#: The radial coordinates the profiles can be gathered against: JOREK-grid
+#: psi_N, or major radius R [m]. COORDS_VAR is the default.
+COORDS = ("Psi_N", "R")
 COORDS_VAR = "Psi_N"
 TOR_MODE = "midplane outer"
 
@@ -57,10 +61,13 @@ TOR_MODE = "midplane outer"
 class CurrentDensity:
     """Toroidal current density on the outer midplane at one step [A/m^2]."""
 
-    psi_n: np.ndarray     #: JOREK-grid psi_N (1 at the domain edge)
+    #: The radial coordinate: JOREK-grid psi_N (1 at the domain edge), or
+    #: R [m] -- coords_var says which.
+    x: np.ndarray
     total: np.ndarray
     re: np.ndarray
     thermal: np.ndarray   #: total - re
+    coords_var: str = COORDS_VAR
 
 
 @dataclass(frozen=True)
@@ -76,14 +83,16 @@ class CurrentTotals:
 
 @dataclass(frozen=True)
 class RatioMap:
-    """thermal / runaway current density against step and psi_N."""
+    """thermal / runaway current density against step and the radial
+    coordinate (psi_N or R)."""
 
     steps: list[int]
-    psi_n: np.ndarray     #: the common grid, shape (n_psi,)
-    #: shape (n_steps, n_psi). nan where the step's profile does not reach
-    #: that psi_N or carries no current there (see current_ratio_map);
+    x: np.ndarray         #: the common radial grid, shape (n_x,)
+    #: shape (n_steps, n_x). nan where the step's profile does not reach
+    #: that position or carries no current there (see current_ratio_map);
     #: +-inf where there is current but no runaway current at all.
     ratio: np.ndarray
+    coords_var: str = COORDS_VAR
 
 
 def gather_re_current(
@@ -95,65 +104,71 @@ def gather_re_current(
     n_workers: int = 4,
     force: bool = False,
     on_progress: Callable[[int, int, int, str, str], None] | None = None,
+    coords_var: str = COORDS_VAR,
 ) -> int:
-    """Gather both expressions for every step (two jorek2_postproc calls per
-    step, cached like any other profile). Returns how many (step, variable)
-    profiles are now cached."""
+    """Gather both expressions for every step against ``coords_var`` (two
+    jorek2_postproc calls per step, cached like any other profile). Returns
+    how many (step, variable) profiles are now cached."""
     succeeded = gather_profiles(
-        run, paths, steps, list(VARIABLES), coords_var=COORDS_VAR, tor_modes=[TOR_MODE],
+        run, paths, steps, list(VARIABLES), coords_var=coords_var, tor_modes=[TOR_MODE],
         n_points=n_points, n_workers=n_workers, force=force, on_progress=on_progress,
     )
     return succeeded[TOR_MODE]
 
 
-def current_density_series(paths: RunPaths, steps: list[int]) -> dict[int, CurrentDensity]:
-    """{step: CurrentDensity} for the steps that have both profiles cached."""
-    total = read_profile_series(paths, steps, COORDS_VAR, "currdens", TOR_MODE)
-    runaway = read_profile_series(paths, steps, COORDS_VAR, "recurrdens", TOR_MODE)
+def current_density_series(
+    paths: RunPaths, steps: list[int], coords_var: str = COORDS_VAR,
+) -> dict[int, CurrentDensity]:
+    """{step: CurrentDensity} for the steps that have both profiles cached
+    against ``coords_var``."""
+    total = read_profile_series(paths, steps, coords_var, "currdens", TOR_MODE)
+    runaway = read_profile_series(paths, steps, coords_var, "recurrdens", TOR_MODE)
     series: dict[int, CurrentDensity] = {}
     for step in steps:
         if step not in total or step not in runaway:
             continue
-        psi_n, j_total = total[step]
-        psi_re, j_re = runaway[step]
-        if psi_n.size == 0 or psi_re.size == 0:
+        x, j_total = total[step]
+        x_re, j_re = runaway[step]
+        if x.size == 0 or x_re.size == 0:
             continue
-        order = np.argsort(psi_n)
-        psi_n, j_total = psi_n[order], j_total[order]
+        order = np.argsort(x)
+        x, j_total = x[order], j_total[order]
         # Same command, same linepoints: the two grids are the same. Put the
         # RE profile on the total's grid anyway rather than assume it.
-        order_re = np.argsort(psi_re)
-        j_re = np.interp(psi_n, psi_re[order_re], j_re[order_re])
-        series[step] = CurrentDensity(psi_n, j_total, j_re, j_total - j_re)
+        order_re = np.argsort(x_re)
+        j_re = np.interp(x, x_re[order_re], j_re[order_re])
+        series[step] = CurrentDensity(x, j_total, j_re, j_total - j_re, coords_var)
     return series
 
 
 def current_ratio_map(
     densities: dict[int, CurrentDensity], *, n_psi: int = 200, floor: float = 1e-3,
 ) -> RatioMap:
-    """j_thermal / j_RE on one psi_N grid for every step in ``densities``.
+    """j_thermal / j_RE on one radial grid for every step in ``densities``.
 
-    Each step's profile is put on a common grid from 0 to the largest
-    psi_N any step reaches; a step is nan beyond its own range, never
-    extrapolated. Where a step's total current density is below ``floor``
+    Each step's profile is put on a common grid: for psi_N from 0, for R
+    from the smallest R any step reaches, to the largest any step reaches;
+    a step is nan beyond its own range, never extrapolated. Where a step's total current density is below ``floor``
     times that step's largest, the ratio is nan: with next to no current
     (the vacuum of an extended boundary) it is one small number over another.
     """
     steps = sorted(densities)
     if not steps:
         return RatioMap([], np.linspace(0.0, 1.0, n_psi), np.empty((0, n_psi)))
-    psi_n = np.linspace(0.0, max(float(densities[s].psi_n.max()) for s in steps), n_psi)
+    coords_var = densities[steps[0]].coords_var
+    start = 0.0 if coords_var == "Psi_N" else min(float(densities[s].x.min()) for s in steps)
+    grid = np.linspace(start, max(float(densities[s].x.max()) for s in steps), n_psi)
     ratio = np.full((len(steps), n_psi), np.nan)
     for i, step in enumerate(steps):
         d = densities[step]
-        total = np.interp(psi_n, d.psi_n, d.total, left=np.nan, right=np.nan)
-        runaway = np.interp(psi_n, d.psi_n, d.re, left=np.nan, right=np.nan)
+        total = np.interp(grid, d.x, d.total, left=np.nan, right=np.nan)
+        runaway = np.interp(grid, d.x, d.re, left=np.nan, right=np.nan)
         peak = np.nanmax(np.abs(d.total)) if d.total.size else 0.0
         carries = np.abs(total) >= floor * peak if peak > 0 else np.zeros(n_psi, dtype=bool)
         with np.errstate(divide="ignore", invalid="ignore"):
             row = (total - runaway) / runaway
         ratio[i] = np.where(carries, row, np.nan)
-    return RatioMap(steps, psi_n, ratio)
+    return RatioMap(steps, grid, ratio, coords_var)
 
 
 def vpar_re_sign(paths: RunPaths) -> float | None:

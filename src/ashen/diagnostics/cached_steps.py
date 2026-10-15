@@ -56,7 +56,7 @@ def cached_steps(diag: str, case: Case | None, paths: RunPaths) -> list[int]:
     - profiles: a cache for any of the case's variables and tor_modes (the
       one diag that needs ``case``; the others take None).
     - re_current: both current-density profiles (``currdens`` and
-      ``recurrdens``).
+      ``recurrdens``) against one of the case's ``re_current_coords``.
     - zerod: the zeroD files.
     """
     zero = paths.step_str(0)
@@ -78,11 +78,16 @@ def cached_steps(diag: str, case: Case | None, paths: RunPaths) -> list[int]:
                 )
         return sorted(steps)
     if diag == "re_current":
-        per_var = [
-            _steps_named_like(paths.profile_cache(rc.COORDS_VAR, var, 0, rc.TOR_MODE), zero)
-            for var in rc.VARIABLES
-        ]
-        return sorted(set.intersection(*per_var))
+        # both densities against one coordinate; any of the case's coordinates
+        coords = case.re_current_coords if case is not None else [rc.COORDS_VAR]
+        steps = set()
+        for coords_var in coords:
+            per_var = [
+                _steps_named_like(paths.profile_cache(coords_var, var, 0, rc.TOR_MODE), zero)
+                for var in rc.VARIABLES
+            ]
+            steps |= set.intersection(*per_var)
+        return sorted(steps)
     if diag == "zerod":
         return sorted(_steps_named_like(paths.zero_d(0), zero))
     raise ValueError(f"{diag!r} is not drawn over restart steps")

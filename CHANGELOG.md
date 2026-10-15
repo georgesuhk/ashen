@@ -4,6 +4,28 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-15: re_current against R as well as psi_N
+
+- New case key `re_current_coords`: the radial coordinate(s) the
+  re_current current-density profiles are gathered and drawn against,
+  `"Psi_N"` (the default, as before) and/or `"R"` (major radius, m).
+  `re_current_coords = ["Psi_N", "R"]` gives both.
+- `analyse --diag re_current` gathers each listed coordinate (two more
+  `jorek2_postproc` calls per step for R). `plot` draws each:
+  `re_current_R.png` and `re_current_ratio_R.png` beside the psi_N ones,
+  whose names are unchanged. The R figures have no plasma-edge line, and
+  the ratio map's R axis runs over the R the profiles cover.
+- Case viewer: the "Runaway and thermal current" section has a **ψ_N** /
+  **R** switch before the step slider. Switching to a coordinate that has
+  no profiles yet says to add it to `re_current_coords` and press **Run
+  analyse --diag re_current**.
+- `plot --step all` counts a step as cached for re_current when it has
+  both profiles against any of the case's coordinates.
+- Default output unchanged: with psi_N only, `re_current.png` and
+  `re_current_ratio.png` are byte-identical to before. In code,
+  `CurrentDensity.psi_n` and `RatioMap.psi_n` are now `.x`, with a
+  `coords_var` beside them.
+
 ## 2026-10-15: delta-B and mode amplitudes about 8x faster
 
 - Reading the jorek2_four caches was nearly all the time of delta-B

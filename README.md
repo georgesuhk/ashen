@@ -369,6 +369,20 @@ next to the step slider choose which of the three curves both panels draw.
   domain, vacuum included with an extended boundary) and, for steps with
   a q-profile cache, the l_i of the plasma only (cylinder definition).
   `analyse --diag re_current` gathers that q-profile for its steps itself.
+- **Against R as well as psi_N.** The profiles are gathered against psi_N
+  by default. `re_current_coords` on the case chooses the radial
+  coordinate(s), `"Psi_N"` and/or `"R"` (major radius, m):
+
+  ```toml
+  [cases."qa3.3_g3.2/eta1e-3_adv0.1"]
+  re_current_coords = ["Psi_N", "R"]
+  ```
+
+  `analyse --diag re_current` then gathers both, and `plot` draws both:
+  the R figures are `re_current_R.png` and `re_current_ratio_R.png`, with
+  no plasma-edge line (that is a psi_N). In the case viewer, **ψ_N** / **R**
+  switches the section between them; a coordinate not gathered yet says
+  how to get it.
 - **Steps** are the case's `steps`, or its own:
 
   ```toml

@@ -15,9 +15,10 @@ from ashen.paths import RunPaths  # noqa: E402
 STEPS = [0, 100, 200]
 
 
-def _folder(tmp_path, *, sign="1", re_share=(1.0, 0.6, 0.2)):
+def _folder(tmp_path, *, sign="1", re_share=(1.0, 0.6, 0.2), with_r=False):
     """A run folder with both profiles and a zeroD file per step. The total
-    current is 400 kA throughout; the runaways carry ``re_share`` of it."""
+    current is 400 kA throughout; the runaways carry ``re_share`` of it.
+    ``with_r``: the profiles against R too, on R = 1.4 .. 1.9 m."""
     run = tmp_path / "run"
     (run / "postproc").mkdir(parents=True)
     if sign is not None:
@@ -30,6 +31,11 @@ def _folder(tmp_path, *, sign="1", re_share=(1.0, 0.6, 0.2)):
         # written back to front: the reader must not rely on the order
         np.savez(paths.profile_cache("Psi_N", "recurrdens", step, rc.TOR_MODE),
                  x=psi_n[::-1], y=(share * j_total)[::-1])
+        if with_r:
+            R = 1.4 + 0.5 * np.sqrt(psi_n)
+            np.savez(paths.profile_cache("R", "currdens", step, rc.TOR_MODE), x=R, y=j_total)
+            np.savez(paths.profile_cache("R", "recurrdens", step, rc.TOR_MODE),
+                     x=R, y=share * j_total)
         ipre = -float(sign or 1) * share * 4e5       # JOREK's own sign for Ipre_tot
         paths.zero_d(step).write_text(
             f"Time Ip_tot Ipre_tot\n{step * 1e-6} 4.0e5 {ipre}\n"
@@ -43,7 +49,7 @@ def test_thermal_density_is_total_minus_runaway(tmp_path):
     assert sorted(series) == STEPS
     for step, share in zip(STEPS, (1.0, 0.6, 0.2)):
         d = series[step]
-        assert np.all(np.diff(d.psi_n) > 0)
+        assert np.all(np.diff(d.x) > 0) and d.coords_var == "Psi_N"
         np.testing.assert_allclose(d.re, share * d.total)
         np.testing.assert_allclose(d.thermal, (1 - share) * d.total, atol=1e-6)
     assert series[0].total[0] == pytest.approx(2e6)
@@ -185,7 +191,8 @@ def test_viewer_section(tmp_path, monkeypatch):
     button, _, holder = viewer.re_current_view(run).children
     assert button.description == "Run analyse --diag re_current"
     controls, canvas, _ = holder.children[0].children
-    step, *boxes = controls.children
+    coords, step, *boxes = controls.children
+    assert coords.value == "Psi_N"
     before = bytes(canvas.children[0].value)
     step.value = 0
     assert bytes(canvas.children[0].value) != before
@@ -210,7 +217,7 @@ def test_ratio_map_is_thermal_over_runaway_on_one_grid(tmp_path):
     _, paths = _folder(tmp_path, re_share=(0.8, 0.5, 0.2))
     ratio_map = rc.current_ratio_map(rc.current_density_series(paths, STEPS), n_psi=50)
     assert ratio_map.steps == STEPS and ratio_map.ratio.shape == (3, 50)
-    inside = ratio_map.psi_n < 0.9
+    inside = ratio_map.x < 0.9
     for row, share in zip(ratio_map.ratio, (0.8, 0.5, 0.2)):
         np.testing.assert_allclose(row[inside], (1 - share) / share)
     # j_total = 0 at psi_N = 1: no current to take a ratio of
@@ -271,6 +278,107 @@ def test_viewer_shows_the_ratio_map_under_the_profiles(tmp_path):
     _, _, holder = viewer.re_current_view(run).children
     assert len(holder.children[0].children) == 3
     assert bytes(holder.children[0].children[2].children[0].value[:4]) == b"\x89PNG"
+
+
+# --- against R as well as psi_N ------------------------------------------------------
+
+
+def test_profiles_against_r_are_the_same_split_on_an_r_grid(tmp_path):
+    _, paths = _folder(tmp_path, with_r=True)
+    on_r = rc.current_density_series(paths, STEPS, "R")
+    on_psi = rc.current_density_series(paths, STEPS)
+    for step in STEPS:
+        assert on_r[step].coords_var == "R" and on_r[step].x[0] == pytest.approx(1.4)
+        np.testing.assert_allclose(on_r[step].thermal, on_psi[step].thermal)
+    ratio = rc.current_ratio_map(on_r)
+    assert ratio.coords_var == "R"
+    assert (ratio.x[0], ratio.x[-1]) == pytest.approx((1.4, 1.9))   # R starts where the data do
+    assert rc.current_ratio_map(on_psi).x[0] == 0.0                 # psi_N still from 0
+
+
+def test_figures_against_r_are_labelled_r_and_have_no_psi_edge(tmp_path):
+    from matplotlib.figure import Figure
+
+    from ashen.plotting.re_current import re_current_figure, ratio_map_figure
+
+    _, paths = _folder(tmp_path, with_r=True)
+    densities = rc.current_density_series(paths, STEPS, "R")
+    fig = re_current_figure(Figure(), rc.current_totals(paths, STEPS, 1.0), densities,
+                            step=100, real_psi_edge=0.8)
+    ax_j = fig.axes[1]
+    assert ax_j.get_xlabel() == "$R$ [m], outer midplane"
+    assert not [l for l in ax_j.get_lines() if list(l.get_xdata()) == [0.8, 0.8]]
+    fig = ratio_map_figure(Figure(), rc.current_ratio_map(densities), real_psi_edge=0.8)
+    assert fig.axes[0].get_ylabel() == "$R$ [m], outer midplane"
+
+
+def test_case_key_and_plot_draw_each_coordinate(tmp_path, monkeypatch, capsys):
+    from ashen.cases import CasesError, load_cases
+    from ashen.cli import plot as plot_cli
+
+    run, paths = _folder(tmp_path, with_r=True)
+    (run / "jorek000000.h5").write_bytes(b"")              # plot reads the padding off it
+    cases = tmp_path / "cases.toml"
+    cases.write_text('[cases.run]\nsteps = [0, 100, 200]\nre_current_coords = ["Psi_N", "R"]\n')
+    assert load_cases(cases, run_root=tmp_path)["run"].re_current_coords == ["Psi_N", "R"]
+    monkeypatch.chdir(tmp_path)
+    assert plot_cli.main(["--case", "run", "--diag", "re_current", "--dpi", "40"]) == 0
+    for name in ("re_current.png", "re_current_ratio.png", "re_current_R.png",
+                 "re_current_ratio_R.png"):
+        assert (paths.profile_figures_dir / name).is_file(), name
+    assert capsys.readouterr().out.count("step 200: total") == 1      # totals said once
+
+    cases.write_text('[cases.run]\nsteps = [0]\nre_current_coords = "R"\n')
+    assert load_cases(cases, run_root=tmp_path)["run"].re_current_coords == ["R"]
+    cases.write_text('[cases.run]\nsteps = [0]\nre_current_coords = ["rho"]\n')
+    with pytest.raises(CasesError, match="re_current_coords must be one or more of"):
+        load_cases(cases, run_root=tmp_path)
+
+
+def test_case_key_values_match_the_diagnostic():
+    from ashen.cases import RE_CURRENT_COORDS
+
+    assert RE_CURRENT_COORDS == rc.COORDS
+
+
+def test_analyse_gathers_each_coordinate(tmp_path, monkeypatch):
+    from ashen.cases import Case
+    from ashen.cli import analyse as analyse_cli
+
+    run, _ = _folder(tmp_path)
+    (run / "jorek000000.h5").write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    asked = []
+    monkeypatch.setattr(analyse_cli, "_gather_zero_d", lambda *a, **k: None)
+    monkeypatch.setattr(analyse_cli, "_gather_qprofile", lambda *a, **k: None)
+    monkeypatch.setattr(analyse_cli.re_current_diag, "gather_re_current",
+                        lambda jrun, paths, steps, **k: asked.append(k["coords_var"]) or 2)
+    case = Case(name="run", steps=[0], re_current_coords=["Psi_N", "R"])
+    analyse_cli._run_case(case, diags=["re_current"], force=False, n_workers=1, omp_threads=1)
+    assert asked == ["Psi_N", "R"]
+
+
+def test_viewer_switches_between_psi_n_and_r(tmp_path):
+    w = pytest.importorskip("ipywidgets")
+    from ashen import viewer
+
+    run, _ = _folder(tmp_path, with_r=True)
+    assert viewer.re_current_steps(run, "R") == STEPS
+    _, _, holder = viewer.re_current_view(run).children
+    controls, canvas, ratio = holder.children[0].children
+    coords, step, *_ = controls.children
+    shown = bytes(canvas.children[0].value)
+    coords.value = "R"
+    assert bytes(canvas.children[0].value) != shown and step.value == STEPS[-1]
+    assert bytes(ratio.children[0].value[:4]) == b"\x89PNG"
+
+    # a coordinate with no profiles says how to get them
+    only_psi, _ = _folder(tmp_path / "other")
+    _, _, holder = viewer.re_current_view(only_psi).children
+    controls, canvas, ratio = holder.children[0].children
+    controls.children[0].value = "R"
+    assert isinstance(canvas.children[0], w.HTML) and "re_current_coords" in canvas.children[0].value
+    assert ratio.children == ()
 
 
 # --- l_i under the ratio map --------------------------------------------------------

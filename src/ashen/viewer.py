@@ -1138,24 +1138,28 @@ def profiles_figure(run_dir: Path | str, key: ProfileKey, *, step: int | None = 
     return fig
 
 
-def re_current_steps(run_dir: Path | str) -> list[int]:
-    """Steps with both current-density profiles cached (analyse --diag re_current)."""
+def re_current_steps(run_dir: Path | str, coords_var: str = "Psi_N") -> list[int]:
+    """Steps with both current-density profiles cached against
+    ``coords_var`` ("Psi_N" or "R"; analyse --diag re_current)."""
     from ashen.diagnostics import re_current as rc
 
     paths = _paths(run_dir)
     found = []
     for path in paths.postproc_dir.glob("*.npz"):
-        match = re.fullmatch(rf"{rc.COORDS_VAR}_recurrdens_midplane-outer_(\d+)", path.stem)
+        match = re.fullmatch(rf"{re.escape(coords_var)}_recurrdens_midplane-outer_(\d+)", path.stem)
         if match:
             found.append(int(match.group(1)))
-    return sorted(rc.current_density_series(paths, sorted(found)))
+    return sorted(rc.current_density_series(paths, sorted(found), coords_var))
 
 
-def re_current_figure(run_dir: Path | str, step: int | None = None, *, show=None):
+def re_current_figure(
+    run_dir: Path | str, step: int | None = None, *, show=None, coords_var: str = "Psi_N",
+):
     """Total, runaway and thermal current against time, and their densities
-    against psi_N on the outer midplane at ``step`` (default: the last one
-    gathered). ``show``: which of "total", "re", "thermal" to draw (default:
-    all three). See diagnostics.re_current for what the split means."""
+    against ``coords_var`` (psi_N or R) on the outer midplane at ``step``
+    (default: the last one gathered). ``show``: which of "total", "re",
+    "thermal" to draw (default: all three). See diagnostics.re_current for
+    what the split means."""
     from matplotlib.figure import Figure
 
     from ashen.diagnostics import re_current as rc
@@ -1163,26 +1167,26 @@ def re_current_figure(run_dir: Path | str, step: int | None = None, *, show=None
     from ashen.plotting.re_current import re_current_figure as build
 
     paths = _paths(run_dir)
-    steps = re_current_steps(run_dir)
+    steps = re_current_steps(run_dir, coords_var)
     fig = Figure(figsize=(14, 4.6), layout="constrained")
     totals = rc.current_totals(paths, steps, rc.vpar_re_sign(paths))
-    build(fig, totals, rc.current_density_series(paths, steps), step=step,
+    build(fig, totals, rc.current_density_series(paths, steps, coords_var), step=step,
           real_psi_edge=_real_psi_edge(paths), show=SPECIES if show is None else show)
     return fig
 
 
-def re_current_ratio_figure(run_dir: Path | str):
-    """thermal / runaway current density against time and psi_N, as a
-    colour map over every gathered step, with l_i against time underneath
-    (plotting.re_current)."""
+def re_current_ratio_figure(run_dir: Path | str, *, coords_var: str = "Psi_N"):
+    """thermal / runaway current density against time and ``coords_var``
+    (psi_N or R), as a colour map over every gathered step, with l_i
+    against time underneath (plotting.re_current)."""
     from matplotlib.figure import Figure
 
     from ashen.diagnostics import re_current as rc
     from ashen.plotting.re_current import ratio_map_figure
 
     paths = _paths(run_dir)
-    steps = re_current_steps(run_dir)
-    ratio_map = rc.current_ratio_map(rc.current_density_series(paths, steps))
+    steps = re_current_steps(run_dir, coords_var)
+    ratio_map = rc.current_ratio_map(rc.current_density_series(paths, steps, coords_var))
     totals = rc.current_totals(paths, ratio_map.steps, None)
     try:
         f0 = _f0(Path(run_dir))
@@ -2092,15 +2096,21 @@ def _toml_value(value) -> str:
 
 
 def re_current_view(run_dir: Path | str = "."):
-    """Runaway and thermal current (re_current_figure) with a step selector
-    and a checkbox per current (total, runaway, thermal), under a button
-    that runs ``analyse --diag re_current`` for this run."""
+    """Runaway and thermal current (re_current_figure) with a switch between
+    psi_N and R as the radial coordinate, a step selector and a checkbox per
+    current (total, runaway, thermal), under a button that runs
+    ``analyse --diag re_current`` for this run."""
     w = _widgets()
 
     def build():
-        steps = re_current_steps(run_dir)
-        if not steps:
+        available = {c: re_current_steps(run_dir, c) for c in ("Psi_N", "R")}
+        if not any(available.values()):
             return w.HTML("no currdens / recurrdens profiles yet (a run with the RE fluid only)")
+        first = "Psi_N" if available["Psi_N"] else "R"
+        coords = w.ToggleButtons(
+            options=[("ψ_N", "Psi_N"), ("R", "R")], value=first, style={"button_width": "50px"},
+            tooltips=["against JOREK-grid psi_N", "against major radius R [m]"])
+        steps = available[first]
         step = w.SelectionSlider(options=steps, value=steps[-1], description="step",
                                  continuous_update=False)
         boxes = []
@@ -2109,18 +2119,36 @@ def re_current_view(run_dir: Path | str = "."):
                              layout=w.Layout(width="auto"))
             box.species = name
             boxes.append(box)
-        out = _canvas(w)
+        out, ratio = _canvas(w), _canvas(w)
 
         def redraw(*_):
             show = [box.species for box in boxes if box.value]
-            _show(out, lambda: re_current_figure(run_dir, step.value, show=show))
+            _show(out, lambda: re_current_figure(run_dir, step.value, show=show,
+                                                 coords_var=coords.value))
+
+        def on_coords(_):
+            chosen = available[coords.value]
+            if not chosen:
+                note = w.HTML(
+                    f"no profiles against {coords.value} yet: add \"{coords.value}\" to this "
+                    "case's <code>re_current_coords</code> in cases.toml and press "
+                    "<b>Run analyse --diag re_current</b>")
+                out.children, ratio.children = (note,), ()
+                return
+            # one redraw for the switch, not one per slider change it makes
+            step.unobserve(redraw, names="value")
+            step.options = chosen
+            step.value = chosen[-1]
+            step.observe(redraw, names="value")
+            redraw()
+            _show(ratio, lambda: re_current_ratio_figure(run_dir, coords_var=coords.value))
 
         for control in (step, *boxes):
             control.observe(redraw, names="value")
+        coords.observe(on_coords, names="value")
         redraw()
-        ratio = _canvas(w)
-        _show(ratio, lambda: re_current_ratio_figure(run_dir))
-        return w.VBox([w.HBox([step, *boxes]), out, ratio])
+        _show(ratio, lambda: re_current_ratio_figure(run_dir, coords_var=coords.value))
+        return w.VBox([w.HBox([coords, step, *boxes]), out, ratio])
 
     return _gathering(
         w, "Run analyse --diag re_current", lambda: run_analyse(run_dir, ["re_current"]), build
