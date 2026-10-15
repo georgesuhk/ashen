@@ -83,3 +83,20 @@ def test_read_records_and_list_keys_agree_with_read_cache(tmp_path):
 
     assert fc.list_keys(tmp_path / "nope.h5") == []
     assert fc.read_records(tmp_path / "nope.h5", "Psi", [(1, 2)]) == {}
+
+
+def test_read_cache_of_some_variables_is_the_full_read_filtered(tmp_path):
+    path = tmp_path / "four_s000100.h5"
+    records = [_record("Psi", 1, 2), _record("Psi", 0, 1), _record("T", 1, 2), _record("rho", 2, 3)]
+    fc.write_cache(path, step=100, pad_width=6, records=records)
+    everything = fc.read_cache(path)
+
+    psi = fc.read_cache(path, ["Psi"])
+    assert set(psi) == {("Psi", 1, 2), ("Psi", 0, 1)}
+    for key, record in psi.items():
+        np.testing.assert_array_equal(record.real, everything[key].real)
+        np.testing.assert_array_equal(record.imag, everything[key].imag)
+        np.testing.assert_array_equal(record.psi_n, everything[key].psi_n)
+    assert set(fc.read_cache(path, ["T", "nope"])) == {("T", 1, 2)}
+    assert fc.read_cache(path, []) == {}
+    assert set(fc.read_cache(path, None)) == set(everything)

@@ -4,6 +4,24 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-15: delta-B and mode amplitudes about 8x faster
+
+- Reading the jorek2_four caches was nearly all the time of delta-B
+  (`plot --diag four`, `delta_b_*` on scan maps, the `four` comparison)
+  and of the mode-amplitude series: every step's whole cache was read,
+  all of its variables (Psi, T, n_RE, omega, rho), when these use one.
+  Each now reads only the variables it uses (Psi for delta-B).
+- On the local qa3.3_g3.2/eta1e-3_adv0.1 run (43 steps): delta-B series
+  6.1 s -> 0.7 s; max-amplitude and rational-surface series 4.9 s ->
+  0.6 s each.
+- Results unchanged: on that run every delta-B, delta-B/B (edge),
+  max-amplitude and rational-surface value, and the edge minor radius,
+  are bit-identical to before. `four_cache.read_cache` takes an optional
+  list of variables.
+- Still read once per figure or quantity rather than once per run, so a
+  `--diag four` plot reads each cache a few times; at ~15 ms a step now,
+  not worth the extra machinery yet. Not timed on the HPC.
+
 ## 2026-10-15: scan-map `li` is the plasma's own, from the q-profile
 
 - **Changed meaning:** the `li` quantity is now the plasma's own l_i,
