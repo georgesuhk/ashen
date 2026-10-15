@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import posixpath
 import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
@@ -39,6 +40,7 @@ from ashen.cli._common import (
     CASE_HELP,
     error,
     load_cases_or_exit,
+    matching_cases,
     print_case_list,
     resolve_selection,
     run_steps,
@@ -392,9 +394,11 @@ def build_parser() -> argparse.ArgumentParser:
         "per-case delta_b_over_b figure",
     )
     parser.add_argument(
-        "--compare", action="append", dest="comparisons",
+        "--compare", action="append", dest="comparisons", metavar="NAME|PATTERN",
         help="draw a [comparisons.NAME] figure instead of per-case figures "
-        "(repeatable; only diags with a comparison renderer are valid here)",
+        "(repeatable; only diags with a comparison renderer are valid here). "
+        "Not the name of a comparison: the cases it selects, as --case would "
+        "('qa2.1_g2.8/eta*0.1', quoted), compared as one",
     )
     parser.add_argument(
         "--list-comparisons", action="store_true",
@@ -3083,6 +3087,24 @@ def _plot_particle_wetted(
     print(f"  particle_wetted: {caption.replace(chr(10), '; ')} -> {out}")
 
 
+def _comparison_from_cases(selector: str, cases: dict[str, Case]) -> Comparison | None:
+    """A one-off flat comparison of the cases ``selector`` selects, as a
+    --case value would (cli._common.matching_cases); None if it selects
+    none. Each case is labelled by its path below the folder all of them
+    share, and the figures are named after the selector with every
+    character a file name can't hold made "_" (runs of them one)."""
+    matched = matching_cases(selector, cases)
+    if not matched:
+        return None
+    shared = posixpath.commonpath(matched) if len(matched) > 1 else posixpath.dirname(matched[0])
+    labels = [posixpath.relpath(name, shared) if shared else name for name in matched]
+    slug = re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9._+-]", "_", selector)).strip("_") or "cases"
+    return Comparison(
+        name=slug, cases=matched, x_tick_labels=labels,
+        note=f"the cases matching {selector!r}",
+    )
+
+
 def _run_comparisons(
     names: list[str],
     comparisons: dict[str, Comparison],
@@ -3113,9 +3135,23 @@ def _run_comparisons(
     annotate_points: bool = False,
     explicit_diags: bool = False,
 ) -> int:
-    unknown = [name for name in names if name not in comparisons]
+    # A defined [comparisons.NAME] wins; any other value is a case selector.
+    chosen: list[Comparison] = []
+    unknown = []
+    for name in names:
+        if name in comparisons:
+            chosen.append(comparisons[name])
+            continue
+        made = _comparison_from_cases(name, cases)
+        if made is None:
+            unknown.append(name)
+            continue
+        print(f"compare {name!r}: no [comparisons.{name}], so the {len(made.cases)} "
+              f"case(s) it selects: {', '.join(made.cases)} (figures named {made.name}_*)")
+        chosen.append(made)
     if unknown:
-        print(f"error: unknown comparison(s) {unknown}; --list-comparisons to see defined ones")
+        print(f"error: {unknown} name no comparison and select no case; "
+              "--list-comparisons and --list show what there is")
         return 1
 
     comparable = [d for d in diags if d in COMPARABLE_DIAGS]
@@ -3125,9 +3161,8 @@ def _run_comparisons(
     if not comparable:
         return 0
 
-    for name in names:
-        print(f"==== compare: {name} ====")
-        comparison = comparisons[name]
+    for comparison in chosen:
+        print(f"==== compare: {comparison.name} ====")
         if "theta_hist" in comparable:
             _compare_theta_hist(
                 comparison, cases,

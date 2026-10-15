@@ -1133,6 +1133,23 @@ draws from, the same per-diag override mechanism as everywhere else in
 Asking for a diag without a comparison renderer (e.g. `--compare eta_scan
 --diag profiles`) is reported and skipped, not silently ignored.
 
+**Comparing by pattern, without a table.** `--compare` also takes a case
+selector, as `--case` does: a pattern (quoted, so the shell leaves it
+alone) or a folder.
+
+```bash
+python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta*0.1' --diag theta_hist
+python ~/ashen/bin/plot --compare qa2.1_g2.8 --diag scan_map --x-quantity eta --y-quantity q95
+```
+
+The matching cases become a one-off comparison, in cases.toml order, each
+labelled by its path below the folder they share (`eta1e-3_adv0.1`, ...).
+Its figures are named after the pattern with `/`, `*` and the like made
+`_` (`qa2.1_g2.8_eta_0.1_theta_hist.png`). A `[comparisons.NAME]` of the
+same name always wins. It has no `x_values`, so `wetted_fraction` and the
+`four` delta-B comparison, which need them, say so and skip; `theta_hist`
+and `scan_map` (with `--x-quantity`/`--y-quantity`) work.
+
 #### Wetted fraction vs. a scan parameter
 
 `--diag wetted_fraction` also has a single-run figure under plain `--case`
