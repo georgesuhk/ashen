@@ -1316,7 +1316,8 @@ $ python ~/ashen/bin/plot --list-quantities
 eta (log) -- resistivity from the run's namelist, JOREK units; in ohm m (times the log's sqrt(mu0/rho0)) with --si
 edge_q (linear) -- qprofile interpolated at edge_q_psi_n (default 1.0)
 q95 (linear) -- zeroD column, at the equilibrium step
-li (linear) -- zeroD li3, at the equilibrium step
+li (linear) -- the plasma's own l_i from the q-profile (cylinder definition), at the equilibrium step
+li3 (linear) -- zeroD li3 at the equilibrium step: inside the last closed surface, vacuum included with an extended boundary
 wetted_fraction (linear) -- fraction of theta_hist bins above threshold, pooled over steps
 delta_b_max (log) -- domain-wide peak delta-B over every mode and step
 delta_b_over_b_max (log) -- domain-wide peak delta-B/B over every mode and step

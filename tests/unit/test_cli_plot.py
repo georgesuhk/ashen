@@ -3368,9 +3368,9 @@ def test_scan_map_x_quantity_flag_overrides_the_comparison(scan_campaign, monkey
 
     monkeypatch.setattr(plot_cli, "plot_scan_map", spy)
     assert plot_cli.main(
-        ["--compare", "scan", "--diag", "scan_map", "--x-quantity", "li"]
+        ["--compare", "scan", "--diag", "scan_map", "--x-quantity", "li3"]
     ) == 0
-    assert captured["xlabel"] == plot_cli.quantity("li").label
+    assert captured["xlabel"] == plot_cli.quantity("li3").label
 
 
 def test_scan_map_unknown_x_quantity_is_a_fatal_error(scan_campaign, capsys):

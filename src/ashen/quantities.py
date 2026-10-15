@@ -42,6 +42,7 @@ from ashen.diagnostics.four_modes import (
     max_amplitude_series,
 )
 from ashen.diagnostics.connection_length import connection_lengths_for_step
+from ashen.diagnostics.equilibrium import achieved_q_li
 from ashen.diagnostics.poincare_cache import read_step
 from ashen.diagnostics.qprofile import read_qprofile
 from ashen.diagnostics.theta_histogram import (
@@ -253,6 +254,37 @@ def toroidal_f0(case: Case, paths: RunPaths) -> float:
 
 #: What delta_b needs beyond the four cache, for a "nothing came out" note.
 DELTA_B_NEEDS = "the q-profile and zeroD caches (analyse --diag four --diag zerod)"
+
+
+def _li_plasma(ctx: QuantityContext) -> float | None:
+    """The plasma's own l_i at ctx.eq_step: from the q-profile, inside
+    JOREK's plasma edge (real_psi_edge), cylinder definition
+    (diagnostics.equilibrium.achieved_q_li) -- the curve the re_current
+    ratio map draws as "plasma only". Unlike zeroD li3, which covers
+    everything inside the last closed surface, vacuum included with an
+    extended boundary."""
+    case, paths = ctx.case, ctx.paths
+    step = ctx.eq_step
+    if step is None:
+        ctx.report(f"  {case.name}: li needs an equilibrium step, none available")
+        return None
+    if ctx.ensure_zero_d is not None:
+        ctx.ensure_zero_d([step])
+    if ctx.ensure_qprofile is not None:
+        ctx.ensure_qprofile([step])
+    try:
+        f0 = toroidal_f0(case, paths)
+    except (NamelistError, OSError, TypeError, ValueError) as exc:
+        ctx.report(f"  {case.name}: li needs F0 from the namelist ({exc})")
+        return None
+    achieved = achieved_q_li(paths, step, f0=f0)
+    if achieved is None:
+        ctx.report(
+            f"  {case.name}: li needs step {step}'s q-profile and zeroD caches "
+            "(with psi_axis, psi_bnd, R_axis)"
+        )
+        return None
+    return achieved.li
 
 
 def _edge_q(ctx: QuantityContext) -> float | None:
@@ -760,8 +792,14 @@ _register(
         note="zeroD column, at the equilibrium step",
     ),
     Quantity(
-        "li", r"$l_i$", _zerod_column("li3"),
-        note="zeroD li3, at the equilibrium step",
+        "li", r"$l_i$ (plasma)", _li_plasma,
+        note="the plasma's own l_i from the q-profile (cylinder definition), at the "
+             "equilibrium step",
+    ),
+    Quantity(
+        "li3", r"$l_i(3)$ (JOREK, whole domain)", _zerod_column("li3"),
+        note="zeroD li3 at the equilibrium step: inside the last closed surface, "
+             "vacuum included with an extended boundary",
     ),
     Quantity(
         "t_final", r"$t_{\mathrm{final}}$ [s]", _t_final,
