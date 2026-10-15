@@ -304,11 +304,13 @@ def _run_case(
         # (diagnostics.equilibrium.li_series) -- gathered here, as poincare
         # and four gather theirs, so re_current alone is enough for it.
         _gather_qprofile(jrun, paths, steps, force=force, n_workers=n_workers)
-        n_ok = re_current_diag.gather_re_current(
-            jrun, paths, steps, n_points=case.n_points, n_workers=n_workers, force=force,
-            on_progress=_re_current_progress,
-        )
-        wanted = len(steps) * len(re_current_diag.VARIABLES)
+        n_ok = 0
+        for coords_var in case.re_current_coords:
+            n_ok += re_current_diag.gather_re_current(
+                jrun, paths, steps, n_points=case.n_points, n_workers=n_workers, force=force,
+                on_progress=_re_current_progress, coords_var=coords_var,
+            )
+        wanted = len(steps) * len(re_current_diag.VARIABLES) * len(case.re_current_coords)
         if n_ok < wanted:
             print(
                 f"  warning: re_current has {n_ok} of {wanted} profiles. `recurrdens` exists "

@@ -53,7 +53,13 @@ _CASE_KEYS = (
     "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins", "ptrace_pdf_step",
     "ptrace_wetted_density_range", "ptrace_initial_psi_n_range", "ptrace_loss_bins",
     "ptrace_wetted_counts", "ptrace_wetted_count_range",
+    "re_current_coords",
 )
+
+#: Accepted `re_current_coords` entries. Duplicates
+#: diagnostics.re_current.COORDS rather than importing it into TOML parsing;
+#: a unit test pins the two equal.
+RE_CURRENT_COORDS = ("Psi_N", "R")
 
 #: [cases.NAME.<diag>] step-override table names -- union of both CLIs' DIAG_CHOICES.
 _DIAG_NAMES = (
@@ -88,6 +94,10 @@ class Case:
     #: outer", "average"]). coords_var="Psi_N" needs "midplane outer", not
     #: bare "midplane" (see profiles._TOR_MODE_PREFIX).
     tor_mode: list[str] = field(default_factory=lambda: ["midplane"])
+    #: `--diag re_current`: the radial coordinate(s) its current-density
+    #: profiles are gathered and drawn against -- "Psi_N" (JOREK grid) and/or
+    #: "R" [m]. Bare string -> 1-elem list via load_cases.
+    re_current_coords: list[str] = field(default_factory=lambda: ["Psi_N"])
     namelist: str = "in_main"
     n_points: int = 100
     #: jorek2_four's own defaults (jorek2_four.f90:44-50); unconfigured ==
@@ -795,6 +805,17 @@ def load_cases(path: Path | str, *, run_root: Path | str | None = None) -> dict[
                     f"expected any of {list(TOR_MODES)}"
                 )
             merged["tor_mode"] = modes
+
+        if "re_current_coords" in merged:
+            spec = merged["re_current_coords"]
+            coords = [spec] if isinstance(spec, str) else list(spec)
+            unknown = [c for c in coords if c not in RE_CURRENT_COORDS]
+            if unknown or not coords:
+                raise CasesError(
+                    f"{path}: case {name!r} re_current_coords must be one or more of "
+                    f"{list(RE_CURRENT_COORDS)}, got {spec!r}"
+                )
+            merged["re_current_coords"] = list(dict.fromkeys(coords))
 
         if "profile_rad_range" in merged:
             spec = merged["profile_rad_range"]

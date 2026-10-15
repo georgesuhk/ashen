@@ -22,6 +22,12 @@ __all__ = [
 #: current than thermal (deep red) to 100 times more thermal (deep green).
 RATIO_RANGE = (1e-2, 1e2)
 
+#: Axis text for each radial coordinate the profiles can be on.
+COORD_LABELS = {
+    "Psi_N": r"$\psi_N$ (JOREK grid), outer midplane",
+    "R": r"$R$ [m], outer midplane",
+}
+
 #: One colour per species, the same in both panels.
 COLORS = {"total": "#52514e", "re": "#c8442f", "thermal": "#2a78d6"}
 _LABELS = {"total": "total", "re": "runaway", "thermal": "thermal (total $-$ runaway)"}
@@ -66,15 +72,16 @@ def draw_current_density(
     ax, density: CurrentDensity, *, step: int | None = None, real_psi_edge: float = 1.0,
     show=SPECIES,
 ) -> None:
-    """The current densities against psi_N on the outer midplane.
-    ``show``: which of SPECIES to draw."""
+    """The current densities against psi_N or R on the outer midplane.
+    ``show``: which of SPECIES to draw. The plasma edge is marked on a
+    psi_N axis only (real_psi_edge is a psi_N)."""
     for name in (name for name in SPECIES if name in show):
-        ax.plot(density.psi_n, getattr(density, name) / 1e6, color=COLORS[name], lw=1.8,
+        ax.plot(density.x, getattr(density, name) / 1e6, color=COLORS[name], lw=1.8,
                 label=_LABELS[name])
-    if real_psi_edge < 1.0:
+    if density.coords_var == "Psi_N" and real_psi_edge < 1.0:
         ax.axvline(real_psi_edge, color="#898781", lw=1, ls="--")
     _zero_line(ax, show)
-    ax.set_xlabel(r"$\psi_N$ (JOREK grid), outer midplane")
+    ax.set_xlabel(COORD_LABELS[density.coords_var])
     ax.set_ylabel(r"toroidal current density [MA/m$^2$]")
     where = "" if step is None else f", step {step}"
     ax.set_title(f"Current density{where}", loc="left", fontsize=11, fontweight="bold")
@@ -142,7 +149,7 @@ def plot_re_current(
 def draw_current_ratio_map(
     ax, ratio_map: RatioMap, x, *, xlabel: str = "", real_psi_edge: float = 1.0,
 ):
-    """|j_thermal / j_RE| against time (or step) and psi_N as a colour map,
+    """|j_thermal / j_RE| against time (or step) and psi_N or R as a colour map,
     as plotting.connection_length draws LC. Returns the mappable.
 
     Red: more runaway current; green: more thermal; yellow: equal. The
@@ -158,7 +165,7 @@ def draw_current_ratio_map(
     # no runaway current at all: all thermal, off the top of the scale
     size = np.ma.where(np.isinf(Z), RATIO_RANGE[1] * 10, size)
     size = np.ma.masked_where(np.isnan(Z), size)
-    X, Y = np.meshgrid(np.asarray(x, dtype=float), ratio_map.psi_n)
+    X, Y = np.meshgrid(np.asarray(x, dtype=float), ratio_map.x)
     cmap = plt.get_cmap("RdYlGn").with_extremes(bad="#d9d7d2")
     pcm = ax.pcolormesh(X, Y, size, cmap=cmap, shading="auto",
                         norm=LogNorm(vmin=RATIO_RANGE[0], vmax=RATIO_RANGE[1]))
@@ -166,9 +173,9 @@ def draw_current_ratio_map(
     if against.any() and against.shape[1] > 1:
         ax.contourf(X, Y, against.astype(float), levels=[0.5, 1.5], colors="none",
                     hatches=["///"])
-    if real_psi_edge < 1.0:
+    if ratio_map.coords_var == "Psi_N" and real_psi_edge < 1.0:
         ax.axhline(real_psi_edge, color="black", lw=1, ls="--")
-    ax.set_ylabel(r"$\psi_N$ (JOREK grid), outer midplane")
+    ax.set_ylabel(COORD_LABELS[ratio_map.coords_var])
     if xlabel:
         ax.set_xlabel(xlabel)
     ax.set_title("Thermal / runaway current density", loc="left", fontsize=11, fontweight="bold")
