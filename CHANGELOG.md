@@ -4,6 +4,24 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-15: scan-map `li` is the plasma's own, from the q-profile
+
+- **Changed meaning:** the `li` quantity is now the plasma's own l_i,
+  from the step's q-profile inside JOREK's plasma edge (`real_psi_edge`),
+  cylinder definition (`diagnostics.equilibrium.achieved_q_li`). This is
+  the "plasma only" curve under the re_current ratio map, and the l_i the
+  q0/l_i/qa model is built with.
+- JOREK's zeroD value is still there as **`li3`**: everything inside the
+  last closed surface, which with an extended boundary includes the
+  vacuum. A comparison with `x_quantity = "li"` (or y/c) now plots the
+  plasma value; write `li3` for the old one.
+- Read at the equilibrium step, as before. It needs that step's q-profile
+  and zeroD caches (with `psi_axis`, `psi_bnd`, `R_axis`), topped up on
+  demand like `edge_q`'s, and F0 from the namelist. A case missing them
+  drops out with a note.
+- On the local qa3.3_g3.2/eta1e-3_adv0.1 run: li = 1.392 against
+  li3 = 1.644 at step 5000, and 1.356 against 1.599 at step 26000.
+
 ## 2026-10-15: `plot --si`: eta in ohm metres on scan maps
 
 - `--si` (or `si = true` on a comparison) plots `eta` in Ω·m: the

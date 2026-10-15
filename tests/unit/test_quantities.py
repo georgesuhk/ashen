@@ -257,11 +257,11 @@ def test_q95_reads_at_equilibrium_step(tmp_path):
     assert quantity("q95").extract(_ctx(case, paths)) == pytest.approx(3.2)
 
 
-def test_li_reads_li3_column(tmp_path):
+def test_li3_reads_the_zerod_column(tmp_path):
     paths = _paths(tmp_path)
     _write_zerod(paths, 100, Time=1e-4, li3=0.85)
     case = _case()
-    assert quantity("li").extract(_ctx(case, paths)) == pytest.approx(0.85)
+    assert quantity("li3").extract(_ctx(case, paths)) == pytest.approx(0.85)
 
 
 def test_equilibrium_step_override_wins_over_first_step(tmp_path):
@@ -270,7 +270,7 @@ def test_equilibrium_step_override_wins_over_first_step(tmp_path):
     _write_zerod(paths, 200, Time=2e-4, li3=0.9)
     case = _case()
     ctx = _ctx(case, paths, equilibrium_step=200)
-    assert quantity("li").extract(ctx) == pytest.approx(0.9)
+    assert quantity("li3").extract(ctx) == pytest.approx(0.9)
 
 
 def test_missing_zerod_column_reports_available_columns(tmp_path):
@@ -279,7 +279,7 @@ def test_missing_zerod_column_reports_available_columns(tmp_path):
     case = _case()
     reports = []
     ctx = _ctx(case, paths, report=reports.append)
-    assert quantity("li").extract(ctx) is None
+    assert quantity("li3").extract(ctx) is None
     assert len(reports) == 1
     assert "Time" in reports[0] and "Energy" in reports[0]
 
@@ -292,7 +292,7 @@ def test_unparseable_zerod_cache_is_none_not_an_exception(tmp_path):
     case = _case()
     reports = []
     ctx = _ctx(case, paths, report=reports.append)
-    assert quantity("li").extract(ctx) is None
+    assert quantity("li3").extract(ctx) is None
     assert reports
 
 
@@ -306,9 +306,48 @@ def test_zerod_column_calls_ensure_zero_d_callback(tmp_path):
         _write_zerod(paths, steps[0], Time=1e-4, li3=0.42)
 
     ctx = _ctx(case, paths, ensure_zero_d=_ensure)
-    value = quantity("li").extract(ctx)
+    value = quantity("li3").extract(ctx)
     assert calls == [[100]]
     assert value == pytest.approx(0.42)
+
+
+def _plasma_equilibrium(paths, step, *, q, psi_n=None):
+    """What the plasma l_i is computed from: a q-profile, a zeroD file with
+    the axis and boundary flux and R_axis, and F0 in the namelist."""
+    psi_n = np.linspace(0.01, 0.99, 50) if psi_n is None else psi_n
+    _write_qprofile(paths, step, psi_n, q(psi_n))
+    _write_zerod(paths, step, Time=1e-4, li3=1.5, psi_axis=-0.2, psi_bnd=0.0, R_axis=1.5)
+    _write_namelist(paths, F0=3.7, eta="1.d-6")
+
+
+def test_li_is_the_plasma_s_own_from_the_q_profile_not_li3(tmp_path):
+    from ashen.diagnostics.equilibrium import achieved_q_li
+
+    paths = _paths(tmp_path)
+    # flat q: B_p ~ r, so the cylinder l_i is exactly 1/2 whatever r(psi) is
+    _plasma_equilibrium(paths, 100, q=lambda p: np.full_like(p, 2.0))
+    case = _case()
+    assert quantity("li").extract(_ctx(case, paths)) == pytest.approx(0.5, rel=1e-3)
+    assert quantity("li3").extract(_ctx(case, paths)) == pytest.approx(1.5)
+
+    # and in general the same number the re_current ratio map draws as "plasma only"
+    _plasma_equilibrium(paths, 200, q=lambda p: 1.0 + 3.0 * p**2)
+    expected = achieved_q_li(paths, 200, f0=3.7).li
+    assert quantity("li").extract(_ctx(case, paths, equilibrium_step=200)) == pytest.approx(expected)
+    assert expected > 0.5                                   # q rising outward: more peaked current
+
+
+def test_li_tops_up_both_caches_and_says_what_is_missing(tmp_path):
+    paths = _paths(tmp_path)
+    _write_namelist(paths, F0=3.7)
+    case = _case()
+    asked, reports = [], []
+    ctx = _ctx(case, paths, report=reports.append,
+               ensure_zero_d=lambda steps: asked.append(("zerod", steps)),
+               ensure_qprofile=lambda steps: asked.append(("qprofile", steps)))
+    assert quantity("li").extract(ctx) is None
+    assert asked == [("zerod", [100]), ("qprofile", [100])]
+    assert "li needs step 100's q-profile and zeroD caches" in reports[0]
 
 
 def test_zerod_prefix_reads_arbitrary_column(tmp_path):
