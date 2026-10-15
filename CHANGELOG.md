@@ -4,6 +4,20 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-15: `plot --si`: eta in ohm metres on scan maps
+
+- `--si` (or `si = true` on a comparison) plots `eta` in Ω·m: the
+  namelist's eta times `sqrt(mu0/rho0)` from the NORMALIZATION FACTORS
+  block of each run's own `log` (`logfile.sqrt_mu0_over_rho0`), the
+  factor JOREK's own SI output uses. Per run, so each point uses the
+  value its build used.
+- A run whose log lacks the line drops out of an SI map with a note; no
+  factor is guessed.
+- **Label fix:** without `--si`, eta's axis said "[Ω·m]" while plotting
+  JOREK units. It now says "(JOREK units)". The values are unchanged.
+- Only eta has a JOREK-units value among the quantities, so `--si`
+  changes nothing else.
+
 ## 2026-10-15: the particle wetted area on scan maps, with error bars
 
 - New scan-map quantities `f_tot`, `f_pol`, `f_tor`, `s` and `area`

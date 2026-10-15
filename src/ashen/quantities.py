@@ -49,7 +49,7 @@ from ashen.diagnostics.theta_histogram import (
     theta_histogram,
     wetted_fraction as _frac_wetted,
 )
-from ashen.logfile import LogfileError, r_axis
+from ashen.logfile import LogfileError, r_axis, sqrt_mu0_over_rho0
 from ashen.namelist import NamelistError, read_field
 from ashen.paths import RunPaths, read_float
 from ashen.postproc import read_zeroD
@@ -144,6 +144,9 @@ class QuantityContext:
     #: computes them (the trace, the wall and the window live there).
     particle_wetted: Callable[[], dict | None] | None = None
 
+    #: Quantities with a JOREK-units value give it in SI instead (--si).
+    si: bool = False
+
     #: Where a skip note goes. `print` matches every other --compare
     #: renderer; a test can capture it without capsys, and a notebook can
     #: silence it with `lambda _: None`.
@@ -192,13 +195,21 @@ class Quantity:
     #: wetted-area measures' bootstrap errors); drawn as error bars. None
     #: for the rest.
     error: Callable[[QuantityContext], float | None] | None = None
+    #: The axis label when the value is given in SI (QuantityContext.si),
+    #: for a quantity whose default is JOREK units. "" = already SI, or
+    #: no units to convert.
+    si_label: str = ""
+
+    def label_for(self, si: bool) -> str:
+        """The axis label for the units the value is in."""
+        return self.si_label if si and self.si_label else self.label
 
 
 # --- the extractors ----------------------------------------------------------
 
 
-def _eta(ctx: QuantityContext) -> float | None:
-    """Resistivity, read from the run's own namelist.
+def _eta_jorek(ctx: QuantityContext) -> float | None:
+    """Resistivity in JOREK units, read from the run's own namelist.
 
     Not from x_values and not from the folder name: CLAUDE.md flags
     CASTOR3D's directory-name parsing as the hazard this project exists to
@@ -216,6 +227,22 @@ def _eta(ctx: QuantityContext) -> float | None:
     except (NamelistError, OSError, TypeError, ValueError) as exc:
         ctx.report(f"  {ctx.case.name}: no eta ({exc})")
         return None
+
+
+def _eta(ctx: QuantityContext) -> float | None:
+    """Resistivity: in JOREK units, or with ctx.si in ohm metres -- the
+    namelist's eta times the sqrt(mu0 / rho0) the run's log printed
+    (logfile.sqrt_mu0_over_rho0). No log, no SI value: the factor is not
+    guessed from the namelist."""
+    eta = _eta_jorek(ctx)
+    if eta is None or not ctx.si:
+        return eta
+    try:
+        factor = sqrt_mu0_over_rho0(ctx.paths.log)
+    except LogfileError as exc:
+        ctx.report(f"  {ctx.case.name}: eta in ohm m needs the log's normalization ({exc})")
+        return None
+    return eta * factor
 
 
 def toroidal_f0(case: Case, paths: RunPaths) -> float:
@@ -715,8 +742,10 @@ def _register(*quantities: Quantity) -> None:
 
 _register(
     Quantity(
-        "eta", r"$\eta$ [$\Omega \cdot$ m]", _eta, log_scale=True,
-        note="resistivity, read from the run's own namelist",
+        "eta", r"$\eta$ (JOREK units)", _eta, log_scale=True,
+        si_label=r"$\eta$ [$\Omega \cdot$ m]",
+        note="resistivity from the run's namelist, JOREK units; in ohm m "
+             "(times the log's sqrt(mu0/rho0)) with --si",
     ),
     Quantity(
         "edge_q", r"$q_{\mathrm{edge}}$", _edge_q,

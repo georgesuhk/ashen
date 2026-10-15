@@ -152,6 +152,9 @@ class Comparison:
     log_x: bool | None = None
     log_y: bool | None = None
     log_c: bool | None = None
+    #: Scan-map quantities with a JOREK-units value (eta) in SI. --si
+    #: turns it on for any comparison.
+    si: bool = False
     #: psi_n the `edge_q` quantity interpolates the q-profile at. None ->
     #: 1.0 (the separatrix). Lives on the comparison, not the case, for
     #: the same reason theta_target_psi does: a scan is only a comparison
@@ -207,7 +210,7 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
                 "y_label", "c_label",
                 "x_quantity", "y_quantity", "c_quantity",
                 "map_encoding", "map_annotate",
-                "log_x", "log_y", "log_c",
+                "log_x", "log_y", "log_c", "si",
                 "edge_q_psi_n", "equilibrium_step",
                 "theta_target_psi", "theta_bins", "theta_psi_n_range",
                 "theta_wetted_threshold",
@@ -380,6 +383,7 @@ def load_comparisons(path: Path | str, cases: dict[str, Case]) -> dict[str, Comp
             log_x=log_x,
             log_y=log_y,
             log_c=log_c,
+            si=bool(raw.get("si", False)),
             edge_q_psi_n=edge_q_psi_n,
             equilibrium_step=equilibrium_step,
             theta_target_psi=theta_target_psi,

@@ -139,6 +139,28 @@ def test_eta_reads_from_in_main_r_when_case_namelist_says_so(tmp_path):
     assert quantity("eta").extract(_ctx(case, paths)) == pytest.approx(2e-4)
 
 
+def test_eta_in_si_is_times_the_log_s_sqrt_mu0_over_rho0(tmp_path):
+    paths = _paths(tmp_path)
+    _write_namelist(paths, eta="1.d-3")
+    paths.log.write_text(" sqrt(mu0*rho0)  = 6.4836E-08\n sqrt(mu0/rho0)  = 1.9382E+01\n")
+    case = _case()
+    eta = quantity("eta")
+    assert eta.extract(_ctx(case, paths, si=True)) == pytest.approx(1e-3 * 19.382)
+    assert eta.extract(_ctx(case, paths)) == pytest.approx(1e-3)      # JOREK units by default
+    assert eta.label_for(True) == r"$\eta$ [$\Omega \cdot$ m]"
+    assert eta.label_for(False) == r"$\eta$ (JOREK units)"
+    assert quantity("q95").label_for(True) == quantity("q95").label   # nothing to convert
+
+
+def test_eta_in_si_without_a_log_is_missing_not_guessed(tmp_path):
+    paths = _paths(tmp_path)
+    _write_namelist(paths, eta="1.d-3")
+    notes = []
+    ctx = _ctx(_case(), paths, si=True, report=notes.append)
+    assert quantity("eta").extract(ctx) is None
+    assert "eta in ohm m needs the log's normalization" in notes[0]
+
+
 def test_eta_missing_field_reports_and_returns_none(tmp_path):
     paths = _paths(tmp_path)
     _write_namelist(paths, other_field="1.0")
