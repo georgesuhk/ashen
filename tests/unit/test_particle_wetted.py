@@ -557,3 +557,68 @@ def test_the_particle_diags_of_a_case_read_the_diagnostics_file_once(campaign, m
     os.utime(folder / "ptrace_diag.h5", ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
     assert plot_cli.main(["--case", "run", "--diag", "particle_loss", "--dpi", "40"]) == 0
     assert len(reads) == 2
+
+
+# --- the measures on a scan map ----------------------------------------------------
+
+
+def test_scan_map_draws_f_tot_with_error_bars_the_figure_s_own_numbers(tmp_path, monkeypatch, capsys):
+    """Two runs, one wetting the whole wall and one half of it, compared by
+    pattern: the scan map's values are the per-case figure's, with their
+    bootstrap errors drawn as error bars."""
+    from ashen.plotting import scan_map
+
+    cases = ""
+    for name, span in (("scan/wide", 2 * np.pi), ("scan/half", np.pi)):
+        run = tmp_path / name
+        run.mkdir(parents=True)
+        (run / "jorek03000.h5").write_bytes(b"")
+        np.savetxt(run / "original_bnd.dat", circle(200))
+        rng = np.random.default_rng(1)
+        angles = rng.uniform(0, span, 300)
+        phi = rng.uniform(0, 2 * np.pi, 300)
+        R = [R0 + 0.3 * np.cos(angles), R0 + 0.7 * np.cos(angles)]
+        Z = [0.3 * np.sin(angles), 0.7 * np.sin(angles)]
+        write_diag(run / "ptrace" / "ptrace_gc" / "ptrace_diag.h5", R, Z, [phi, phi],
+                   np.zeros((2, 300), int))
+        cases += CASES.replace("[cases.run]", f'[cases."{name}"]')
+    (tmp_path / "cases.toml").write_text(cases, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ASHEN_SITE", raising=False)
+    plot_cli._WETTED_NUMBERS.clear()
+
+    drawn = {}
+    original = scan_map.draw_scan_map
+
+    def spy(ax, points, **kwargs):
+        drawn["points"] = list(points)
+        return original(ax, points, **kwargs)
+
+    monkeypatch.setattr(scan_map, "draw_scan_map", spy)
+    assert plot_cli.main(["--compare", "scan/*", "--diag", "scan_map",
+                          "--x-quantity", "f_pol", "--y-quantity", "f_tot", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "scan/wide: particle_wetted from 300 hits of 300 particles, 8 x 6 bins" in out
+
+    points = {p.label: p for p in drawn["points"]}
+    for name in ("wide", "half"):
+        assert plot_cli.main(["--case", f"scan/{name}", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+        numbers = json.loads((tmp_path / "scan" / name / "ptrace" / "ptrace_gc" /
+                              "particle_wetted.json").read_text(encoding="utf-8"))
+        p = points[name]
+        assert (p.x, p.y) == (numbers["f_pol"], numbers["f_tot"])
+        assert (p.x_err, p.y_err) == (numbers["f_pol_err"], numbers["f_tot_err"])
+        assert 0 < p.y_err < p.y
+    assert points["half"].x < 0.6 < points["wide"].x            # half the wall poloidally
+    assert (tmp_path / "figures" / "scan_scan_map_f_tot_vs_f_pol.png").is_file()
+
+
+def test_a_case_without_a_trace_drops_out_of_the_scan_map(campaign, capsys):
+    from ashen.quantities import QuantityContext, quantity
+    from ashen.cases import Case
+    from ashen.paths import RunPaths
+
+    ctx = QuantityContext(case=Case(name="run", steps=[3000]), paths=RunPaths(campaign / "run", pad_width=5),
+                          particle_wetted=lambda: None, report=print)
+    assert quantity("f_tot").extract(ctx) is None and quantity("f_tot").error(ctx) is None
+    assert "no particle_wetted result" in capsys.readouterr().out

@@ -138,6 +138,11 @@ class QuantityContext:
     ensure_qprofile: Callable[[list[int]], None] | None = None
     #: Btor at the plasma edge (delta_b_over_b_*), gathering it if needed.
     ensure_b_ref: Callable[[], float | None] | None = None
+    #: The case's particle_wetted measures (f_tot, f_pol, f_tor, s, area,
+    #: their *_err, n_hits, ...) as the per-case figure computes them, or
+    #: None when the case has no trace to compute them from. cli/plot
+    #: computes them (the trace, the wall and the window live there).
+    particle_wetted: Callable[[], dict | None] | None = None
 
     #: Where a skip note goes. `print` matches every other --compare
     #: renderer; a test can capture it without capsys, and a notebook can
@@ -183,6 +188,10 @@ class Quantity:
     log_scale: bool = False
     steps_diag: str | None = None
     note: str = ""
+    #: The value's one-sigma uncertainty, for quantities that have one (the
+    #: wetted-area measures' bootstrap errors); drawn as error bars. None
+    #: for the rest.
+    error: Callable[[QuantityContext], float | None] | None = None
 
 
 # --- the extractors ----------------------------------------------------------
@@ -672,6 +681,33 @@ def _lc_finite_psi_n(ctx: QuantityContext, *, reduction: str) -> float | None:
 QUANTITIES: dict[str, Quantity] = {}
 
 
+def _wetted_measure(ctx: QuantityContext, *, key: str) -> float | None:
+    """One particle_wetted measure (or its error, key "<name>_err") of the
+    case's trace. None, reported, without a trace; an error of nan (a
+    single hit) is no error bar rather than a missing point."""
+    if ctx.particle_wetted is None:
+        ctx.report(f"  {ctx.case.name}: {key} needs the particle_wetted computation, "
+                   "not available here")
+        return None
+    numbers = ctx.particle_wetted()
+    if numbers is None:
+        if not key.endswith("_err"):
+            ctx.report(f"  {ctx.case.name}: no particle_wetted result (needs ptrace_exe, "
+                       "a trace and hits on the wall)")
+        return None
+    value = numbers.get(key)
+    if value is None or not np.isfinite(value):
+        return None
+    return float(value)
+
+
+def _wetted(name: str, label: str, note: str, *, log_scale: bool = False) -> Quantity:
+    return Quantity(
+        name, label, partial(_wetted_measure, key=name), log_scale=log_scale,
+        note=note, error=partial(_wetted_measure, key=f"{name}_err"),
+    )
+
+
 def _register(*quantities: Quantity) -> None:
     for q in quantities:
         QUANTITIES[q.name] = q
@@ -768,6 +804,16 @@ _register(
         steps_diag="connection_length",
         note="smallest traced psi_n with finite connection length at four_deconfinement_step",
     ),
+    _wetted("f_tot", r"$f_{\mathrm{tot}}$",
+            "particle wetted fraction of the wall, (l, phi) cells; biased low with few hits",
+            log_scale=True),
+    _wetted("f_pol", r"$f_{\mathrm{pol}}$",
+            "particle wetted fraction, poloidal bins (all phi together)"),
+    _wetted("f_tor", r"$f_{\mathrm{tor}}$",
+            "particle wetted fraction, toroidal bins (all l together)"),
+    _wetted("s", r"$s = f_{\mathrm{tot}} / (f_{\mathrm{pol}} f_{\mathrm{tor}})$",
+            "1 for a separable footprint, below 1 for a helical one"),
+    _wetted("area", r"wetted area [m$^2$]", "f_tot times the wall's area", log_scale=True),
 )
 
 
