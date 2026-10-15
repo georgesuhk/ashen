@@ -2342,7 +2342,38 @@ def test_compare_reports_per_case_crossing_counts(comparison_campaign, capsys):
 
 def test_compare_unknown_comparison_is_an_error(comparison_campaign, capsys):
     assert plot_cli.main(["--compare", "does_not_exist"]) == 1
-    assert "unknown comparison" in capsys.readouterr().out
+    assert "name no comparison and select no case" in capsys.readouterr().out
+
+
+def test_compare_a_case_pattern_compares_the_cases_it_selects(comparison_campaign, capsys):
+    assert plot_cli.main(["--compare", "qa2.1_g2.3/eta*_RE", "--diag", "theta_hist"]) == 0
+    out = capsys.readouterr().out
+    assert "no [comparisons.qa2.1_g2.3/eta*_RE], so the 2 case(s) it selects" in out
+    assert "qa2.1_g2.3/eta1e-3_RE: 2 of 2 lines crossed" in out
+    assert "qa2.1_g2.3/eta1e-4_RE: 2 of 2 lines crossed" in out
+    assert (comparison_campaign / "figures" / "qa2.1_g2.3_eta_RE_theta_hist.png").is_file()
+
+
+def test_a_one_off_comparison_labels_cases_below_their_shared_folder():
+    cases = {name: None for name in (
+        "qa2.1_g2.8/eta1e-3_adv0.1", "qa2.1_g2.8/eta1e-4_adv0.1", "qa2.1_g2.8/eta1e-4_adv1",
+        "qa3.3_g3.2/eta1e-3_adv0.1",
+    )}
+    made = plot_cli._comparison_from_cases("qa2.1_g2.8/eta*0.1", cases)
+    assert made.cases == ["qa2.1_g2.8/eta1e-3_adv0.1", "qa2.1_g2.8/eta1e-4_adv0.1"]
+    assert made.x_tick_labels == ["eta1e-3_adv0.1", "eta1e-4_adv0.1"]
+    assert made.name == "qa2.1_g2.8_eta_0.1"
+    # across folders the labels keep the folder; one case keeps its own name
+    across = plot_cli._comparison_from_cases("*/eta1e-3_adv0.1", cases)
+    assert across.x_tick_labels == ["qa2.1_g2.8/eta1e-3_adv0.1", "qa3.3_g3.2/eta1e-3_adv0.1"]
+    assert plot_cli._comparison_from_cases("qa3.3_g3.2", cases).x_tick_labels == ["eta1e-3_adv0.1"]
+    assert plot_cli._comparison_from_cases("nothing*", cases) is None
+
+
+def test_a_defined_comparison_wins_over_a_pattern_of_the_same_name(comparison_campaign, capsys):
+    assert plot_cli.main(["--compare", "eta_scan", "--diag", "theta_hist"]) == 0
+    assert "so the" not in capsys.readouterr().out
+    assert (comparison_campaign / "figures" / "eta_scan_theta_hist.png").is_file()
 
 
 def test_compare_diag_without_a_comparison_renderer_is_reported_and_skipped(

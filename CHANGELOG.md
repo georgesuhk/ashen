@@ -4,6 +4,22 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-15: `plot --compare` takes a case pattern
+
+- `--compare` accepts the same selectors as `--case` when no
+  `[comparisons.NAME]` has that name: a pattern or a folder. The cases it
+  selects are compared as one, with no table in cases.toml:
+  `plot --compare 'qa2.1_g2.8/eta*0.1' --diag theta_hist`.
+- It prints which cases it took and what the figures are called. Labels
+  are each case's path below the folder they share; file names are the
+  pattern with unsafe characters made `_` (`qa2.1_g2.8_eta_0.1_*.png`).
+- A defined comparison of the same name always wins.
+- Works for `theta_hist`, and for `scan_map` given `--x-quantity` and
+  `--y-quantity`. `wetted_fraction` and the `four` delta-B comparison need
+  `x_values`, which a pattern has none of: they say so and skip.
+- A value that names no comparison and selects no case is an error, as an
+  unknown comparison was.
+
 ## 2026-10-14: Poincaré plots in the case viewer
 
 - New section "Poincaré plots (analyse --diag poincare)", before the
