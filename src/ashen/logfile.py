@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, TypeVar
 
-__all__ = ["LogfileError", "extract_from_file", "r_axis"]
+__all__ = ["LogfileError", "extract_from_file", "r_axis", "sqrt_mu0_over_rho0"]
 
 T = TypeVar("T")
 
@@ -103,3 +103,14 @@ def r_axis(log_path: Path | str) -> float:
     replace every hardcoded R0 site instead of being reimplemented at each.
     """
     return extract_from_file(log_path, "R_axis", occurrence=1)
+
+
+def sqrt_mu0_over_rho0(log_path: Path | str) -> float:
+    """sqrt(mu0 / rho0), from the log's NORMALIZATION FACTORS block
+    (models/mod_log_params.f90): what turns this run's resistivity into
+    ohm metres (eta [Ohm m] = eta * sqrt(mu0 / rho0), as jorek2_postproc's
+    fact_resistiv). Read from the log rather than recomputed so it is the
+    value this run's own build used: builds before the August 2026 merge
+    took rho0 with the proton mass, later ones with the atomic mass unit,
+    0.4% apart."""
+    return extract_from_file(log_path, "sqrt(mu0/rho0)", occurrence=1)

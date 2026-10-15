@@ -1313,7 +1313,7 @@ list (do not duplicate it here; it will only drift):
 
 ```
 $ python ~/ashen/bin/plot --list-quantities
-eta (log) -- resistivity, read from the run's own namelist
+eta (log) -- resistivity from the run's namelist, JOREK units; in ohm m (times the log's sqrt(mu0/rho0)) with --si
 edge_q (linear) -- qprofile interpolated at edge_q_psi_n (default 1.0)
 q95 (linear) -- zeroD column, at the equilibrium step
 li (linear) -- zeroD li3, at the equilibrium step
@@ -1354,6 +1354,21 @@ nothing parses the run folder's name (the CASTOR3D hazard `CLAUDE.md` warns
 about). A comparison may still carry `x_values` for its `wetted_fraction`/
 `four` figures alongside `x_quantity`/`y_quantity` for its `scan_map` --
 the two coexist without conflict.
+
+**SI units: `--si`.** `eta` is in JOREK units by default. `--si` (or
+`si = true` on the comparison) gives it in Ω·m instead: the namelist's eta
+times the `sqrt(mu0/rho0)` printed under NORMALIZATION FACTORS in each
+run's own `log`, the factor JOREK and `jorek2_postproc` use. Taken from the
+log, not recomputed, so it is what that run's build used (builds before the
+August 2026 merge took rho0 with the proton mass, later ones with the
+atomic mass unit, 0.4% apart). A run without that line in its log drops
+out of an SI map with a note rather than getting a guessed factor. The
+other quantities are already in SI or have no units, so `--si` leaves them
+alone.
+
+```bash
+python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta*0.1' --diag scan_map --x-quantity eta --y-quantity f_tot --si
+```
 
 **The particle wetted area** (`f_tot`, `f_pol`, `f_tor`, `s`, `area`) is
 available as quantities too, computed exactly as the case's own

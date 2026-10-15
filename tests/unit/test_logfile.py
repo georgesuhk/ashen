@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from ashen.logfile import LogfileError, extract_from_file, r_axis
+from ashen.logfile import LogfileError, extract_from_file, r_axis, sqrt_mu0_over_rho0
 
 
 def write(tmp_path, text):
@@ -76,3 +76,14 @@ def test_r_axis_raises_rather_than_returning_nan(tmp_path):
     path = write(tmp_path, "no axis info here\n")
     with pytest.raises(LogfileError):
         r_axis(path)
+
+
+def test_sqrt_mu0_over_rho0_is_the_normalization_line_not_its_neighbour(tmp_path):
+    path = write(tmp_path, (
+        " * NORMALIZATION FACTORS *\n"
+        " sqrt(mu0*rho0)       =   6.4836E-08\n"
+        " sqrt(mu0/rho0)       =   1.9382E+01\n"
+    ))
+    assert sqrt_mu0_over_rho0(path) == pytest.approx(19.382)
+    with pytest.raises(LogfileError, match="sqrt\\(mu0/rho0\\)"):
+        sqrt_mu0_over_rho0(write(tmp_path, "R_axis = 1.0\n"))

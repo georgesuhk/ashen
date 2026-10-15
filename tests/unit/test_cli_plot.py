@@ -3328,6 +3328,28 @@ def test_scan_map_reports_both_points(scan_campaign, capsys):
     assert "eta=0.0001, q95=4, delta_b_max=" in out
 
 
+def test_scan_map_si_gives_eta_in_ohm_m_with_its_label(scan_campaign, capsys, monkeypatch):
+    for name, factor in (("eta1e-3", "2.0E+01"), ("eta1e-4", "1.0E+01")):
+        log = scan_campaign / "scan" / name / "log"
+        log.write_text(log.read_text() + f" sqrt(mu0/rho0)       =   {factor}\n")
+    labels = {}
+    original = plot_cli.plot_scan_map
+
+    def spy(points, out_path, **kwargs):
+        labels.update(xlabel=kwargs.get("xlabel"))
+        return original(points, out_path, **kwargs)
+
+    monkeypatch.setattr(plot_cli, "plot_scan_map", spy)
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map", "--si"]) == 0
+    out = capsys.readouterr().out
+    assert "eta=0.02, q95=3.5" in out and "eta=0.001, q95=4" in out   # each run's own factor
+    assert labels["xlabel"] == r"$\eta$ [$\Omega \cdot$ m]"
+
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map"]) == 0
+    assert "eta=0.001, q95=3.5" in capsys.readouterr().out
+    assert labels["xlabel"] == r"$\eta$ (JOREK units)"
+
+
 def test_scan_map_size_encoding_writes_the_same_file(scan_campaign):
     assert plot_cli.main(
         ["--compare", "scan", "--diag", "scan_map", "--map-encoding", "size"]

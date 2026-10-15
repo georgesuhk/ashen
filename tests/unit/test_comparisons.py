@@ -673,3 +673,11 @@ def test_dataset_marker_defaults_to_none(tmp_path):
     cases = load_cases(path)
     ds = load_comparisons(path, cases)["scan"].datasets["normal"]
     assert ds.marker is None
+
+
+def test_si_key(tmp_path):
+    path = _write(tmp_path, _cases_block() + '[comparisons.scan]\ncases = ["a"]\nsi = true\n')
+    cases = load_cases(path)
+    assert load_comparisons(path, cases)["scan"].si is True
+    path = _write(tmp_path, _cases_block() + '[comparisons.scan]\ncases = ["a"]\n')
+    assert load_comparisons(path, load_cases(path))["scan"].si is False

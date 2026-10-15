@@ -433,6 +433,12 @@ def build_parser() -> argparse.ArgumentParser:
         "map_encoding (default: color)",
     )
     parser.add_argument(
+        "--si", action="store_true",
+        help="scan_map: quantities with a JOREK-units value in SI instead -- eta in "
+        "ohm m, from the sqrt(mu0/rho0) each run's log printed; also a "
+        "comparison's `si = true`",
+    )
+    parser.add_argument(
         "--map-log-x", choices=("auto", "on", "off"), default="auto",
         help="scan_map: x-axis scale -- 'auto' uses the chosen quantity's "
         "own default (log for eta and delta-B, linear for q95/li/edge_q), "
@@ -2042,6 +2048,7 @@ def _quantity_context(
     theta_psi_range: tuple[float, float] | None,
     theta_wetted_threshold: float | None,
     delta_b_mode: tuple[int, int] | None,
+    si: bool = False,
 ) -> QuantityContext:
     """Resolve every setting one quantity might read, for one case, and bind
     the cache top-up callbacks.
@@ -2101,6 +2108,7 @@ def _quantity_context(
         theta_psi_n_range=resolved_theta_range,
         theta_wetted_threshold=threshold,
         delta_b_mode=delta_b_mode,
+        si=si,
         ensure_zero_d=partial(_ensure_zero_d, case, paths, n_workers=n_workers),
         ensure_qprofile=partial(_ensure_qprofile, case, paths, n_workers=n_workers),
         ensure_b_ref=partial(_b_ref_for, case, paths),
@@ -2221,6 +2229,7 @@ def _compare_scan_map(
     n_workers: int,
     dataset_names: list[str] | None,
     explicit: bool,
+    si: bool = False,
 ) -> None:
     """One point per member run, x and y each a named per-run scalar
     (ashen.quantities), a third encoded as point colour or ring size.
@@ -2255,9 +2264,10 @@ def _compare_scan_map(
     log_y = _resolve_log(log_y_choice, comparison.log_y, y_q.log_scale)
     log_c = _resolve_log(log_c_choice, comparison.log_c, c_q.log_scale if c_q else False)
 
-    xlabel = comparison.x_label or x_q.label
-    ylabel = comparison.y_label or y_q.label
-    clabel = comparison.c_label or (c_q.label if c_q else "")
+    si = si or comparison.si
+    xlabel = comparison.x_label or x_q.label_for(si)
+    ylabel = comparison.y_label or y_q.label_for(si)
+    clabel = comparison.c_label or (c_q.label_for(si) if c_q else "")
 
     out_dir = Path.cwd() / "figures"
     out_stem = f"{comparison.name}_scan_map_{y_name}_vs_{x_name}"
@@ -2270,6 +2280,7 @@ def _compare_scan_map(
         equilibrium_step=equilibrium_step, theta_target_psi=theta_target_psi,
         theta_bins=theta_bins, theta_psi_range=theta_psi_range,
         theta_wetted_threshold=theta_wetted_threshold, delta_b_mode=delta_b_mode,
+        si=si,
     )
 
     if comparison.datasets:
@@ -3186,6 +3197,7 @@ def _run_comparisons(
     equilibrium_step: int | None = None,
     annotate_points: bool = False,
     explicit_diags: bool = False,
+    si: bool = False,
 ) -> int:
     # A defined [comparisons.NAME] wins; any other value is a case selector.
     chosen: list[Comparison] = []
@@ -3246,7 +3258,7 @@ def _run_comparisons(
                 theta_psi_range=theta_psi_range, theta_wetted_threshold=wetted_threshold,
                 delta_b_mode=delta_b_mode,
                 dpi=dpi, steps=steps, n_workers=n_workers,
-                dataset_names=dataset_names, explicit=explicit_diags,
+                dataset_names=dataset_names, explicit=explicit_diags, si=si,
             )
     return 0
 
@@ -3362,6 +3374,7 @@ def main(argv: list[str] | None = None) -> int:
             edge_q_psi_n=args.edge_q_psi_n, equilibrium_step=args.equilibrium_step,
             annotate_points=args.annotate_points,
             explicit_diags=explicit_diags,
+            si=args.si,
         )
 
     selected = resolve_selection(args.selected, cases)
