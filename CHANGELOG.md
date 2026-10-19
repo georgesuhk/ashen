@@ -4,6 +4,14 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-19: `--color` for the `particle_exits` comparison
+
+- `plot --compare ... --diag particle_exits --color 'red, green'` sets each
+  case's colour, comma-separated, in the comparison's case order (also
+  `--colors`). A skipped case takes its colour with it. Too few or too
+  many colours: reported, figure skipped. An invalid colour, or `--color`
+  without `--compare`, is an error. Unset: tab10, as before.
+
 ## 2026-10-19: part of a colour map for `particle_wetted`
 
 - `ptrace_wetted_cmap_range = [lo, hi]` (case key) and

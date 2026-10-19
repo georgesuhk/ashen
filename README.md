@@ -2295,7 +2295,16 @@ thresholds are also noted, and `--ptrace-exit-psi-n` puts them all at one.
 ```bash
 python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta1e-3, qa2.1_g2.8/eta1e-4' --diag particle_exits
 python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta*' --diag particle_exits --ptrace-exit-bins 36
+python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta1e-3, qa2.1_g2.8/eta1e-4' --diag particle_exits --color 'red, green'
 ```
+
+`--color` (or `--colors`) picks the cases' colours, comma-separated, one
+per case in the order the comparison lists them -- any matplotlib colour
+(`red`, `tab:blue`, `#ff8800`). A case that is skipped takes its colour
+with it, so the others keep theirs. A count that doesn't match the cases
+is reported and the figure skipped; an invalid colour, or `--color`
+without `--compare`, is an error. Unset, the colours are matplotlib's
+tab10 (blue, orange, green, ...).
 
 **Only the markers that started in a psi_n range.**
 `ptrace_initial_psi_n_range = [min, max]` restricts both this plot and
