@@ -4,6 +4,22 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-19: `run_jorek --legacy-density`
+
+- `--legacy-density` writes `rho_prof.dat` the old, incorrect way, as
+  before 2026-10-07: `rho_const / 1e20` in units of `central_density`, so
+  `rho_const = 1e18` runs at 1e16 m⁻³. For reproducing or continuing runs
+  prepared then. Only `rho_prof.dat` differs; it prints a note when used.
+  Works with a shotfile and with `--scan --apply`.
+- `--run_r` now also refuses, writing nothing, when preparing the folder
+  again would switch its `rho_prof.dat` between the two formats, and gives
+  the command that keeps it (`--legacy-density`, or `--keep-inputs`).
+  (`runner.restart_rho_prof_change`)
+- `--legacy-density` with `--keep-inputs` is an error: that writes no
+  profiles.
+- Tested on synthetic folders with the submit command intercepted. Not
+  run on the HPC.
+
 ## 2026-10-19: scan maps draw f_tot on a linear axis
 
 - `f_tot` is now drawn on a linear scale on scan maps, like `f_pol`,
