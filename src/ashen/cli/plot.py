@@ -174,6 +174,16 @@ def _positive_int(text: str) -> int:
     return value
 
 
+def _colormap_name(text: str) -> str:
+    """argparse type: a matplotlib colour map name, as cases.toml's are."""
+    from matplotlib import colormaps
+
+    if text not in colormaps:
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not a matplotlib colour map (e.g. viridis, inferno, turbo, magma_r)")
+    return text
+
+
 def _dpi_kwargs(dpi: int | None) -> dict:
     """{"dpi": dpi} if the CLI overrode it, else {} so the plotting
     function's own default applies -- reused by every per-diag renderer."""
@@ -334,6 +344,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true", dest="wetted_counts",
         help="particle_wetted: draw how many particles hit each cell and bin, not "
         "fractions, as particle_wetted_counts.png (as each case's ptrace_wetted_counts)",
+    )
+    parser.add_argument(
+        "--ptrace-wetted-cmap", "--ptrace_wetted_cmap", type=_colormap_name, default=None,
+        dest="ptrace_wetted_cmap", metavar="CMAP",
+        help="particle_wetted: the map's matplotlib colour map (overrides each "
+        "case's ptrace_wetted_cmap, default viridis)",
     )
     parser.add_argument(
         "--ptrace-exit-psi-n", "--ptrace_exit_psi_n", "--exit-psi-n",
@@ -2422,6 +2438,7 @@ def _run_case(
     exit_psi_n: float | None = None,
     wetted_counts: bool = False,
     ptrace_exit_bins: int | None = None,
+    ptrace_wetted_cmap: str | None = None,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -2500,7 +2517,8 @@ def _run_case(
         )
     if "particle_wetted" in diags:
         _plot_particle_wetted(case, paths, dpi=dpi, explicit=explicit_diags,
-                              counts=wetted_counts or case.ptrace_wetted_counts)
+                              counts=wetted_counts or case.ptrace_wetted_counts,
+                              cmap=ptrace_wetted_cmap or case.ptrace_wetted_cmap)
     if "particle_loss" in diags:
         _plot_particle_loss(case, paths, dpi=dpi, psi_n=exit_psi_n, explicit=explicit_diags)
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
@@ -3193,6 +3211,7 @@ def _particle_wetted_numbers(
 
 def _plot_particle_wetted(
     case: Case, paths: RunPaths, *, dpi: int | None, explicit: bool, counts: bool = False,
+    cmap: str = "viridis",
 ) -> None:
     """How widely the traced particles wet the wall -- the plasma boundary
     before extend_bnd -- poloidally, toroidally and in total (see
@@ -3208,7 +3227,7 @@ def _plot_particle_wetted(
         done.folder / f"particle_wetted{'_counts' if counts else ''}{done.suffix}.png",
         density_range=case.ptrace_wetted_count_range if counts
         else case.ptrace_wetted_density_range, duration=done.duration,
-        note=done.notes, counts=counts, **_dpi_kwargs(dpi),
+        note=done.notes, counts=counts, cmap=cmap, **_dpi_kwargs(dpi),
     )
     results_file = Path(WETTED_RESULTS_FILE)
     (done.folder / f"{results_file.stem}{done.suffix}{results_file.suffix}").write_text(
@@ -3557,6 +3576,7 @@ def main(argv: list[str] | None = None) -> int:
                 exit_psi_n=args.exit_psi_n,
                 wetted_counts=args.wetted_counts,
                 ptrace_exit_bins=args.ptrace_exit_bins,
+                ptrace_wetted_cmap=args.ptrace_wetted_cmap,
             )
         except CASE_ERRORS as exc:
             error(f"{name}: {exc}")

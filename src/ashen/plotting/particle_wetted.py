@@ -61,6 +61,7 @@ def plot_wetted_area(
     duration: float | None = None,
     note: str | None = None,
     counts: bool = False,
+    cmap: str = "viridis",
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save the (phi, l) hit-density map -- the share of all hits
@@ -75,7 +76,7 @@ def plot_wetted_area(
 
     density_range, (min, max) in the map's own units -- 1/m^2, or particles
     with counts -- fixes the colour scale; cells beyond it take the end
-    colours, and the colourbar says so."""
+    colours, and the colourbar says so. cmap is the map's matplotlib colour map."""
     import matplotlib.pyplot as plt
 
     out_path = Path(out_path)
@@ -96,7 +97,7 @@ def plot_wetted_area(
 
         mesh = ax_map.pcolormesh(
             result.phi_edges, result.l_edges, np.ma.masked_equal(density, 0),
-            cmap="viridis", shading="flat",
+            cmap=cmap, shading="flat",
             vmin=density_range[0] if density_range else None,
             vmax=density_range[1] if density_range else None,
         )
@@ -109,7 +110,7 @@ def plot_wetted_area(
         ax_map.set_xticks(_PHI_TICKS[0])
         ax_map.set_xticklabels(_PHI_TICKS[1])
         ax_map.set_xlabel(r"toroidal angle $\phi$")
-        ax_map.set_ylabel(r"poloidal arc length $l$ [m] (0: outboard midplane, ccw)")
+        ax_map.set_ylabel(r"poloidal arc length $l$ [m]")
 
         ax_tor.stairs(result.counts.sum(axis=0) / scale, result.phi_edges,
                       fill=True, color="tab:blue", alpha=0.7)

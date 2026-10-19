@@ -4,6 +4,16 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-19: `particle_wetted` colour map; shorter arc length label
+
+- `ptrace_wetted_cmap` (case key) and `--ptrace-wetted-cmap NAME` (flag,
+  overrides it) set the map's colour map, for the density and the counts
+  version alike. Any matplotlib name; default `"viridis"`, as before. An
+  unknown name is an error in both places.
+- The map's y axis now reads "poloidal arc length l [m]", without
+  "(0: outboard midplane, ccw)". Where l starts and which way it runs is
+  in the README's particle_wetted section.
+
 ## 2026-10-19: particle_exits compared across cases; `--compare` lists; `--ptrace-exit-bins`
 
 - `plot --compare ... --diag particle_exits` draws every selected case's

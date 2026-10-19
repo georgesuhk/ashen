@@ -630,3 +630,40 @@ def test_f_tot_is_linear_and_area_is_the_effective_wetted_area():
     assert not quantity("f_tot").log_scale
     assert quantity("area").log_scale
     assert "effective wetted area" in quantity("area").label
+
+
+def test_ptrace_wetted_cmap_from_the_case_and_the_flag(campaign, monkeypatch):
+    np.savetxt(campaign / "run" / "original_bnd.dat", circle(200))
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    angles = np.linspace(0, 2 * np.pi, 20, endpoint=False)
+    write_diag(folder / "ptrace_diag.h5", [R0 + 0.3 * np.cos(angles), R0 + 0.7 * np.cos(angles)],
+               [0.3 * np.sin(angles), 0.7 * np.sin(angles)], [angles, angles + 0.2],
+               np.zeros((2, 20), int))
+    cmaps = []
+    original = plot_cli.plot_wetted_area
+    monkeypatch.setattr(plot_cli, "plot_wetted_area",
+                        lambda *a, **k: cmaps.append(k["cmap"]) or original(*a, **k))
+    argv = ["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]
+    assert plot_cli.main(argv) == 0
+    cases = campaign / "cases.toml"
+    cases.write_text(cases.read_text().replace(
+        "[cases.run]\n", '[cases.run]\nptrace_wetted_cmap = "hot"\n', 1))
+    assert plot_cli.main(argv) == 0
+    assert plot_cli.main(argv + ["--ptrace-wetted-cmap", "inferno_r"]) == 0
+    assert plot_cli.main(argv + ["--ptrace-wetted-counts", "--ptrace_wetted_cmap", "turbo"]) == 0
+    assert cmaps == ["viridis", "hot", "inferno_r", "turbo"]
+
+
+def test_ptrace_wetted_cmap_is_validated(tmp_path):
+    from ashen.cases import CasesError, load_cases
+
+    for value, ok in (('"inferno"', True), ('"hot_r"', True), ('"not_a_map"', False), ("3", False)):
+        path = tmp_path / f"cases_{ok}_{abs(hash(value))}.toml"
+        path.write_text(f'[cases.run]\nsteps = [1]\nptrace_exe = "./exe"\nptrace_wetted_cmap = {value}\n', encoding="utf-8")
+        if ok:
+            assert load_cases(path)["run"].ptrace_wetted_cmap == value.strip('"')
+        else:
+            with pytest.raises(CasesError, match="ptrace_wetted_cmap"):
+                load_cases(path)
+    with pytest.raises(SystemExit):
+        plot_cli.main(["--diag", "particle_wetted", "--ptrace-wetted-cmap", "not_a_map"])

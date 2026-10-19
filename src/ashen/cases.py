@@ -52,7 +52,7 @@ _CASE_KEYS = (
     "ptrace_original_boundary", "ptrace_exit_psi_n", "ptrace_exit_bins",
     "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins", "ptrace_pdf_step",
     "ptrace_wetted_density_range", "ptrace_initial_psi_n_range", "ptrace_loss_bins",
-    "ptrace_wetted_counts", "ptrace_wetted_count_range",
+    "ptrace_wetted_counts", "ptrace_wetted_count_range", "ptrace_wetted_cmap",
     "re_current_coords",
 )
 
@@ -327,6 +327,10 @@ class Case:
     #: colour scale in particles per cell, apart from
     #: ptrace_wetted_density_range's. None = the data's own range.
     ptrace_wetted_count_range: list[float] | None = None
+    #: `plot --diag particle_wetted`: the map's colour map, any matplotlib
+    #: name ("viridis", "inferno", "turbo", ...; "_r" reverses one), for
+    #: the density and the counts map alike. `--ptrace-wetted-cmap` overrides it.
+    ptrace_wetted_cmap: str = "viridis"
     #: `plot --diag particles`: the colour of the particles, any matplotlib
     #: colour ("red", "#ff8800", "tab:orange"). Red stands out against the
     #: Poincare plot's viridis.
@@ -689,6 +693,16 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
                 f"with 0 <= min < max, got {value!r}"
             )
         merged[key] = [float(v) for v in value]
+
+    if "ptrace_wetted_cmap" in merged:
+        from matplotlib import colormaps
+
+        value = merged["ptrace_wetted_cmap"]
+        if not (isinstance(value, str) and value in colormaps):
+            raise CasesError(
+                f"{where}: ptrace_wetted_cmap must be a matplotlib colour map name "
+                f'("viridis", "inferno", "turbo", ...), got {value!r}'
+            )
 
     if "ptrace_particle_color" in merged:
         from matplotlib.colors import is_color_like
