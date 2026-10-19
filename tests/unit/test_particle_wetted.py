@@ -622,3 +622,11 @@ def test_a_case_without_a_trace_drops_out_of_the_scan_map(campaign, capsys):
                           particle_wetted=lambda: None, report=print)
     assert quantity("f_tot").extract(ctx) is None and quantity("f_tot").error(ctx) is None
     assert "no particle_wetted result" in capsys.readouterr().out
+
+
+def test_f_tot_is_linear_and_area_is_the_effective_wetted_area():
+    from ashen.quantities import quantity
+
+    assert not quantity("f_tot").log_scale
+    assert quantity("area").log_scale
+    assert "effective wetted area" in quantity("area").label

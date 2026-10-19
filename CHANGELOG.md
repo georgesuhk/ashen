@@ -4,6 +4,14 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-19: scan maps draw f_tot on a linear axis
+
+- `f_tot` is now drawn on a linear scale on scan maps, like `f_pol`,
+  `f_tor` and `s`. Its values are unchanged.
+- `area` is now labelled "effective wetted area [m²]", which is what it
+  is: the participation-ratio area (Σn)² / Σ(n²/A) over (l, phi) cells,
+  equal to `f_tot` times the wall's area. Its axis stays logarithmic.
+
 ## 2026-10-15: re_current against R as well as psi_N
 
 - New case key `re_current_coords`: the radial coordinate(s) the
