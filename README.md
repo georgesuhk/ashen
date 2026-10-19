@@ -424,7 +424,29 @@ change one of those for the restart, edit `in_main_r` by hand. Add
 
 Plain `--run_r` refuses, writing nothing, when the folder's `in_main_r` has
 a `central_density` other than the one it would write, and says which of
-the two commands to use.
+the two commands to use. It refuses the same way when the folder's
+`rho_prof.dat` is in the other density format (below) from the one it
+would write.
+
+### The old density normalisation: `--legacy-density`
+
+Before 2026-10-07, `run_jorek` wrote `rho_const / 1e20` into
+`rho_prof.dat` as well as `central_density`. The density was normalised
+twice: `rho_const = 1e18` ran at 1e16 m⁻³, with 1% of the CASTOR3D
+pressure. `--legacy-density` prepares a folder that way again, to
+reproduce or continue a run from then. Only `rho_prof.dat` changes;
+`central_density`, `T_prof.dat` and everything else are as now.
+
+```bash
+python ~/ashen/bin/run_jorek shotfile.py --legacy-density --run
+python ~/ashen/bin/run_jorek shotfile.py --legacy-density --run_r      # restart a legacy folder
+python ~/ashen/bin/run_jorek --scan scan.toml --apply --legacy-density
+```
+
+It says so when used. A folder prepared with it must be restarted with
+it (or with `--keep-inputs`): plain `--run_r` refuses rather than switch
+the run to the current normalisation. `--legacy-density` does not go with
+`--keep-inputs`, which writes no profiles.
 
 ## Looking at a case from a notebook
 

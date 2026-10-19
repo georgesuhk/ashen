@@ -345,3 +345,38 @@ def test_job_must_exist_and_needs_a_batch_stage(cli_campaign, submitted, capsys)
     assert main(["shotfile.py", "--run_i", "-job", "2h"]) == 1
     assert "add one of them" in capsys.readouterr().err
     assert submitted == []
+
+
+def test_legacy_density_writes_the_old_doubly_normalised_rho_prof(
+    cli_campaign, submitted, symlinks_maybe_bypassed, capsys
+):
+    import numpy as np
+    from ashen import namelist as nml
+
+    assert main(["shotfile.py", "--legacy-density"]) == 0
+    rho = np.loadtxt(cli_campaign / "rho_prof.dat")
+    np.testing.assert_allclose(rho[:, 1], 1e18 / 1e20, rtol=1e-12)
+    assert float(nml.read_field(cli_campaign / "in_main_r", "central_density")) == pytest.approx(0.01)
+    assert "--legacy-density" in capsys.readouterr().out
+
+
+def test_run_r_refuses_to_switch_a_folder_between_density_formats(
+    cli_campaign, submitted, symlinks_maybe_bypassed, capsys
+):
+    assert main(["shotfile.py", "--legacy-density"]) == 0
+    before = _snapshot(cli_campaign)
+    assert main(["shotfile.py", "--run_r"]) == 1
+    assert _snapshot(cli_campaign) == before and submitted == []
+    assert "--run_r --legacy-density" in capsys.readouterr().err
+
+    assert main(["shotfile.py", "--run_r", "--legacy-density"]) == 0
+    assert len(submitted) == 1
+
+    assert main(["shotfile.py"]) == 0                                      # current format
+    assert main(["shotfile.py", "--run_r", "--legacy-density"]) == 1
+    assert "to the old (--legacy-density) one" in capsys.readouterr().err
+
+
+def test_legacy_density_does_not_go_with_keep_inputs(cli_campaign, submitted, capsys):
+    assert main(["shotfile.py", "--run_r", "--keep-inputs", "--legacy-density"]) == 1
+    assert "--legacy-density goes with preparing a folder" in capsys.readouterr().err

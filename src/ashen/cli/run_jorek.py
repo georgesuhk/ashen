@@ -12,6 +12,7 @@ from ashen.config import SiteConfigError, load_site
 from ashen.runner import (
     prepare_restart,
     restart_density_change,
+    restart_rho_prof_change,
     prepare_run,
     submit_eq,
     submit_main,
@@ -20,6 +21,12 @@ from ashen.runner import (
 )
 from ashen.scan import ScanError, apply_plan, format_value, load_scan, plan_scan, update_cases_toml
 from ashen.shotfile import ShotfileError, load_shotfile
+
+
+LEGACY_DENSITY_WARNING = (
+    "--legacy-density: rho_prof.dat = rho_const / 1e20, the old, doubly normalised "
+    "density (rho_const = 1e18 runs at 1e16 m^-3)"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "nstep_n and nout of in_main_r are set from the shotfile; "
                              "profiles, boundary and every other namelist field stay as the "
                              "run was started with. For runs prepared by an older ashen.")
+    stages.add_argument("--legacy-density", action="store_true",
+                        help="write rho_prof.dat the old, incorrect way (before 2026-10-07): "
+                             "rho_const / 1e20 in units of central_density, so the density is "
+                             "normalised twice (rho_const = 1e18 runs at 1e16 m^-3). Only to "
+                             "reproduce or continue runs prepared then.")
     stages.add_argument("--run_eq", action="store_true", help="equilibrium, interactive")
     stages.add_argument("--run_sw", action="store_true", help="equilibrium then STARWALL")
     return parser
@@ -170,7 +182,8 @@ def _run_scan(args) -> int:
         _ensure_notebook(run.run_dir)
         try:
             params = _with_job(args, load_shotfile(run.run_dir / "shotfile.py"), site)
-            result = prepare_run(params, site, run.run_dir, run_sw=args.run_sw)
+            result = prepare_run(params, site, run.run_dir, run_sw=args.run_sw,
+                                 legacy_density=args.legacy_density)
             print(f"  prepared {run.name}")
             _submit(args, result.paths, site, params, dry_run=False)
         except (ShotfileError, NotImplementedError, FileNotFoundError, OSError) as exc:
@@ -204,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.scan is not None:
+        if args.legacy_density and args.apply:
+            print(LEGACY_DENSITY_WARNING)
         if args.shot_file is not None or args.dry_run or args.keep_inputs:
             error("--scan takes no shotfile, no --dry-run and no --keep-inputs: "
                   "without --apply it only lists")
@@ -221,6 +236,10 @@ def main(argv: list[str] | None = None) -> int:
         not args.run_r or args.run or args.run_i or args.run_eq or args.run_sw
     ):
         error("--keep-inputs goes with --run_r alone")
+        return 1
+    if args.keep_inputs and args.legacy_density:
+        error("--legacy-density goes with preparing a folder; --keep-inputs prepares nothing "
+              "and keeps the folder's rho_prof.dat as it is")
         return 1
 
     run_dir = Path.cwd()
@@ -260,11 +279,28 @@ def main(argv: list[str] | None = None) -> int:
                 "  To prepare it again on purpose:   run_jorek shotfile.py   (then --run_r)"
             )
             return 1
+        rho_change = restart_rho_prof_change(params, run_dir, legacy_density=args.legacy_density)
+        if rho_change is not None:
+            have_legacy = not args.legacy_density
+            error(
+                f"this folder's rho_prof.dat holds {rho_change[0]:g}; preparing it again would "
+                f"write {rho_change[1]:g}, switching the run being restarted "
+                + ("from the old (--legacy-density) density normalisation to the current one. "
+                   if have_legacy else
+                   "from the current density normalisation to the old (--legacy-density) one. ")
+                + "Nothing was written.\n"
+                "  To restart it as it was started:  run_jorek shotfile.py --run_r"
+                + (" --legacy-density" if have_legacy else "") + "\n"
+                "  or, keeping every input:          run_jorek shotfile.py --run_r --keep-inputs"
+            )
+            return 1
 
+    if args.legacy_density:
+        print(LEGACY_DENSITY_WARNING)
     try:
         result = prepare_run(
             params, site, run_dir,
-            dry_run=args.dry_run, run_sw=args.run_sw,
+            dry_run=args.dry_run, run_sw=args.run_sw, legacy_density=args.legacy_density,
         )
     except (ShotfileError, NotImplementedError, FileNotFoundError) as exc:
         error(str(exc))

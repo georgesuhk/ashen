@@ -340,8 +340,14 @@ def prepare_run(
     *,
     dry_run: bool = False,
     run_sw: bool = False,
+    legacy_density: bool = False,
 ) -> PreparedRun:
     """Populate a run folder from a shotfile. Validates before writing anything.
+
+    legacy_density writes rho_prof.dat as ashen did before 2026-10-07:
+    rho_const / 1e20 in units of central_density, so the density is
+    normalised twice (rho_const = 1e18 runs at 1e16 m^-3). Only for
+    reproducing runs prepared then; see rho_prof_value.
 
     Mirrors run_jorek.py's folder-population section (~lines 124-302), with
     the fixes listed in this module's docstring applied.
@@ -410,7 +416,7 @@ def prepare_run(
         # central_density is n_0 in 1e20 m^-3; the rho profile is in units
         # of n_0, so a plasma at rho_const everywhere is 1 there.
         rho_const_jorek = params.rho_const / 1e20
-        rho_prof_export = [1.0] * len(psi_n_export)
+        rho_prof_export = [rho_prof_value(params, legacy_density=legacy_density)] * len(psi_n_export)
     else:
         raise NotImplementedError(f"rho_method={params.rho_method!r} not implemented")
     rho_data = np.column_stack(
@@ -710,6 +716,33 @@ def prepare_restart(
     except (OSError, ValueError):
         real_psi_edge = float("nan")
     return PreparedRun(paths=paths, real_psi_edge=real_psi_edge, actions=disk.actions)
+
+
+def rho_prof_value(params: ShotParams, *, legacy_density: bool = False) -> float:
+    """The constant rho_prof.dat holds for rho_method "const": 1 (rho is in
+    units of central_density), or with legacy_density the old, doubly
+    normalised rho_const / 1e20."""
+    return params.rho_const / 1e20 if legacy_density else 1.0
+
+
+def restart_rho_prof_change(
+    params: ShotParams, run_dir: Path, *, legacy_density: bool = False,
+) -> tuple[float, float] | None:
+    """(the folder's rho_prof.dat value, the one prepare_run would write)
+    when they differ, else None: preparing again would switch a run being
+    restarted between the current and the --legacy-density normalisation.
+    None too if the folder has no readable rho_prof.dat."""
+    if params.rho_method != "const" or params.rho_const is None:
+        return None
+    try:
+        rho = np.loadtxt(Path(run_dir).resolve() / "rho_prof.dat", ndmin=2)[:, 1]
+    except (OSError, ValueError, IndexError):
+        return None
+    if rho.size == 0:
+        return None
+    new = rho_prof_value(params, legacy_density=legacy_density)
+    have = float(rho[0])
+    return None if np.allclose(rho, new, rtol=1e-9, atol=0.0) else (have, new)
 
 
 def restart_density_change(params: ShotParams, run_dir: Path) -> tuple[float, float] | None:
