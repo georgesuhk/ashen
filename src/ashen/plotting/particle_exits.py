@@ -95,18 +95,20 @@ def plot_exit_histograms_compare(
     *,
     bins: int = 72,
     caption: str | None = None,
+    colors: list[str] | None = None,
     figsize: tuple[float, float] = (9.0, 3.6),
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Several cases' theta (left) and phi (right) exit histograms on the
     same axes, one colour per (label, result), as outlines so each stays
     readable where they overlap. Each is a fraction of that case's own exits,
-    as in plot_exit_histograms; a case with none is in the legend only."""
+    as in plot_exit_histograms; a case with none is in the legend only.
+    colors, one matplotlib colour per series, in place of tab10's."""
     import matplotlib.pyplot as plt
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    colours = plt.get_cmap("tab10").colors
+    colours = list(colors) if colors else plt.get_cmap("tab10").colors
     panels = (
         (-np.pi, np.pi, _THETA_TICKS, r"poloidal angle $\theta$ at exit", "theta"),
         (0.0, 2 * np.pi, _PHI_TICKS, r"toroidal angle $\phi$ at exit", "phi"),

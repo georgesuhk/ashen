@@ -655,3 +655,55 @@ def test_a_comma_separated_compare_takes_every_selector_in_order():
                            "qa2.1_g2.8/eta1e-4", "qa2.1_g2.8/eta1e-5"]
     # any one selecting nothing is the whole selecting nothing, as a typo should be
     assert plot_cli._comparison_from_cases("qa2.1_g2.8/eta1e-3, qa2.1_g2.8/eta1e-9", cases) is None
+
+
+def test_compare_colors_go_to_their_cases_in_order(campaign, monkeypatch, capsys):
+    _trace_both(campaign)
+    calls = _spy(monkeypatch, "plot_exit_histograms_compare")
+    argv = ["--compare", "run, other", "--diag", "particle_exits", "--dpi", "40"]
+    assert plot_cli.main(argv + ["--color", "red, #00ff00"]) == 0
+    assert calls[-1][1]["colors"] == ["red", "#00ff00"]
+    assert plot_cli.main(argv) == 0
+    assert calls[-1][1]["colors"] is None                         # tab10, as before
+
+
+def test_a_skipped_case_keeps_the_others_colours(campaign, monkeypatch):
+    write_diag(campaign / "other" / "ptrace" / "my_tracer" / "ptrace_diag.h5",
+               t=T, psi_n=PSI, R=R, Z=Z, phi=PHI, lost=LOST, theta=THETA)
+    calls = _spy(monkeypatch, "plot_exit_histograms_compare")
+    assert plot_cli.main(["--compare", "run, other", "--diag", "particle_exits", "--dpi", "40",
+                          "--colors", "red,green"]) == 0
+    (series, _), kwargs = calls[0]
+    assert [label for label, _ in series] == ["other"] and kwargs["colors"] == ["green"]
+
+
+def test_compare_colors_must_match_the_cases_and_be_colours(campaign, monkeypatch, capsys):
+    _trace_both(campaign)
+    calls = _spy(monkeypatch, "plot_exit_histograms_compare")
+    argv = ["--compare", "run, other", "--diag", "particle_exits", "--dpi", "40"]
+    assert plot_cli.main(argv + ["--color", "red"]) == 0
+    assert calls == [] and "gives 1 colour(s) for 2 case(s)" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        plot_cli.main(argv + ["--color", "red, notacolour"])
+    assert "'notacolour'" in capsys.readouterr().err
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--color", "red"]) == 1
+    assert "add --compare" in capsys.readouterr().err
+
+
+def test_the_figure_uses_the_given_colours(diag, tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_rgba
+    from ashen.plotting.particle_exits import plot_exit_histograms_compare
+
+    result = exit_angles(read_particle_diag(diag), psi_n=1.0)
+    seen = []
+    original = plt.close
+
+    def grab(fig):
+        seen.extend(to_rgba(p.get_edgecolor()) for ax in fig.axes for p in ax.patches)
+        original(fig)
+
+    monkeypatch.setattr(plt, "close", grab)
+    plot_exit_histograms_compare([("a", result), ("b", result)], tmp_path / "c.png",
+                                 bins=8, colors=["red", "#00ff00"], dpi=40)
+    assert to_rgba("red") in seen and to_rgba("#00ff00") in seen

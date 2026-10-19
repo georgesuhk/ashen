@@ -194,6 +194,19 @@ def _color_name(text: str) -> str:
     return text
 
 
+def _color_list(text: str) -> list[str]:
+    """argparse type: comma-separated matplotlib colours ('red, green, #1f77b4')."""
+    from matplotlib.colors import is_color_like
+
+    colors = [part.strip() for part in text.split(",") if part.strip()]
+    bad = [c for c in colors if not is_color_like(c)]
+    if not colors or bad:
+        raise argparse.ArgumentTypeError(
+            f"{', '.join(map(repr, bad)) or repr(text)}: not matplotlib colour(s); give "
+            "them comma-separated, e.g. 'red, green' or 'tab:blue, #ff8800'")
+    return colors
+
+
 def _dpi_kwargs(dpi: int | None) -> dict:
     """{"dpi": dpi} if the CLI overrode it, else {} so the plotting
     function's own default applies -- reused by every per-diag renderer."""
@@ -466,6 +479,12 @@ def build_parser() -> argparse.ArgumentParser:
         "Not the name of a comparison: the cases it selects, as --case would "
         "('qa2.1_g2.8/eta*0.1', quoted), compared as one; several, comma-separated "
         "('qa2.1_g2.8/eta1e-3, qa2.1_g2.8/eta1e-4'), are one comparison of them all",
+    )
+    parser.add_argument(
+        "--color", "--colors", type=_color_list, default=None, dest="compare_colors",
+        metavar="'C1, C2, ...'",
+        help="particle_exits under --compare: one matplotlib colour per case, "
+        "comma-separated, in the comparison's case order ('red, green')",
     )
     parser.add_argument(
         "--list-comparisons", action="store_true",
@@ -3285,21 +3304,30 @@ def _compare_particle_exits(
     psi_n: float | None,
     bins: int | None,
     dpi: int | None,
+    colors: list[str] | None = None,
 ) -> None:
     """Every member case's theta and phi exit histograms on one pair of axes,
     a colour each, as figures/<name>_particle_exits.png. Each case's angles
     are computed exactly as its own particle_exits figure computes them;
     the bins are --ptrace-exit-bins, else the members' ptrace_exit_bins
-    (the first member's, with a note, when they differ)."""
+    (the first member's, with a note, when they differ). colors (--color)
+    gives one colour per member case, in order; it stays with its case when
+    another is skipped."""
     if comparison.datasets:
         print(f"  comparison {comparison.name!r} uses 'datasets'; particle_exits "
               "doesn't support grouped datasets, use a flat 'cases' comparison instead, skipped")
         return
+    members = comparison.labelled_cases()
+    if colors is not None and len(colors) != len(members):
+        print(f"  particle_exits: --color gives {len(colors)} colour(s) for {len(members)} "
+              f"case(s) ({', '.join(name for _, name in members)}); give one per case, skipped")
+        return
 
     series = []
+    series_colors = []
     thresholds = set()
     case_bins = []
-    for label, case_name in comparison.labelled_cases():
+    for index, (label, case_name) in enumerate(members):
         case = cases[case_name]
         run_dir = Path.cwd() / case.name
         if not run_dir.is_dir():
@@ -3311,6 +3339,8 @@ def _compare_particle_exits(
             continue
         print(f"    {done.caption.replace(chr(10), '; ')}")
         series.append((label, done.result))
+        if colors is not None:
+            series_colors.append(colors[index])
         thresholds.add(done.psi_n)
         case_bins.append(case.ptrace_exit_bins)
 
@@ -3330,7 +3360,7 @@ def _compare_particle_exits(
               "--exit-psi-n draws them all at one")
     out = plot_exit_histograms_compare(
         series, Path.cwd() / "figures" / f"{comparison.name}_particle_exits.png",
-        bins=n_bins, caption=caption, **_dpi_kwargs(dpi),
+        bins=n_bins, caption=caption, colors=series_colors or None, **_dpi_kwargs(dpi),
     )
     print(f"  {out}")
 
@@ -3394,6 +3424,7 @@ def _run_comparisons(
     si: bool = False,
     exit_psi_n: float | None = None,
     ptrace_exit_bins: int | None = None,
+    compare_colors: list[str] | None = None,
 ) -> int:
     # A defined [comparisons.NAME] wins; any other value is a case selector.
     chosen: list[Comparison] = []
@@ -3445,6 +3476,7 @@ def _run_comparisons(
         if "particle_exits" in comparable:
             _compare_particle_exits(
                 comparison, cases, psi_n=exit_psi_n, bins=ptrace_exit_bins, dpi=dpi,
+                colors=compare_colors,
             )
         if "scan_map" in comparable:
             _compare_scan_map(
@@ -3473,6 +3505,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.show_config:
         return show_config(args.site)
+
+    if args.compare_colors is not None and not args.comparisons:
+        error("--color colours the cases of a --compare particle_exits figure; add --compare")
+        return 1
 
     if args.ptrace_wetted_cmap_range is not None:
         lo, hi = args.ptrace_wetted_cmap_range
@@ -3584,6 +3620,7 @@ def main(argv: list[str] | None = None) -> int:
             si=args.si,
             exit_psi_n=args.exit_psi_n,
             ptrace_exit_bins=args.ptrace_exit_bins,
+            compare_colors=args.compare_colors,
         )
 
     selected = resolve_selection(args.selected, cases)
