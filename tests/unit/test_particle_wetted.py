@@ -667,3 +667,92 @@ def test_ptrace_wetted_cmap_is_validated(tmp_path):
                 load_cases(path)
     with pytest.raises(SystemExit):
         plot_cli.main(["--diag", "particle_wetted", "--ptrace-wetted-cmap", "not_a_map"])
+
+
+def test_ptrace_wetted_profiles_from_the_case_and_the_flag(campaign, monkeypatch):
+    np.savetxt(campaign / "run" / "original_bnd.dat", circle(200))
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    angles = np.linspace(0, 2 * np.pi, 20, endpoint=False)
+    write_diag(folder / "ptrace_diag.h5", [R0 + 0.3 * np.cos(angles), R0 + 0.7 * np.cos(angles)],
+               [0.3 * np.sin(angles), 0.7 * np.sin(angles)], [angles, angles + 0.2],
+               np.zeros((2, 20), int))
+    axes = []
+    original = plot_cli.plot_wetted_area
+
+    def spy(*args, **kwargs):
+        out = original(*args, **kwargs)
+        axes.append(kwargs["profiles"])
+        return out
+
+    monkeypatch.setattr(plot_cli, "plot_wetted_area", spy)
+    argv = ["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]
+    assert plot_cli.main(argv) == 0
+    assert plot_cli.main(argv + ["--no-ptrace-wetted-profiles"]) == 0
+    cases = campaign / "cases.toml"
+    cases.write_text(cases.read_text().replace(
+        "[cases.run]\n", "[cases.run]\nptrace_wetted_profiles = false\n", 1))
+    assert plot_cli.main(argv) == 0
+    assert plot_cli.main(argv + ["--ptrace-wetted-profiles"]) == 0
+    assert axes == [True, False, False, True]
+    assert (folder / "particle_wetted.png").is_file()
+
+
+def test_the_map_alone_has_one_panel_and_its_colourbar(tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+    from ashen.plotting.particle_wetted import plot_wetted_area
+
+    wall = Wall.from_points(circle(200))
+    rng = np.random.default_rng(0)
+    hits = WallHits(l=rng.uniform(0, wall.length, 50), phi=rng.uniform(0, 2 * np.pi, 50),
+                    n_crossed=50, n_left_grid=0, n_considered=50)
+    result = wetted_area(hits, wall, n_l=8, n_phi=6, n_boot=2)
+    counted = []
+    monkeypatch.setattr(plt, "close", lambda fig: counted.append(len(fig.axes)))
+    plot_wetted_area(result, hits, tmp_path / "a.png", dpi=40)
+    plot_wetted_area(result, hits, tmp_path / "b.png", dpi=40, profiles=False)
+    assert counted == [4, 2]                      # map, two profiles, colourbar; map, colourbar
+
+
+def test_ptrace_wetted_empty_color_from_the_case_and_the_flag(campaign, monkeypatch, tmp_path):
+    np.savetxt(campaign / "run" / "original_bnd.dat", circle(200))
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    angles = np.linspace(0, 2 * np.pi, 20, endpoint=False)
+    write_diag(folder / "ptrace_diag.h5", [R0 + 0.3 * np.cos(angles), R0 + 0.7 * np.cos(angles)],
+               [0.3 * np.sin(angles), 0.7 * np.sin(angles)], [angles, angles + 0.2],
+               np.zeros((2, 20), int))
+    colors = []
+    original = plot_cli.plot_wetted_area
+    monkeypatch.setattr(plot_cli, "plot_wetted_area",
+                        lambda *a, **k: colors.append(k["empty_color"]) or original(*a, **k))
+    argv = ["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]
+    assert plot_cli.main(argv) == 0
+    cases = campaign / "cases.toml"
+    cases.write_text(cases.read_text().replace(
+        "[cases.run]\n", '[cases.run]\nptrace_wetted_empty_color = "black"\n', 1))
+    assert plot_cli.main(argv) == 0
+    assert plot_cli.main(argv + ["--ptrace-wetted-empty-color", "#202020"]) == 0
+    assert colors == [None, "black", "#202020"]
+    with pytest.raises(SystemExit):
+        plot_cli.main(argv + ["--ptrace-wetted-empty-color", "notacolour"])
+
+    bad = tmp_path / "bad.toml"
+    bad.write_text('[cases.run]\nsteps = [1]\nptrace_exe = "./exe"\n'
+                   'ptrace_wetted_empty_color = "notacolour"\n', encoding="utf-8")
+    from ashen.cases import CasesError, load_cases
+    with pytest.raises(CasesError, match="ptrace_wetted_empty_color"):
+        load_cases(bad)
+
+
+def test_empty_cells_take_the_empty_color(tmp_path):
+    import matplotlib.image as mpimg
+    from ashen.plotting.particle_wetted import plot_wetted_area
+
+    wall = Wall.from_points(circle(200))
+    hits = WallHits(l=np.array([0.1]), phi=np.array([0.1]), n_crossed=1, n_left_grid=0,
+                    n_considered=1)
+    result = wetted_area(hits, wall, n_l=8, n_phi=6, n_boot=0)
+    out = plot_wetted_area(result, hits, tmp_path / "m.png", dpi=40, profiles=False,
+                           empty_color="#00ff00")
+    image = mpimg.imread(out)
+    green = (image[..., 0] < 0.1) & (image[..., 1] > 0.9) & (image[..., 2] < 0.1)
+    assert green.mean() > 0.3                    # most of the map is empty, and green

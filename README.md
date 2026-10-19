@@ -2470,6 +2470,19 @@ command line.
 python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_wetted --ptrace-wetted-cmap hot
 ```
 
+**The map alone.** `ptrace_wetted_profiles = false` leaves out the
+toroidal and poloidal profiles above and beside the map, leaving the map
+and its colourbar. `--no-ptrace-wetted-profiles` does the same for one
+run, and `--ptrace-wetted-profiles` puts them back over a case's `false`.
+The numbers and the JSON are the same either way.
+
+**Cells no particle hit** are left white -- the background -- whatever the
+colour map. `ptrace_wetted_empty_color` gives them a colour of their own,
+any matplotlib colour (`"black"`, `"#202020"`, `"0.8"` for a grey):
+black under `hot` makes the map look like a camera frame, while a colour
+the map doesn't use keeps "no hits" apart from "few hits".
+`--ptrace-wetted-empty-color COLOR` overrides it for one run.
+
 **Replotting is cached.** Where each particle hit the wall is kept in
 `particle_wetted_cache.npz` in the ptrace folder, so a second run of
 `--diag particle_wetted` neither reads the diagnostics file nor finds the

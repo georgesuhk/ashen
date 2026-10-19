@@ -4,6 +4,18 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-19: `particle_wetted` without the side profiles; colour of empty cells
+
+- `ptrace_wetted_profiles = false` (case key) draws the `particle_wetted`
+  map alone, without the toroidal and poloidal profiles; the colourbar
+  sits beside the map. `--no-ptrace-wetted-profiles` and
+  `--ptrace-wetted-profiles` override the key for one run. Default on, as
+  before. Applies to the counts version too; the numbers are unchanged.
+- `ptrace_wetted_empty_color` (case key) and `--ptrace-wetted-empty-color`
+  (flag, overrides it) colour the map's cells that no particle hit; any
+  matplotlib colour. Unset, they stay white, as before. An invalid colour
+  is an error in both places.
+
 ## 2026-10-19: `particle_wetted` colour map; shorter arc length label
 
 - `ptrace_wetted_cmap` (case key) and `--ptrace-wetted-cmap NAME` (flag,

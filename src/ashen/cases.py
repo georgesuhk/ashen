@@ -53,6 +53,7 @@ _CASE_KEYS = (
     "ptrace_particle_color", "ptrace_settings", "ptrace_wetted_bins", "ptrace_pdf_step",
     "ptrace_wetted_density_range", "ptrace_initial_psi_n_range", "ptrace_loss_bins",
     "ptrace_wetted_counts", "ptrace_wetted_count_range", "ptrace_wetted_cmap",
+    "ptrace_wetted_profiles", "ptrace_wetted_empty_color",
     "re_current_coords",
 )
 
@@ -331,6 +332,14 @@ class Case:
     #: name ("viridis", "inferno", "turbo", ...; "_r" reverses one), for
     #: the density and the counts map alike. `--ptrace-wetted-cmap` overrides it.
     ptrace_wetted_cmap: str = "viridis"
+    #: `plot --diag particle_wetted`: draw the toroidal and poloidal
+    #: profiles beside the map. false = the map alone.
+    #: `--ptrace-wetted-profiles` / `--no-ptrace-wetted-profiles` override it.
+    ptrace_wetted_profiles: bool = True
+    #: `plot --diag particle_wetted`: the colour of the map's cells no
+    #: particle hit, any matplotlib colour ("black", "#202020", "0.8").
+    #: None = the background (white). `--ptrace-wetted-empty-color` overrides it.
+    ptrace_wetted_empty_color: str | None = None
     #: `plot --diag particles`: the colour of the particles, any matplotlib
     #: colour ("red", "#ff8800", "tab:orange"). Red stands out against the
     #: Poincare plot's viridis.
@@ -704,17 +713,20 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
                 f'("viridis", "inferno", "turbo", ...), got {value!r}'
             )
 
-    if "ptrace_particle_color" in merged:
+    for key in ("ptrace_particle_color", "ptrace_wetted_empty_color"):
+        if merged.get(key) is None:
+            continue
         from matplotlib.colors import is_color_like
 
-        value = merged["ptrace_particle_color"]
+        value = merged[key]
         if not (isinstance(value, str) and is_color_like(value)):
             raise CasesError(
-                f"{where}: ptrace_particle_color must be a matplotlib colour "
+                f"{where}: {key} must be a matplotlib colour "
                 f'name or "#rrggbb", got {value!r}'
             )
 
-    for key in ("ptrace_poincare", "ptrace_original_boundary", "ptrace_wetted_counts"):
+    for key in ("ptrace_poincare", "ptrace_original_boundary", "ptrace_wetted_counts",
+                "ptrace_wetted_profiles"):
         if key in merged and not isinstance(merged[key], bool):
             raise CasesError(f"{where}: {key} must be true or false, got {merged[key]!r}")
     if merged.get("ptrace_poincare_psi_n") is not None:
