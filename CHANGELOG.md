@@ -4,6 +4,26 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-19: particle_exits compared across cases; `--compare` lists; `--ptrace-exit-bins`
+
+- `plot --compare ... --diag particle_exits` draws every selected case's
+  theta and phi exit histograms on one pair of axes, a colour each, as
+  `figures/<name>_particle_exits.png`. Each case is computed exactly as its
+  own `particle_exits` figure (shared code, `_particle_exits_result`), and
+  each is a fraction of its own exits. A case without a trace is skipped
+  with the reason.
+- `--compare` takes a comma-separated list of cases, patterns or folders,
+  as one comparison, in the order given:
+  `plot --compare 'qa2.1_g2.8/eta1e-3, qa2.1_g2.8/eta1e-4' --diag particle_exits`.
+  This works for every diag `--compare` draws. If any item selects nothing,
+  the whole value is reported as unknown.
+- `--ptrace-exit-bins N` (or `--ptrace_exit_bins`) overrides each case's
+  `ptrace_exit_bins` for `particle_exits`, per case and under `--compare`.
+  It must be a whole number >= 1.
+- Flags that override a cases.toml key now carry the key's name:
+  `--ptrace-exit-psi-n` and `--ptrace-wetted-counts` are new names for
+  `--exit-psi-n` and `--wetted-counts`. The old names still work.
+
 ## 2026-10-19: `run_jorek --legacy-density`
 
 - `--legacy-density` writes `rho_prof.dat` the old, incorrect way, as

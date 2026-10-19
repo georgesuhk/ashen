@@ -15,7 +15,10 @@ import numpy as np
 from ashen.diagnostics.particle_exits import ExitResult
 from ashen.plotting import DEFAULT_DPI, style
 
-__all__ = ["animate_exit_histograms", "exit_caption", "plot_exit_histograms"]
+__all__ = [
+    "animate_exit_histograms", "exit_caption", "plot_exit_histograms",
+    "plot_exit_histograms_compare",
+]
 
 _THETA_TICKS = ([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi],
                 [r"$-\pi$", r"$-\pi/2$", "0", r"$\pi/2$", r"$\pi$"])
@@ -79,6 +82,57 @@ def plot_exit_histograms(
         ax_theta.set_xlabel(r"poloidal angle $\theta$ at exit")
         ax_phi.set_xlabel(r"toroidal angle $\phi$ at exit")
         ax_theta.set_ylabel("fraction of exits")
+        if caption:
+            fig.suptitle(caption, fontsize=9)
+        fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    return out_path
+
+
+def plot_exit_histograms_compare(
+    series: list[tuple[str, ExitResult]],
+    out_path: Path | str,
+    *,
+    bins: int = 72,
+    caption: str | None = None,
+    figsize: tuple[float, float] = (9.0, 3.6),
+    dpi: int = DEFAULT_DPI,
+) -> Path:
+    """Several cases' theta (left) and phi (right) exit histograms on the
+    same axes, one colour per (label, result), as outlines so each stays
+    readable where they overlap. Each is a fraction of that case's own exits,
+    as in plot_exit_histograms; a case with none is in the legend only."""
+    import matplotlib.pyplot as plt
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    colours = plt.get_cmap("tab10").colors
+    panels = (
+        (-np.pi, np.pi, _THETA_TICKS, r"poloidal angle $\theta$ at exit", "theta"),
+        (0.0, 2 * np.pi, _PHI_TICKS, r"toroidal angle $\phi$ at exit", "phi"),
+    )
+    with style():
+        fig, axes = plt.subplots(1, 2, figsize=figsize, layout="constrained", sharey=True)
+        for ax, (lo, hi, ticks, xlabel, field) in zip(axes, panels):
+            edges = np.linspace(lo, hi, bins + 1)
+            for index, (label, result) in enumerate(series):
+                colour = colours[index % len(colours)]
+                angles = getattr(result, field)
+                legend = f"{label} ({result.n_exited} of {result.n_considered})"
+                if angles.size == 0:
+                    ax.plot([], [], color=colour, label=f"{label} (no exits)")
+                    continue
+                fraction, _ = np.histogram(angles, bins=edges)
+                ax.stairs(fraction / angles.size, edges, color=colour, linewidth=1.2, label=legend)
+            ax.set_xlim(lo, hi)
+            ax.set_xticks(ticks[0])
+            ax.set_xticklabels(ticks[1])
+            ax.set_xlabel(xlabel)
+            ax.tick_params(direction="in", which="both", top=True, right=True)
+        axes[0].set_ylim(bottom=0)
+        axes[0].set_ylabel("fraction of exits")
+        axes[1].legend(fontsize=7, loc="upper left", bbox_to_anchor=(1.02, 1.0),
+                       title="case (exits of particles)", title_fontsize=7)
         if caption:
             fig.suptitle(caption, fontsize=9)
         fig.savefig(out_path, dpi=dpi)

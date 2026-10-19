@@ -1183,8 +1183,22 @@ labelled by its path below the folder they share (`eta1e-3_adv0.1`, ...).
 Its figures are named after the pattern with `/`, `*` and the like made
 `_` (`qa2.1_g2.8_eta_0.1_theta_hist.png`). A `[comparisons.NAME]` of the
 same name always wins. It has no `x_values`, so `wetted_fraction` and the
-`four` delta-B comparison, which need them, say so and skip; `theta_hist`
-and `scan_map` (with `--x-quantity`/`--y-quantity`) work.
+`four` delta-B comparison, which need them, say so and skip; `theta_hist`,
+`particle_exits` and `scan_map` (with `--x-quantity`/`--y-quantity`) work.
+
+**Listing cases.** Several selectors separated by commas are one
+comparison of all the cases they select, in the order given (a case
+selected twice is drawn once, at its first place). Each can be a case, a
+pattern or a folder. Spaces after the commas are fine inside the quotes:
+
+```bash
+python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta1e-3, qa2.1_g2.8/eta1e-4' --diag particle_exits
+python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta1e-3,qa3.3_g3.2/eta*' --diag scan_map --x-quantity eta --y-quantity f_tot
+```
+
+If any one of them selects nothing, nothing is drawn and it is reported
+like any unknown name, so a typo doesn't quietly drop a case. The figures
+are named after the whole list (`qa2.1_g2.8_eta1e-3_qa2.1_g2.8_eta1e-4_*`).
 
 #### Wetted fraction vs. a scan parameter
 
@@ -2262,6 +2276,27 @@ ptrace_exit_psi_n = 1.0    # the psi_n that counts as leaving (default 1)
 ptrace_exit_bins  = 72     # bins over each of theta and phi
 ```
 
+Both can be set for one run from the command line, under the key's own
+name: `--ptrace-exit-psi-n` (the older `--exit-psi-n` still works) and
+`--ptrace-exit-bins`, which override every selected case's value
+(`--ptrace_exit_bins` with underscores works too).
+
+**Several cases on one figure.** `--compare` draws the exit histograms of
+every case it selects on the same theta and phi axes, one colour each, as
+`figures/<name>_particle_exits.png`. Each case's angles are computed exactly
+as its own figure computes them -- its own `ptrace_exit_psi_n`,
+`ptrace_initial_psi_n_range`, trace window and boundary setting -- and each
+is a fraction of that case's own exits. The legend gives each case's exits
+out of its particles. A case without a trace is skipped with the reason.
+The bins are `--ptrace-exit-bins`, else the cases' `ptrace_exit_bins` (the
+first case's, with a note, if they differ); cases with different
+thresholds are also noted, and `--ptrace-exit-psi-n` puts them all at one.
+
+```bash
+python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta1e-3, qa2.1_g2.8/eta1e-4' --diag particle_exits
+python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta*' --diag particle_exits --ptrace-exit-bins 36
+```
+
 **Only the markers that started in a psi_n range.**
 `ptrace_initial_psi_n_range = [min, max]` restricts both this plot and
 `particle_wetted` to the markers whose psi_n at the first diagnostics time
@@ -2287,7 +2322,7 @@ ptrace_initial_psi_n_range = [0.8, 1.0]
 
 ```bash
 python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits
-python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits --exit-psi-n 0.95
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits --ptrace-exit-psi-n 0.95
 python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_exits --animate  # + particle_exits.gif
 ```
 
@@ -2304,7 +2339,7 @@ a grey outline -- so they grow into it.
 - **With `ptrace_original_boundary = true`**, leaving that boundary is an exit
   too, and a particle exits at whichever of the boundary or the ψ_N
   threshold it reaches first. The caption counts how many exited each way;
-  a large `--exit-psi-n` makes the boundary the only criterion.
+  a large `--ptrace-exit-psi-n` makes the boundary the only criterion.
 - **Leaving the grid first.** A particle that leaves the grid before any
   diagnostics time shows it past the threshold still counts as an exit. Its
   angles are taken from its last position on the grid, and the caption says
@@ -2352,7 +2387,7 @@ python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_loss
 ```
 
 - **Lost** means what `particle_exits` counts as exited: past
-  `ptrace_exit_psi_n` (or `--exit-psi-n`), outside the original boundary
+  `ptrace_exit_psi_n` (or `--ptrace-exit-psi-n`), outside the original boundary
   under `ptrace_original_boundary`, or off the grid. A particle off the
   grid from the start is not counted. The fraction is cumulative, so each
   row only ever rises.
@@ -2412,7 +2447,8 @@ is not bounded by 1 -- a cell of 0.016 m^2 holding 2 % of the hits shows
 the data's own range), e.g. to compare cases; cells above `max` take the
 top colour.
 
-**Counts instead of fractions.** `--wetted-counts` on the command line, or
+**Counts instead of fractions.** `--ptrace-wetted-counts` (or the older
+`--wetted-counts`) on the command line, or
 `ptrace_wetted_counts = true` in the case, draws numbers of particles: the
 map shows how many hit each cell, the profiles how many hit each bin. It is
 written as `particle_wetted_counts.png`, beside the fraction version, and
