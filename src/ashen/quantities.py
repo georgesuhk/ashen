@@ -872,15 +872,16 @@ _register(
         note="smallest traced psi_n with finite connection length at four_deconfinement_step",
     ),
     _wetted("f_tot", r"$f_{\mathrm{tot}}$",
-            "particle wetted fraction of the wall, (l, phi) cells; biased low with few hits",
-            log_scale=True),
+            "particle wetted fraction of the wall, (l, phi) cells; biased low with few hits"),
     _wetted("f_pol", r"$f_{\mathrm{pol}}$",
             "particle wetted fraction, poloidal bins (all phi together)"),
     _wetted("f_tor", r"$f_{\mathrm{tor}}$",
             "particle wetted fraction, toroidal bins (all l together)"),
     _wetted("s", r"$s = f_{\mathrm{tot}} / (f_{\mathrm{pol}} f_{\mathrm{tor}})$",
             "1 for a separable footprint, below 1 for a helical one"),
-    _wetted("area", r"wetted area [m$^2$]", "f_tot times the wall's area", log_scale=True),
+    _wetted("area", r"effective wetted area [m$^2$]",
+            "effective wetted area, (sum n)^2 / sum(n^2 / A) over (l, phi) cells: "
+            "f_tot times the wall's area", log_scale=True),
 )
 
 

@@ -1385,7 +1385,8 @@ alone.
 python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta*0.1' --diag scan_map --x-quantity eta --y-quantity f_tot --si
 ```
 
-**The particle wetted area** (`f_tot`, `f_pol`, `f_tor`, `s`, `area`) is
+**The particle wetted area** (`f_tot`, `f_pol`, `f_tor`, `s`, and `area`,
+the effective wetted area in m², `f_tot` times the wall's area) is
 available as quantities too, computed exactly as the case's own
 `--diag particle_wetted` figure computes it (same wall, trace window,
 `ptrace_initial_psi_n_range` and `ptrace_wetted_bins`). Their bootstrap
