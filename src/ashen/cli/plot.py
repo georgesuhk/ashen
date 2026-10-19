@@ -184,6 +184,16 @@ def _colormap_name(text: str) -> str:
     return text
 
 
+def _color_name(text: str) -> str:
+    """argparse type: a matplotlib colour, as cases.toml's are."""
+    from matplotlib.colors import is_color_like
+
+    if not is_color_like(text):
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not a matplotlib colour (e.g. black, \"#202020\", 0.8)")
+    return text
+
+
 def _dpi_kwargs(dpi: int | None) -> dict:
     """{"dpi": dpi} if the CLI overrode it, else {} so the plotting
     function's own default applies -- reused by every per-diag renderer."""
@@ -350,6 +360,19 @@ def build_parser() -> argparse.ArgumentParser:
         dest="ptrace_wetted_cmap", metavar="CMAP",
         help="particle_wetted: the map's matplotlib colour map (overrides each "
         "case's ptrace_wetted_cmap, default viridis)",
+    )
+    parser.add_argument(
+        "--ptrace-wetted-profiles", "--ptrace_wetted_profiles",
+        action=argparse.BooleanOptionalAction, default=None, dest="ptrace_wetted_profiles",
+        help="particle_wetted: draw the toroidal and poloidal profiles beside the "
+        "map, or with --no-ptrace-wetted-profiles the map alone (overrides each "
+        "case's ptrace_wetted_profiles, default on)",
+    )
+    parser.add_argument(
+        "--ptrace-wetted-empty-color", "--ptrace_wetted_empty_color", type=_color_name,
+        default=None, dest="ptrace_wetted_empty_color", metavar="COLOR",
+        help="particle_wetted: the colour of map cells no particle hit (overrides "
+        "each case's ptrace_wetted_empty_color, default white)",
     )
     parser.add_argument(
         "--ptrace-exit-psi-n", "--ptrace_exit_psi_n", "--exit-psi-n",
@@ -2439,6 +2462,8 @@ def _run_case(
     wetted_counts: bool = False,
     ptrace_exit_bins: int | None = None,
     ptrace_wetted_cmap: str | None = None,
+    ptrace_wetted_profiles: bool | None = None,
+    ptrace_wetted_empty_color: str | None = None,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -2518,7 +2543,11 @@ def _run_case(
     if "particle_wetted" in diags:
         _plot_particle_wetted(case, paths, dpi=dpi, explicit=explicit_diags,
                               counts=wetted_counts or case.ptrace_wetted_counts,
-                              cmap=ptrace_wetted_cmap or case.ptrace_wetted_cmap)
+                              cmap=ptrace_wetted_cmap or case.ptrace_wetted_cmap,
+                              profiles=case.ptrace_wetted_profiles if ptrace_wetted_profiles is None
+                              else ptrace_wetted_profiles,
+                              empty_color=ptrace_wetted_empty_color
+                              or case.ptrace_wetted_empty_color)
     if "particle_loss" in diags:
         _plot_particle_loss(case, paths, dpi=dpi, psi_n=exit_psi_n, explicit=explicit_diags)
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
@@ -3211,7 +3240,7 @@ def _particle_wetted_numbers(
 
 def _plot_particle_wetted(
     case: Case, paths: RunPaths, *, dpi: int | None, explicit: bool, counts: bool = False,
-    cmap: str = "viridis",
+    cmap: str = "viridis", profiles: bool = True, empty_color: str | None = None,
 ) -> None:
     """How widely the traced particles wet the wall -- the plasma boundary
     before extend_bnd -- poloidally, toroidally and in total (see
@@ -3227,7 +3256,8 @@ def _plot_particle_wetted(
         done.folder / f"particle_wetted{'_counts' if counts else ''}{done.suffix}.png",
         density_range=case.ptrace_wetted_count_range if counts
         else case.ptrace_wetted_density_range, duration=done.duration,
-        note=done.notes, counts=counts, cmap=cmap, **_dpi_kwargs(dpi),
+        note=done.notes, counts=counts, cmap=cmap, profiles=profiles,
+        empty_color=empty_color, **_dpi_kwargs(dpi),
     )
     results_file = Path(WETTED_RESULTS_FILE)
     (done.folder / f"{results_file.stem}{done.suffix}{results_file.suffix}").write_text(
@@ -3577,6 +3607,8 @@ def main(argv: list[str] | None = None) -> int:
                 wetted_counts=args.wetted_counts,
                 ptrace_exit_bins=args.ptrace_exit_bins,
                 ptrace_wetted_cmap=args.ptrace_wetted_cmap,
+                ptrace_wetted_profiles=args.ptrace_wetted_profiles,
+                ptrace_wetted_empty_color=args.ptrace_wetted_empty_color,
             )
         except CASE_ERRORS as exc:
             error(f"{name}: {exc}")

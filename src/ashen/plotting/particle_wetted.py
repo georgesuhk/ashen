@@ -62,6 +62,8 @@ def plot_wetted_area(
     note: str | None = None,
     counts: bool = False,
     cmap: str = "viridis",
+    profiles: bool = True,
+    empty_color: str | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save the (phi, l) hit-density map -- the share of all hits
@@ -76,7 +78,10 @@ def plot_wetted_area(
 
     density_range, (min, max) in the map's own units -- 1/m^2, or particles
     with counts -- fixes the colour scale; cells beyond it take the end
-    colours, and the colourbar says so. cmap is the map's matplotlib colour map."""
+    colours, and the colourbar says so. cmap is the map's matplotlib colour map.
+    profiles=False leaves out the toroidal and poloidal profiles: the map
+    alone, with its colourbar beside it. empty_color is the colour of cells
+    no particle hit; None leaves them the background's (white)."""
     import matplotlib.pyplot as plt
 
     out_path = Path(out_path)
@@ -90,21 +95,25 @@ def plot_wetted_area(
 
     with style():
         fig = plt.figure(figsize=figsize, layout="constrained")
-        grid = fig.add_gridspec(2, 2, width_ratios=(4, 1), height_ratios=(1, 4))
-        ax_map = fig.add_subplot(grid[1, 0])
-        ax_tor = fig.add_subplot(grid[0, 0], sharex=ax_map)
-        ax_pol = fig.add_subplot(grid[1, 1], sharey=ax_map)
+        if profiles:
+            grid = fig.add_gridspec(2, 2, width_ratios=(4, 1), height_ratios=(1, 4))
+            ax_map = fig.add_subplot(grid[1, 0])
+            ax_tor = fig.add_subplot(grid[0, 0], sharex=ax_map)
+            ax_pol = fig.add_subplot(grid[1, 1], sharey=ax_map)
+        else:
+            ax_map = fig.add_subplot()
 
         mesh = ax_map.pcolormesh(
             result.phi_edges, result.l_edges, np.ma.masked_equal(density, 0),
-            cmap=cmap, shading="flat",
+            cmap=cmap if empty_color is None
+            else plt.get_cmap(cmap).with_extremes(bad=empty_color), shading="flat",
             vmin=density_range[0] if density_range else None,
             vmax=density_range[1] if density_range else None,
         )
         extend = "neither"
         if density_range is not None and density.max() > density_range[1]:
             extend = "max"
-        fig.colorbar(mesh, ax=ax_pol, extend=extend, label=label)
+        fig.colorbar(mesh, ax=ax_pol if profiles else ax_map, extend=extend, label=label)
         ax_map.set_xlim(0, 2 * np.pi)
         ax_map.set_ylim(result.l_edges[0], result.l_edges[-1])
         ax_map.set_xticks(_PHI_TICKS[0])
@@ -112,14 +121,15 @@ def plot_wetted_area(
         ax_map.set_xlabel(r"toroidal angle $\phi$")
         ax_map.set_ylabel(r"poloidal arc length $l$ [m]")
 
-        ax_tor.stairs(result.counts.sum(axis=0) / scale, result.phi_edges,
-                      fill=True, color="tab:blue", alpha=0.7)
-        ax_tor.set_ylabel(profile_label)
-        ax_tor.tick_params(labelbottom=False)
-        ax_pol.stairs(result.counts.sum(axis=1) / scale, result.l_edges,
-                      fill=True, color="tab:blue", alpha=0.7, orientation="horizontal")
-        ax_pol.set_xlabel(profile_label)
-        ax_pol.tick_params(labelleft=False)
+        if profiles:
+            ax_tor.stairs(result.counts.sum(axis=0) / scale, result.phi_edges,
+                          fill=True, color="tab:blue", alpha=0.7)
+            ax_tor.set_ylabel(profile_label)
+            ax_tor.tick_params(labelbottom=False)
+            ax_pol.stairs(result.counts.sum(axis=1) / scale, result.l_edges,
+                          fill=True, color="tab:blue", alpha=0.7, orientation="horizontal")
+            ax_pol.set_xlabel(profile_label)
+            ax_pol.tick_params(labelleft=False)
 
         fig.suptitle(wetted_caption(result, hits, duration=duration, note=note), fontsize=9)
         fig.savefig(out_path, dpi=dpi)
