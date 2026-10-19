@@ -4,6 +4,16 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-19: part of a colour map for `particle_wetted`
+
+- `ptrace_wetted_cmap_range = [lo, hi]` (case key) and
+  `--ptrace-wetted-cmap-range LO HI` (flag, overrides it) use only that
+  part of `ptrace_wetted_cmap`, fractions 0..1 of it, stretched over the
+  colourbar. `hot` with `[0, 0.9]` ends in light yellow rather than
+  white; matplotlib has no such map of its own. Colours only: the
+  colourbar's values and `ptrace_wetted_density_range` are unchanged.
+  Ranges outside 0 <= lo < hi <= 1 are an error in both places.
+
 ## 2026-10-19: `particle_wetted` without the side profiles; colour of empty cells
 
 - `ptrace_wetted_profiles = false` (case key) draws the `particle_wetted`

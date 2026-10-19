@@ -2483,6 +2483,20 @@ black under `hot` makes the map look like a camera frame, while a colour
 the map doesn't use keeps "no hits" apart from "few hits".
 `--ptrace-wetted-empty-color COLOR` overrides it for one run.
 
+**Part of a colour map.** `ptrace_wetted_cmap_range = [lo, hi]` uses only
+that part of the colour map, fractions 0 to 1 of its length, stretched
+over the whole colourbar. `hot` runs black, red, yellow, white; `[0, 0.9]`
+of it ends in light yellow instead of white (`[0, 0.85]` a stronger
+yellow, `[0, 0.75]` pure yellow). It only changes which colours are used:
+the colourbar's numbers, and `ptrace_wetted_density_range`, are as before.
+`--ptrace-wetted-cmap-range LO HI` overrides it for one run.
+
+```toml
+ptrace_wetted_cmap       = "hot"
+ptrace_wetted_cmap_range = [0, 0.9]
+ptrace_wetted_empty_color = "black"
+```
+
 **Replotting is cached.** Where each particle hit the wall is kept in
 `particle_wetted_cache.npz` in the ptrace folder, so a second run of
 `--diag particle_wetted` neither reads the diagnostics file nor finds the

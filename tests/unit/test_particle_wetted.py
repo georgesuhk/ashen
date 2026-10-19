@@ -756,3 +756,47 @@ def test_empty_cells_take_the_empty_color(tmp_path):
     image = mpimg.imread(out)
     green = (image[..., 0] < 0.1) & (image[..., 1] > 0.9) & (image[..., 2] < 0.1)
     assert green.mean() > 0.3                    # most of the map is empty, and green
+
+
+def test_ptrace_wetted_cmap_range_from_the_case_and_the_flag(campaign, monkeypatch, tmp_path, capsys):
+    np.savetxt(campaign / "run" / "original_bnd.dat", circle(200))
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    angles = np.linspace(0, 2 * np.pi, 20, endpoint=False)
+    write_diag(folder / "ptrace_diag.h5", [R0 + 0.3 * np.cos(angles), R0 + 0.7 * np.cos(angles)],
+               [0.3 * np.sin(angles), 0.7 * np.sin(angles)], [angles, angles + 0.2],
+               np.zeros((2, 20), int))
+    ranges = []
+    original = plot_cli.plot_wetted_area
+    monkeypatch.setattr(plot_cli, "plot_wetted_area",
+                        lambda *a, **k: ranges.append(k["cmap_range"]) or original(*a, **k))
+    argv = ["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]
+    assert plot_cli.main(argv) == 0
+    cases = campaign / "cases.toml"
+    cases.write_text(cases.read_text().replace(
+        "[cases.run]\n", "[cases.run]\nptrace_wetted_cmap_range = [0, 0.9]\n", 1))
+    assert plot_cli.main(argv) == 0
+    assert plot_cli.main(argv + ["--ptrace-wetted-cmap-range", "0.1", "0.8"]) == 0
+    assert ranges == [None, [0.0, 0.9], [0.1, 0.8]]
+
+    assert plot_cli.main(argv + ["--ptrace-wetted-cmap-range", "0.9", "0.1"]) == 1
+    assert "0 <= LO < HI <= 1" in capsys.readouterr().err
+    from ashen.cases import CasesError, load_cases
+    for value in ("[0.5, 0.5]", "[0, 1.2]", "[0.9]", '"hot"'):
+        bad = tmp_path / "bad.toml"
+        bad.write_text('[cases.run]\nsteps = [1]\nptrace_exe = "./exe"\n'
+                       f"ptrace_wetted_cmap_range = {value}\n", encoding="utf-8")
+        with pytest.raises(CasesError, match="ptrace_wetted_cmap_range"):
+            load_cases(bad)
+
+
+def test_a_cut_colour_map_ends_where_it_was_cut():
+    import matplotlib.pyplot as plt
+    from ashen.plotting.particle_wetted import _colormap
+
+    assert _colormap("hot", None, None) == "hot"
+    cut = _colormap("hot", (0.0, 0.9), None)
+    np.testing.assert_allclose(cut(1.0), plt.get_cmap("hot")(0.9), atol=1e-2)
+    np.testing.assert_allclose(cut(0.0), plt.get_cmap("hot")(0.0), atol=1e-2)
+    assert cut(1.0)[2] < 0.7                         # light yellow: blue well below white's 1
+    both = _colormap("hot", (0.0, 0.9), "black")
+    np.testing.assert_allclose(both.get_bad(), (0, 0, 0, 1))

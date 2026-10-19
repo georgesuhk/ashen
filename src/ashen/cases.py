@@ -54,6 +54,7 @@ _CASE_KEYS = (
     "ptrace_wetted_density_range", "ptrace_initial_psi_n_range", "ptrace_loss_bins",
     "ptrace_wetted_counts", "ptrace_wetted_count_range", "ptrace_wetted_cmap",
     "ptrace_wetted_profiles", "ptrace_wetted_empty_color",
+    "ptrace_wetted_cmap_range",
     "re_current_coords",
 )
 
@@ -340,6 +341,11 @@ class Case:
     #: particle hit, any matplotlib colour ("black", "#202020", "0.8").
     #: None = the background (white). `--ptrace-wetted-empty-color` overrides it.
     ptrace_wetted_empty_color: str | None = None
+    #: `plot --diag particle_wetted`: [lo, hi], fractions 0..1 of
+    #: ptrace_wetted_cmap to use, stretched over the whole colourbar --
+    #: [0, 0.9] of "hot" ends in light yellow, not white. None = all of it.
+    #: `--ptrace-wetted-cmap-range LO HI` overrides it.
+    ptrace_wetted_cmap_range: list[float] | None = None
     #: `plot --diag particles`: the colour of the particles, any matplotlib
     #: colour ("red", "#ff8800", "tab:orange"). Red stands out against the
     #: Poincare plot's viridis.
@@ -712,6 +718,19 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
                 f"{where}: ptrace_wetted_cmap must be a matplotlib colour map name "
                 f'("viridis", "inferno", "turbo", ...), got {value!r}'
             )
+
+    if merged.get("ptrace_wetted_cmap_range") is not None:
+        value = merged["ptrace_wetted_cmap_range"]
+        if not (
+            isinstance(value, list) and len(value) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value)
+            and 0 <= value[0] < value[1] <= 1
+        ):
+            raise CasesError(
+                f"{where}: ptrace_wetted_cmap_range must be [lo, hi], fractions of the "
+                f"colour map with 0 <= lo < hi <= 1, got {value!r}"
+            )
+        merged["ptrace_wetted_cmap_range"] = [float(v) for v in value]
 
     for key in ("ptrace_particle_color", "ptrace_wetted_empty_color"):
         if merged.get(key) is None:

@@ -51,6 +51,24 @@ DENSITY_LABEL = r"(fraction of total hits) / m$^2$"
 COUNT_LABEL = "particles hitting each cell"
 
 
+def _colormap(name: str, cmap_range: tuple[float, float] | None, empty_color: str | None):
+    """The named matplotlib colour map, cut to cmap_range (fractions of its
+    length) and stretched back over [0, 1], with empty_color for masked
+    (no-hit) cells. The name itself when there is nothing to change."""
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
+
+    if cmap_range is None and empty_color is None:
+        return name
+    cmap = plt.get_cmap(name)
+    if cmap_range is not None and tuple(cmap_range) != (0.0, 1.0):
+        cmap = ListedColormap(cmap(np.linspace(*cmap_range, 256)),
+                              name=f"{name}[{cmap_range[0]:g}:{cmap_range[1]:g}]")
+    if empty_color is not None:
+        cmap = cmap.with_extremes(bad=empty_color)
+    return cmap
+
+
 def plot_wetted_area(
     result: WettedResult,
     hits: WallHits,
@@ -64,6 +82,7 @@ def plot_wetted_area(
     cmap: str = "viridis",
     profiles: bool = True,
     empty_color: str | None = None,
+    cmap_range: tuple[float, float] | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """Draw and save the (phi, l) hit-density map -- the share of all hits
@@ -81,7 +100,10 @@ def plot_wetted_area(
     colours, and the colourbar says so. cmap is the map's matplotlib colour map.
     profiles=False leaves out the toroidal and poloidal profiles: the map
     alone, with its colourbar beside it. empty_color is the colour of cells
-    no particle hit; None leaves them the background's (white)."""
+    no particle hit; None leaves them the background's (white).
+    cmap_range, (lo, hi) in [0, 1], uses only that part of cmap, stretched
+    over the whole colourbar: (0, 0.9) of "hot" ends in light yellow
+    rather than white. None = all of it."""
     import matplotlib.pyplot as plt
 
     out_path = Path(out_path)
@@ -105,8 +127,7 @@ def plot_wetted_area(
 
         mesh = ax_map.pcolormesh(
             result.phi_edges, result.l_edges, np.ma.masked_equal(density, 0),
-            cmap=cmap if empty_color is None
-            else plt.get_cmap(cmap).with_extremes(bad=empty_color), shading="flat",
+            cmap=_colormap(cmap, cmap_range, empty_color), shading="flat",
             vmin=density_range[0] if density_range else None,
             vmax=density_range[1] if density_range else None,
         )
