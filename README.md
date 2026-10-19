@@ -2459,6 +2459,17 @@ Its colour scale is set apart from the density map's, by
 `ptrace_wetted_count_range = [min, max]` in particles per cell (default:
 the data's own range); `ptrace_wetted_density_range` doesn't touch it.
 
+**Colour map.** `ptrace_wetted_cmap` sets the map's colour map, for the
+density and the counts version alike: any matplotlib name (default
+`"viridis"`; `"hot"` for the look of an IR camera image; `"_r"` reverses
+one, `"inferno_r"`). `--ptrace-wetted-cmap NAME` overrides it for one run.
+A name matplotlib doesn't know is an error, in cases.toml and on the
+command line.
+
+```bash
+python ~/ashen/bin/plot --case "qa2.1_g2.3/eta1e-3_RE" --diag particle_wetted --ptrace-wetted-cmap hot
+```
+
 **Replotting is cached.** Where each particle hit the wall is kept in
 `particle_wetted_cache.npz` in the ptrace folder, so a second run of
 `--diag particle_wetted` neither reads the diagnostics file nor finds the
