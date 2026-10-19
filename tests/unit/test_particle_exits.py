@@ -565,3 +565,93 @@ def test_a_trace_the_tracer_ended_itself_is_called_that(campaign, capsys, line, 
     assert f"stopped early, {why}: 20 % of the way to the last restart, step 3200" in out
     assert f"the tracer stopped itself at t = 0.002 ms" in out
     assert "trace unfinished" not in out
+
+
+# --- --ptrace-exit-bins and --compare ----------------------------------------------
+
+def _trace_both(campaign):
+    for folder in (campaign / "run" / "ptrace" / "ptrace_gc",
+                   campaign / "other" / "ptrace" / "my_tracer"):
+        write_diag(folder / "ptrace_diag.h5", t=T, psi_n=PSI, R=R, Z=Z, phi=PHI,
+                   lost=LOST, theta=THETA)
+
+
+def _spy(monkeypatch, name):
+    calls = []
+    original = getattr(plot_cli, name)
+
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(plot_cli, name, spy)
+    return calls
+
+
+def test_ptrace_exit_bins_overrides_the_case_setting(campaign, monkeypatch):
+    _trace_both(campaign)
+    calls = _spy(monkeypatch, "plot_exit_histograms")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40",
+                          "--ptrace-exit-bins", "12"]) == 0
+    assert plot_cli.main(["--case", "run", "--diag", "particle_exits", "--dpi", "40",
+                          "--ptrace_exit_bins", "9"]) == 0
+    assert [kwargs["bins"] for _, kwargs in calls] == [72, 12, 9]
+
+
+@pytest.mark.parametrize("value", ["0", "-3", "2.5"])
+def test_ptrace_exit_bins_must_be_a_whole_number_of_at_least_one(campaign, value):
+    with pytest.raises(SystemExit):
+        plot_cli.main(["--case", "run", "--diag", "particle_exits", "--ptrace-exit-bins", value])
+
+
+def test_compare_draws_every_case_s_exits_on_one_figure(campaign, monkeypatch, capsys):
+    _trace_both(campaign)
+    calls = _spy(monkeypatch, "plot_exit_histograms_compare")
+    assert plot_cli.main(["--compare", "run, other", "--diag", "particle_exits", "--dpi", "40",
+                          "--ptrace-exit-bins", "18"]) == 0
+    out = capsys.readouterr().out
+    assert "the 2 case(s) it selects: run, other" in out
+    assert "2 of 3 particles exit past psi_n = 1.3" in out      # run's own threshold
+    assert out.count("2 of 3 particles exit past psi_n = ") == 2
+    assert (campaign / "figures" / "run_other_particle_exits.png").is_file()
+    (series, _), kwargs = calls[0]
+    assert [label for label, _ in series] == ["run", "other"]
+    assert kwargs["bins"] == 18
+    # the numbers are the per-case figure's own
+    result = exit_angles(read_particle_diag(campaign / "other" / "ptrace" / "my_tracer"
+                                            / "ptrace_diag.h5"), psi_n=1.0)
+    np.testing.assert_array_equal(series[1][1].theta, result.theta)
+    assert "different ptrace_exit_psi_n" in out
+
+
+def test_compare_without_the_flag_uses_the_cases_bins(campaign, monkeypatch):
+    _trace_both(campaign)
+    calls = _spy(monkeypatch, "plot_exit_histograms_compare")
+    assert plot_cli.main(["--compare", "run,other", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    assert calls[0][1]["bins"] == 72
+
+
+def test_compare_skips_a_case_that_has_not_been_traced(campaign, monkeypatch, capsys):
+    write_diag(campaign / "run" / "ptrace" / "ptrace_gc" / "ptrace_diag.h5",
+               t=T, psi_n=PSI, R=R, Z=Z, phi=PHI, lost=LOST, theta=THETA)
+    calls = _spy(monkeypatch, "plot_exit_histograms_compare")
+    assert plot_cli.main(["--compare", "run, other", "--diag", "particle_exits", "--dpi", "40"]) == 0
+    assert "no particle diagnostics file" in capsys.readouterr().out
+    assert [label for label, _ in calls[0][0][0]] == ["run"]
+
+
+def test_a_comma_separated_compare_takes_every_selector_in_order():
+    cases = {name: None for name in (
+        "qa2.1_g2.8/eta1e-3", "qa2.1_g2.8/eta1e-4", "qa2.1_g2.8/eta1e-5", "qa3.3_g3.2/eta1e-3",
+    )}
+    made = plot_cli._comparison_from_cases("qa2.1_g2.8/eta1e-4, qa2.1_g2.8/eta1e-3", cases)
+    assert made.cases == ["qa2.1_g2.8/eta1e-4", "qa2.1_g2.8/eta1e-3"]
+    assert made.x_tick_labels == ["eta1e-4", "eta1e-3"]
+    assert made.name == "qa2.1_g2.8_eta1e-4_qa2.1_g2.8_eta1e-3"
+    # patterns mix in; a case selected twice appears once, at its first place
+    mixed = plot_cli._comparison_from_cases("qa3.3_g3.2/eta1e-3,qa2.1_g2.8/*,qa2.1_g2.8/eta1e-4", cases)
+    assert mixed.cases == ["qa3.3_g3.2/eta1e-3", "qa2.1_g2.8/eta1e-3",
+                           "qa2.1_g2.8/eta1e-4", "qa2.1_g2.8/eta1e-5"]
+    # any one selecting nothing is the whole selecting nothing, as a typo should be
+    assert plot_cli._comparison_from_cases("qa2.1_g2.8/eta1e-3, qa2.1_g2.8/eta1e-9", cases) is None

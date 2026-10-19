@@ -107,6 +107,7 @@ from ashen.plotting.particle_exits import (
     animate_exit_histograms,
     exit_caption,
     plot_exit_histograms,
+    plot_exit_histograms_compare,
 )
 from ashen.plotting.particle_loss import plot_loss_map
 from ashen.plotting.particle_wetted import plot_wetted_area, wetted_caption
@@ -150,7 +151,7 @@ DIAG_CHOICES = (
 
 #: Diags with a registered --compare renderer -- asking for one without (e.g.
 #: --compare X --diag profiles) is reported, not silently a no-op.
-COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction", "four", "scan_map")
+COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction", "four", "scan_map", "particle_exits")
 
 #: Diags that only make sense across several cases (there is no single-case
 #: "vs. scan parameter" plot) -- valid under --compare, reported and skipped
@@ -160,6 +161,17 @@ COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction", "four", "scan_map")
 #: real entry: its x, y and colour/size are each one number per RUN, so a
 #: single case is a single point and there is no figure to draw.
 COMPARISON_ONLY_DIAGS = ("scan_map",)
+
+
+def _positive_int(text: str) -> int:
+    """argparse type: a whole number >= 1, as cases.toml's bin counts are."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be a whole number >= 1, got {text!r}") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be a whole number >= 1, got {text!r}")
+    return value
 
 
 def _dpi_kwargs(dpi: int | None) -> dict:
@@ -318,14 +330,22 @@ def build_parser() -> argparse.ArgumentParser:
         "four_radial_quantity (default abs). real and phase are always linear",
     )
     parser.add_argument(
-        "--wetted-counts", action="store_true",
+        "--ptrace-wetted-counts", "--ptrace_wetted_counts", "--wetted-counts",
+        action="store_true", dest="wetted_counts",
         help="particle_wetted: draw how many particles hit each cell and bin, not "
         "fractions, as particle_wetted_counts.png (as each case's ptrace_wetted_counts)",
     )
     parser.add_argument(
-        "--exit-psi-n", type=float, default=None,
+        "--ptrace-exit-psi-n", "--ptrace_exit_psi_n", "--exit-psi-n",
+        type=float, default=None, dest="exit_psi_n",
         help="particle_exits: the psi_n past which a particle has left the "
         "plasma (overrides each case's ptrace_exit_psi_n, default 1)",
+    )
+    parser.add_argument(
+        "--ptrace-exit-bins", "--ptrace_exit_bins", type=_positive_int, default=None,
+        dest="ptrace_exit_bins", metavar="N",
+        help="particle_exits: bins over each of theta and phi (overrides each "
+        "case's ptrace_exit_bins, default 72); also for --compare",
     )
     parser.add_argument(
         "--theta_target_psi", type=float, default=None,
@@ -398,7 +418,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="draw a [comparisons.NAME] figure instead of per-case figures "
         "(repeatable; only diags with a comparison renderer are valid here). "
         "Not the name of a comparison: the cases it selects, as --case would "
-        "('qa2.1_g2.8/eta*0.1', quoted), compared as one",
+        "('qa2.1_g2.8/eta*0.1', quoted), compared as one; several, comma-separated "
+        "('qa2.1_g2.8/eta1e-3, qa2.1_g2.8/eta1e-4'), are one comparison of them all",
     )
     parser.add_argument(
         "--list-comparisons", action="store_true",
@@ -2400,6 +2421,7 @@ def _run_case(
     explicit_diags: bool = False,
     exit_psi_n: float | None = None,
     wetted_counts: bool = False,
+    ptrace_exit_bins: int | None = None,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -2473,6 +2495,7 @@ def _run_case(
     if "particle_exits" in diags:
         _plot_particle_exits(
             case, paths, dpi=dpi, psi_n=exit_psi_n, explicit=explicit_diags,
+            bins=ptrace_exit_bins,
             animate=animate or case.animate,
         )
     if "particle_wetted" in diags:
@@ -2910,14 +2933,24 @@ def _initial_psi_mask(case: Case, start: np.ndarray, n: int, *, diag: str):
     return mask, note, f"_psi{low:g}-{high:g}"
 
 
-def _plot_particle_exits(
-    case: Case, paths: RunPaths, *, dpi: int | None, psi_n: float | None, explicit: bool,
-    animate: bool = False,
-) -> None:
-    """Histograms of the poloidal and toroidal angle where each traced
-    particle first goes past psi_n (or leaves the grid), from the program's
-    diagnostics file. Written into the ptrace folder as particle_exits.png,
-    and under --animate as particle_exits.gif, filling in over the trace."""
+@dataclasses.dataclass(frozen=True)
+class _ExitsDone:
+    """A case's particle_exits angles and what the figures say about them."""
+
+    result: object        # ashen.diagnostics.particle_exits.ExitResult
+    caption: str
+    folder: Path
+    suffix: str
+    history: object       # the windowed, selected ParticleHistory
+    psi_n: float
+
+
+def _particle_exits_result(
+    case: Case, paths: RunPaths, *, psi_n: float | None, explicit: bool,
+) -> _ExitsDone | None:
+    """Where each traced particle of the case first goes past psi_n (or the
+    case's ptrace_exit_psi_n), as the per-case figure and --compare both draw
+    it. None, with the reason printed, when there is nothing to draw."""
     if case.ptrace_exe is None:
         if explicit:
             print("  particle_exits: case sets no ptrace_exe, skipped")
@@ -2962,14 +2995,33 @@ def _plot_particle_exits(
     for note in (selected, unfinished):
         if note:
             caption += f"\n{note}"
+    return _ExitsDone(result=result, caption=caption, folder=folder, suffix=suffix,
+                      history=history, psi_n=threshold)
+
+
+def _plot_particle_exits(
+    case: Case, paths: RunPaths, *, dpi: int | None, psi_n: float | None, explicit: bool,
+    animate: bool = False, bins: int | None = None,
+) -> None:
+    """Histograms of the poloidal and toroidal angle where each traced
+    particle first goes past psi_n (or leaves the grid), from the program's
+    diagnostics file. Written into the ptrace folder as particle_exits.png,
+    and under --animate as particle_exits.gif, filling in over the trace.
+    bins (--ptrace-exit-bins) overrides the case's ptrace_exit_bins."""
+    done = _particle_exits_result(case, paths, psi_n=psi_n, explicit=explicit)
+    if done is None:
+        return
+    result, caption, folder, suffix, history = (
+        done.result, done.caption, done.folder, done.suffix, done.history)
+    n_bins = case.ptrace_exit_bins if bins is None else bins
     out = plot_exit_histograms(
-        result, folder / f"particle_exits{suffix}.png", bins=case.ptrace_exit_bins,
+        result, folder / f"particle_exits{suffix}.png", bins=n_bins,
         caption=caption, **_dpi_kwargs(dpi),
     )
     print(f"  particle_exits: {caption.replace(chr(10), '; ')} -> {out}")
     if animate:
         gif = animate_exit_histograms(
-            result, folder / f"particle_exits{suffix}.gif", bins=case.ptrace_exit_bins,
+            result, folder / f"particle_exits{suffix}.gif", bins=n_bins,
             t_range=(float(history.time[0]), float(history.time[-1])) if history.time.size
             else (0.0, 0.0),
             caption=caption, **_dpi_kwargs(dpi),
@@ -3166,13 +3218,79 @@ def _plot_particle_wetted(
     print(f"  particle_wetted: {caption.replace(chr(10), '; ')} -> {out}")
 
 
+def _compare_particle_exits(
+    comparison: Comparison,
+    cases: dict[str, Case],
+    *,
+    psi_n: float | None,
+    bins: int | None,
+    dpi: int | None,
+) -> None:
+    """Every member case's theta and phi exit histograms on one pair of axes,
+    a colour each, as figures/<name>_particle_exits.png. Each case's angles
+    are computed exactly as its own particle_exits figure computes them;
+    the bins are --ptrace-exit-bins, else the members' ptrace_exit_bins
+    (the first member's, with a note, when they differ)."""
+    if comparison.datasets:
+        print(f"  comparison {comparison.name!r} uses 'datasets'; particle_exits "
+              "doesn't support grouped datasets, use a flat 'cases' comparison instead, skipped")
+        return
+
+    series = []
+    thresholds = set()
+    case_bins = []
+    for label, case_name in comparison.labelled_cases():
+        case = cases[case_name]
+        run_dir = Path.cwd() / case.name
+        if not run_dir.is_dir():
+            print(f"  {case_name}: no such folder {run_dir}, skipped")
+            continue
+        print(f"  {case_name}:")
+        done = _particle_exits_result(case, RunPaths.detect(run_dir), psi_n=psi_n, explicit=True)
+        if done is None:
+            continue
+        print(f"    {done.caption.replace(chr(10), '; ')}")
+        series.append((label, done.result))
+        thresholds.add(done.psi_n)
+        case_bins.append(case.ptrace_exit_bins)
+
+    if not series:
+        print("  particle_exits: no member case has exits to draw, nothing written")
+        return
+
+    n_bins = bins
+    if n_bins is None:
+        n_bins = case_bins[0]
+        if len(set(case_bins)) > 1:
+            print(f"  particle_exits: the cases set different ptrace_exit_bins "
+                  f"({sorted(set(case_bins))}); drawing all at {n_bins} (--ptrace-exit-bins sets it)")
+    caption = f"exits past psi_n = {', '.join(f'{t:g}' for t in sorted(thresholds))}"
+    if len(thresholds) > 1:
+        print(f"  particle_exits: the cases set different ptrace_exit_psi_n; "
+              "--exit-psi-n draws them all at one")
+    out = plot_exit_histograms_compare(
+        series, Path.cwd() / "figures" / f"{comparison.name}_particle_exits.png",
+        bins=n_bins, caption=caption, **_dpi_kwargs(dpi),
+    )
+    print(f"  {out}")
+
+
 def _comparison_from_cases(selector: str, cases: dict[str, Case]) -> Comparison | None:
     """A one-off flat comparison of the cases ``selector`` selects, as a
     --case value would (cli._common.matching_cases); None if it selects
-    none. Each case is labelled by its path below the folder all of them
+    none. A selector with commas is a list of them, each selecting cases as
+    above, taken together in the order given (a case once, at its first
+    place); None if any one of them selects none. Each case is labelled by its path below the folder all of them
     share, and the figures are named after the selector with every
     character a file name can't hold made "_" (runs of them one)."""
-    matched = matching_cases(selector, cases)
+    parts = [part.strip() for part in selector.split(",")]
+    parts = [part for part in parts if part]
+    matched = []
+    for part in parts:
+        found = matching_cases(part, cases)
+        if not found:
+            return None
+        matched += [name for name in found if name not in matched]
     if not matched:
         return None
     shared = posixpath.commonpath(matched) if len(matched) > 1 else posixpath.dirname(matched[0])
@@ -3214,6 +3332,8 @@ def _run_comparisons(
     annotate_points: bool = False,
     explicit_diags: bool = False,
     si: bool = False,
+    exit_psi_n: float | None = None,
+    ptrace_exit_bins: int | None = None,
 ) -> int:
     # A defined [comparisons.NAME] wins; any other value is a case selector.
     chosen: list[Comparison] = []
@@ -3261,6 +3381,10 @@ def _run_comparisons(
                 comparison, cases,
                 variable=delta_b_variable, quantity=delta_b_quantity, mode=delta_b_mode,
                 dpi=dpi, steps=steps, dataset_names=dataset_names,
+            )
+        if "particle_exits" in comparable:
+            _compare_particle_exits(
+                comparison, cases, psi_n=exit_psi_n, bins=ptrace_exit_bins, dpi=dpi,
             )
         if "scan_map" in comparable:
             _compare_scan_map(
@@ -3391,6 +3515,8 @@ def main(argv: list[str] | None = None) -> int:
             annotate_points=args.annotate_points,
             explicit_diags=explicit_diags,
             si=args.si,
+            exit_psi_n=args.exit_psi_n,
+            ptrace_exit_bins=args.ptrace_exit_bins,
         )
 
     selected = resolve_selection(args.selected, cases)
@@ -3430,6 +3556,7 @@ def main(argv: list[str] | None = None) -> int:
                 explicit_diags=explicit_diags,
                 exit_psi_n=args.exit_psi_n,
                 wetted_counts=args.wetted_counts,
+                ptrace_exit_bins=args.ptrace_exit_bins,
             )
         except CASE_ERRORS as exc:
             error(f"{name}: {exc}")
