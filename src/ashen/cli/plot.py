@@ -375,6 +375,13 @@ def build_parser() -> argparse.ArgumentParser:
         "each case's ptrace_wetted_empty_color, default white)",
     )
     parser.add_argument(
+        "--ptrace-wetted-cmap-range", "--ptrace_wetted_cmap_range", type=float, nargs=2,
+        default=None, dest="ptrace_wetted_cmap_range", metavar=("LO", "HI"),
+        help="particle_wetted: use only this part of the colour map, fractions "
+        "0 <= LO < HI <= 1, stretched over the colourbar (0 0.9 of hot ends in "
+        "light yellow); overrides each case's ptrace_wetted_cmap_range",
+    )
+    parser.add_argument(
         "--ptrace-exit-psi-n", "--ptrace_exit_psi_n", "--exit-psi-n",
         type=float, default=None, dest="exit_psi_n",
         help="particle_exits: the psi_n past which a particle has left the "
@@ -2464,6 +2471,7 @@ def _run_case(
     ptrace_wetted_cmap: str | None = None,
     ptrace_wetted_profiles: bool | None = None,
     ptrace_wetted_empty_color: str | None = None,
+    ptrace_wetted_cmap_range: list[float] | None = None,
 ) -> None:
     run_dir = Path.cwd() / case.name
     if not run_dir.is_dir():
@@ -2547,7 +2555,9 @@ def _run_case(
                               profiles=case.ptrace_wetted_profiles if ptrace_wetted_profiles is None
                               else ptrace_wetted_profiles,
                               empty_color=ptrace_wetted_empty_color
-                              or case.ptrace_wetted_empty_color)
+                              or case.ptrace_wetted_empty_color,
+                              cmap_range=ptrace_wetted_cmap_range
+                              or case.ptrace_wetted_cmap_range)
     if "particle_loss" in diags:
         _plot_particle_loss(case, paths, dpi=dpi, psi_n=exit_psi_n, explicit=explicit_diags)
     comparison_only = [d for d in diags if d in COMPARISON_ONLY_DIAGS]
@@ -3241,6 +3251,7 @@ def _particle_wetted_numbers(
 def _plot_particle_wetted(
     case: Case, paths: RunPaths, *, dpi: int | None, explicit: bool, counts: bool = False,
     cmap: str = "viridis", profiles: bool = True, empty_color: str | None = None,
+    cmap_range: list[float] | None = None,
 ) -> None:
     """How widely the traced particles wet the wall -- the plasma boundary
     before extend_bnd -- poloidally, toroidally and in total (see
@@ -3257,7 +3268,7 @@ def _plot_particle_wetted(
         density_range=case.ptrace_wetted_count_range if counts
         else case.ptrace_wetted_density_range, duration=done.duration,
         note=done.notes, counts=counts, cmap=cmap, profiles=profiles,
-        empty_color=empty_color, **_dpi_kwargs(dpi),
+        empty_color=empty_color, cmap_range=cmap_range, **_dpi_kwargs(dpi),
     )
     results_file = Path(WETTED_RESULTS_FILE)
     (done.folder / f"{results_file.stem}{done.suffix}{results_file.suffix}").write_text(
@@ -3463,6 +3474,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.show_config:
         return show_config(args.site)
 
+    if args.ptrace_wetted_cmap_range is not None:
+        lo, hi = args.ptrace_wetted_cmap_range
+        if not 0 <= lo < hi <= 1:
+            error(f"--ptrace-wetted-cmap-range takes fractions of the colour map with "
+                  f"0 <= LO < HI <= 1, got {lo:g} {hi:g}")
+            return 1
+
     # Unlike --list and --list-comparisons below, this needs no cases.toml
     # at all -- deliberately ordered here, ahead of load_cases_or_exit, so
     # it works from anywhere, which is the point of an introspection flag
@@ -3609,6 +3627,7 @@ def main(argv: list[str] | None = None) -> int:
                 ptrace_wetted_cmap=args.ptrace_wetted_cmap,
                 ptrace_wetted_profiles=args.ptrace_wetted_profiles,
                 ptrace_wetted_empty_color=args.ptrace_wetted_empty_color,
+                ptrace_wetted_cmap_range=args.ptrace_wetted_cmap_range,
             )
         except CASE_ERRORS as exc:
             error(f"{name}: {exc}")
