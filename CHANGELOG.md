@@ -4,6 +4,16 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-20: the wetted peak averaged over the densest part of the wall
+
+- `ptrace_wetted_peak_fraction = x` (case key) and
+  `--ptrace-wetted-peak-fraction X` (flag, overrides it, also on scan
+  maps) make `peak_density` and `peaking` the mean hit density over the
+  densest `x` of the wall's area -- densest cells first, the last in part
+  -- instead of the single densest cell. Much less noisy and less
+  bin-dependent. Default 0: the densest cell, as before, so existing
+  numbers are unchanged. The JSON records it as `peak_fraction`.
+
 ## 2026-10-20: the peak of the particle wetted map
 
 - New `particle_wetted` measures, in `particle_wetted.json` and as
