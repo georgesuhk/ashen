@@ -850,3 +850,126 @@ def test_peak_quantities_are_on_the_scan_map_list():
 
     assert quantity("peak_density").log_scale and not quantity("peaking").log_scale
     assert quantity("peaking").error is not None
+
+
+# --- peak over the densest fraction of the wall -------------------------------------
+
+def test_peak_fraction_zero_is_the_densest_cell(wall):
+    rng = np.random.default_rng(5)
+    hits = hits_at(rng.uniform(0, wall.length, 400), rng.uniform(0, 1.0, 400))
+    one = wetted_area(hits, wall, n_l=9, n_phi=7, n_boot=0)
+    zero = wetted_area(hits, wall, n_l=9, n_phi=7, n_boot=0, peak_fraction=0.0)
+    assert one.peak_density == zero.peak_density
+    assert zero.as_dict()["peak_fraction"] == 0.0
+
+
+def test_peak_fraction_averages_the_densest_area_with_the_last_cell_in_part(wall):
+    rng = np.random.default_rng(6)
+    hits = hits_at(rng.uniform(0, wall.length, 500), rng.uniform(0, 2.0, 500))
+    r = wetted_area(hits, wall, n_l=9, n_phi=7, n_boot=0, peak_fraction=0.1)
+    # by hand: cells densest first, filling 10 % of the wall's area
+    density = (r.counts / r.cell_area).ravel() / r.counts.sum()
+    area = r.cell_area.ravel()
+    order = np.argsort(density)[::-1]
+    left, hits_in = 0.1 * wall.area, 0.0
+    for k in order:
+        take = min(area[k], left)
+        hits_in += density[k] * take
+        left -= take
+        if left <= 0:
+            break
+    assert r.peak_density == pytest.approx(hits_in / (0.1 * wall.area), rel=1e-12)
+    assert r.peaking == pytest.approx(r.peak_density * r.area)
+    # in between the densest cell and the wall's mean
+    top = wetted_area(hits, wall, n_l=9, n_phi=7, n_boot=0).peak_density
+    assert 1 / wall.area < r.peak_density < top
+
+
+def test_peak_fraction_one_is_the_wall_mean_and_peaking_f_tot(wall):
+    rng = np.random.default_rng(7)
+    hits = hits_at(rng.uniform(0, wall.length, 300), rng.uniform(0, 3.0, 300))
+    r = wetted_area(hits, wall, n_l=9, n_phi=7, n_boot=0, peak_fraction=1.0)
+    assert r.peak_density == pytest.approx(1 / wall.area)
+    assert r.peaking == pytest.approx(r.f_tot)
+
+
+def test_peak_fraction_steadies_even_wetting(wall):
+    """Over the densest 10 % rather than one cell, the high bias of the
+    peak under even wetting is far smaller."""
+    rng = np.random.default_rng(8)
+    n = 20_000
+    l = rng.uniform(0, wall.length, 4 * n)
+    keep = rng.uniform(0, R0 + A, l.size) < np.interp(l, wall.cum_l[:-1], wall.R)
+    hits = hits_at(l[keep][:n], rng.uniform(0, 2 * np.pi, n))
+    one = wetted_area(hits, wall, n_l=36, n_phi=36, n_boot=0)
+    ten = wetted_area(hits, wall, n_l=36, n_phi=36, n_boot=0, peak_fraction=0.1)
+    assert ten.peaking - 1 < 0.5 * (one.peaking - 1)
+
+
+def test_peak_fraction_key_and_flag(campaign, monkeypatch, tmp_path, capsys):
+    np.savetxt(campaign / "run" / "original_bnd.dat", circle(200))
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    angles = np.linspace(0, 2 * np.pi, 20, endpoint=False)
+    write_diag(folder / "ptrace_diag.h5", [R0 + 0.3 * np.cos(angles), R0 + 0.7 * np.cos(angles)],
+               [0.3 * np.sin(angles), 0.7 * np.sin(angles)], [angles, angles + 0.2],
+               np.zeros((2, 20), int))
+    argv = ["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]
+
+    def written():
+        return json.loads((folder / "particle_wetted.json").read_text())["peak_fraction"]
+
+    assert plot_cli.main(argv) == 0 and written() == 0.0
+    cases = campaign / "cases.toml"
+    cases.write_text(cases.read_text().replace(
+        "[cases.run]\n", "[cases.run]\nptrace_wetted_peak_fraction = 0.05\n", 1))
+    assert plot_cli.main(argv) == 0 and written() == 0.05
+    assert plot_cli.main(argv + ["--ptrace-wetted-peak-fraction", "0.2"]) == 0 and written() == 0.2
+    assert plot_cli.main(argv + ["--ptrace-wetted-peak-fraction", "5"]) == 1
+    assert "0 <= X <= 1" in capsys.readouterr().err
+
+    from ashen.cases import CasesError, load_cases
+    for value in ("-0.1", "1.5", '"5%"', "true"):
+        bad = tmp_path / "bad.toml"
+        bad.write_text('[cases.run]\nsteps = [1]\nptrace_exe = "./exe"\n'
+                       f"ptrace_wetted_peak_fraction = {value}\n", encoding="utf-8")
+        with pytest.raises(CasesError, match="ptrace_wetted_peak_fraction"):
+            load_cases(bad)
+
+
+def test_peak_fraction_flag_reaches_the_scan_map(tmp_path, monkeypatch):
+    from ashen.plotting import scan_map
+
+    cases = ""
+    for name, span in (("scan/wide", 2 * np.pi), ("scan/half", np.pi)):
+        run = tmp_path / name
+        run.mkdir(parents=True)
+        (run / "jorek03000.h5").write_bytes(b"")
+        np.savetxt(run / "original_bnd.dat", circle(200))
+        rng = np.random.default_rng(1)
+        angles = rng.uniform(0, span, 300)
+        phi = rng.uniform(0, 2 * np.pi, 300)
+        write_diag(run / "ptrace" / "ptrace_gc" / "ptrace_diag.h5",
+                   [R0 + 0.3 * np.cos(angles), R0 + 0.7 * np.cos(angles)],
+                   [0.3 * np.sin(angles), 0.7 * np.sin(angles)], [phi, phi],
+                   np.zeros((2, 300), int))
+        cases += CASES.replace("[cases.run]", f'[cases."{name}"]')
+    (tmp_path / "cases.toml").write_text(cases, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ASHEN_SITE", raising=False)
+
+    drawn = {}
+    original = scan_map.draw_scan_map
+    monkeypatch.setattr(scan_map, "draw_scan_map",
+                        lambda ax, points, **k: drawn.update(points=list(points))
+                        or original(ax, points, **k))
+    plot_cli._WETTED_NUMBERS.clear()
+    assert plot_cli.main(["--compare", "scan/*", "--diag", "scan_map", "--x-quantity", "f_pol",
+                          "--y-quantity", "peak_density", "--dpi", "40",
+                          "--ptrace-wetted-peak-fraction", "0.1"]) == 0
+    plot_cli._WETTED_NUMBERS.clear()
+    assert plot_cli.main(["--case", "scan/half", "--diag", "particle_wetted", "--dpi", "40",
+                          "--ptrace-wetted-peak-fraction", "0.1"]) == 0
+    numbers = json.loads((tmp_path / "scan" / "half" / "ptrace" / "ptrace_gc" /
+                          "particle_wetted.json").read_text(encoding="utf-8"))
+    point = {p.label: p for p in drawn["points"]}["half"]
+    assert numbers["peak_fraction"] == 0.1 and point.y == numbers["peak_density"]

@@ -388,6 +388,13 @@ def build_parser() -> argparse.ArgumentParser:
         "each case's ptrace_wetted_empty_color, default white)",
     )
     parser.add_argument(
+        "--ptrace-wetted-peak-fraction", "--ptrace_wetted_peak_fraction", type=float,
+        default=None, dest="ptrace_wetted_peak_fraction", metavar="X",
+        help="particle_wetted: peak_density and peaking as the mean hit density over the "
+        "densest X of the wall's area (0.05: the densest 5 %%; 0: the densest cell); "
+        "overrides each case's ptrace_wetted_peak_fraction, also on scan maps",
+    )
+    parser.add_argument(
         "--ptrace-wetted-cmap-range", "--ptrace_wetted_cmap_range", type=float, nargs=2,
         default=None, dest="ptrace_wetted_cmap_range", metavar=("LO", "HI"),
         help="particle_wetted: use only this part of the colour map, fractions "
@@ -3243,7 +3250,8 @@ def _particle_wetted_numbers(
               + (f" ({selected})" if selected else "") + ", skipped")
         return None
     n_l, n_phi = case.ptrace_wetted_bins
-    result = wetted_area(hits, wall, n_l=n_l, n_phi=n_phi)
+    result = wetted_area(hits, wall, n_l=n_l, n_phi=n_phi,
+                         peak_fraction=case.ptrace_wetted_peak_fraction)
     # How much of the trace the hits were collected over: the diagnostics
     # times used, i.e. within ptrace_start_step..ptrace_end_step. The
     # fractions grow with it, so numbers from different spans don't compare.
@@ -3510,6 +3518,12 @@ def main(argv: list[str] | None = None) -> int:
         error("--color colours the cases of a --compare particle_exits figure; add --compare")
         return 1
 
+    if args.ptrace_wetted_peak_fraction is not None \
+            and not 0 <= args.ptrace_wetted_peak_fraction <= 1:
+        error("--ptrace-wetted-peak-fraction is a fraction of the wall's area, 0 <= X <= 1 "
+              f"(0.05: the densest 5 %), got {args.ptrace_wetted_peak_fraction:g}")
+        return 1
+
     if args.ptrace_wetted_cmap_range is not None:
         lo, hi = args.ptrace_wetted_cmap_range
         if not 0 <= lo < hi <= 1:
@@ -3534,6 +3548,14 @@ def main(argv: list[str] | None = None) -> int:
     cases = load_cases_or_exit(args.cases)
     if cases is None:
         return 1
+    # set on every case, so the scan map's numbers (computed per case,
+    # deep in the quantity machinery) and the per-case figure both see it
+    if args.ptrace_wetted_peak_fraction is not None:
+        cases = {
+            name: dataclasses.replace(
+                case, ptrace_wetted_peak_fraction=args.ptrace_wetted_peak_fraction)
+            for name, case in cases.items()
+        }
 
     try:
         comparisons = load_comparisons(args.cases, cases)

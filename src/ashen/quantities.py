@@ -884,7 +884,8 @@ _register(
             "f_tot times the wall's area", log_scale=True),
     _wetted("peak_density", r"peak hit density [m$^{-2}$]",
             "densest (l, phi) cell's share of all hits per m^2, the particle_wetted "
-            "map's maximum; biased high with few hits, depends on the bins", log_scale=True),
+            "map's maximum (or the mean over the densest ptrace_wetted_peak_fraction "
+            "of the wall); biased high with few hits, depends on the bins", log_scale=True),
     _wetted("peaking", r"peaking factor (peak / mean density)",
             "peak_density times area: 1 for even wetting, larger for a peaked footprint"),
 )

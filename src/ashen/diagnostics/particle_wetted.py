@@ -33,6 +33,10 @@ And the peak, which the participation ratio averages away:
   wall [1/m^2], the top of the map. Noisier than the measures above, and
   biased high with few hits (one or two hits in a small inboard cell), and
   it depends on the bins: compare it only at the same ptrace_wetted_bins.
+  With peak_fraction > 0 it is instead the mean density over the densest
+  peak_fraction of the wall's area -- the densest cells, taken in order,
+  the last one in part -- which averages much of that noise away and
+  depends far less on the bins.
 - peaking = peak_density * area: the peak over the hit-weighted mean
   density, 1/area. 1 for hits spread evenly over the area they wet, larger
   as a few cells take more than their share (a heat load's peaking factor).
@@ -263,13 +267,16 @@ class WettedResult:
     phi_edges: np.ndarray
     #: Each (l, phi) cell's area [m^2].
     cell_area: np.ndarray
+    #: The share of the wall's area peak_density is averaged over; 0 = the
+    #: densest cell alone.
+    peak_fraction: float = 0.0
 
     def as_dict(self) -> dict:
         return {
             key: float(getattr(self, key))
             for key in ("f_pol", "f_tor", "f_tot", "s", "area", "peak_density", "peaking",
                         "f_pol_err", "f_tor_err", "f_tot_err", "s_err",
-                        "peak_density_err", "peaking_err")
+                        "peak_density_err", "peaking_err", "peak_fraction")
         }
 
 
@@ -282,12 +289,31 @@ def _participation(counts: np.ndarray, areas: np.ndarray) -> float:
     return float(total**2 / np.sum(counts**2 / areas))
 
 
-def _fractions(counts: np.ndarray, cell_area: np.ndarray, wall_area: float) -> np.ndarray:
+def _peak(counts: np.ndarray, cell_area: np.ndarray, wall_area: float,
+          peak_fraction: float) -> float:
+    """The share of all hits per m^2 of the densest cell (peak_fraction 0),
+    or averaged over the densest peak_fraction of wall_area: cells taken
+    densest first until that area is filled, the last one in part."""
+    total = counts.sum()
+    if total == 0:
+        return float("nan")
+    density = (counts / cell_area).ravel()
+    if peak_fraction <= 0:
+        return float(density.max()) / total
+    order = np.argsort(density, kind="stable")[::-1]
+    area = cell_area.ravel()[order]
+    target = peak_fraction * wall_area
+    before = np.concatenate(([0.0], np.cumsum(area)[:-1]))   # area filled before each cell
+    taken = np.clip(target - before, 0.0, area)               # how much of each cell is in
+    return float(np.sum(density[order] * taken)) / target / total
+
+
+def _fractions(counts: np.ndarray, cell_area: np.ndarray, wall_area: float,
+               peak_fraction: float = 0.0) -> np.ndarray:
     pol = _participation(counts.sum(axis=1), cell_area.sum(axis=1)) / wall_area
     tor = _participation(counts.sum(axis=0), cell_area.sum(axis=0)) / wall_area
     tot = _participation(counts.ravel(), cell_area.ravel()) / wall_area
-    total = counts.sum()
-    peak = float(np.max(counts / cell_area)) / total if total else float("nan")
+    peak = _peak(counts, cell_area, wall_area, peak_fraction)
     return np.array([pol, tor, tot, tot / (pol * tor), peak, peak * tot * wall_area])
 
 
@@ -299,16 +325,21 @@ def wetted_area(
     n_phi: int = 36,
     n_boot: int = 200,
     seed: int = 0,
+    peak_fraction: float = 0.0,
 ) -> WettedResult:
     """f_pol, f_tor, f_tot, s, peak_density and peaking over n_l x n_phi
     equal (l, phi) cells, with
-    bootstrap errors from n_boot resamplings of the hits."""
+    bootstrap errors from n_boot resamplings of the hits. peak_fraction:
+    the share of the wall's area peak_density averages over (0: the
+    densest cell alone)."""
+    if not 0 <= peak_fraction <= 1:
+        raise ValueError(f"peak_fraction must be in [0, 1], got {peak_fraction}")
     l_edges = np.linspace(0.0, wall.length, n_l + 1)
     phi_edges = np.linspace(0.0, TWO_PI, n_phi + 1)
     strip = np.diff(wall.int_R_dl(l_edges))            # int R dl per l bin
     cell_area = np.outer(strip, np.diff(phi_edges))     # R dl dphi
     counts, _, _ = np.histogram2d(hits.l, hits.phi, bins=[l_edges, phi_edges])
-    values = _fractions(counts, cell_area, wall.area)
+    values = _fractions(counts, cell_area, wall.area, peak_fraction)
 
     errors = np.full(values.size, np.nan)
     if hits.n > 1 and n_boot > 1:
@@ -317,7 +348,7 @@ def wetted_area(
         for _ in range(n_boot):
             pick = rng.integers(0, hits.n, hits.n)
             c, _, _ = np.histogram2d(hits.l[pick], hits.phi[pick], bins=[l_edges, phi_edges])
-            samples.append(_fractions(c, cell_area, wall.area))
+            samples.append(_fractions(c, cell_area, wall.area, peak_fraction))
         errors = np.nanstd(np.asarray(samples), axis=0)
 
     return WettedResult(
@@ -325,6 +356,6 @@ def wetted_area(
         area=values[2] * wall.area,
         f_pol_err=errors[0], f_tor_err=errors[1], f_tot_err=errors[2], s_err=errors[3],
         peak_density=values[4], peaking=values[5],
-        peak_density_err=errors[4], peaking_err=errors[5],
+        peak_density_err=errors[4], peaking_err=errors[5], peak_fraction=float(peak_fraction),
         counts=counts, l_edges=l_edges, phi_edges=phi_edges, cell_area=cell_area,
     )

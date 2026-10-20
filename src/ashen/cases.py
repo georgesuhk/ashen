@@ -54,7 +54,7 @@ _CASE_KEYS = (
     "ptrace_wetted_density_range", "ptrace_initial_psi_n_range", "ptrace_loss_bins",
     "ptrace_wetted_counts", "ptrace_wetted_count_range", "ptrace_wetted_cmap",
     "ptrace_wetted_profiles", "ptrace_wetted_empty_color",
-    "ptrace_wetted_cmap_range",
+    "ptrace_wetted_cmap_range", "ptrace_wetted_peak_fraction",
     "re_current_coords",
 )
 
@@ -346,6 +346,11 @@ class Case:
     #: [0, 0.9] of "hot" ends in light yellow, not white. None = all of it.
     #: `--ptrace-wetted-cmap-range LO HI` overrides it.
     ptrace_wetted_cmap_range: list[float] | None = None
+    #: `plot --diag particle_wetted`: peak_density (and peaking) as the mean
+    #: hit density over the densest this-fraction of the wall's area, e.g.
+    #: 0.05 for the densest 5 %; 0 = the single densest cell.
+    #: `--ptrace-wetted-peak-fraction` overrides it.
+    ptrace_wetted_peak_fraction: float = 0.0
     #: `plot --diag particles`: the colour of the particles, any matplotlib
     #: colour ("red", "#ff8800", "tab:orange"). Red stands out against the
     #: Poincare plot's viridis.
@@ -731,6 +736,15 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
                 f"colour map with 0 <= lo < hi <= 1, got {value!r}"
             )
         merged["ptrace_wetted_cmap_range"] = [float(v) for v in value]
+
+    if "ptrace_wetted_peak_fraction" in merged:
+        value = merged["ptrace_wetted_peak_fraction"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+            raise CasesError(
+                f"{where}: ptrace_wetted_peak_fraction must be a fraction of the wall's "
+                f"area, 0 <= x <= 1 (0.05: the densest 5 %; 0: the densest cell), got {value!r}"
+            )
+        merged["ptrace_wetted_peak_fraction"] = float(value)
 
     for key in ("ptrace_particle_color", "ptrace_wetted_empty_color"):
         if merged.get(key) is None:
