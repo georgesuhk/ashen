@@ -4,6 +4,17 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-20: `ptrace` says what a finished trace covered
+
+- For a finished `ptrace_gc` trace -- `[cached]` in the status or on a
+  rerun, just done, or a queued job found ended -- `ptrace` prints the
+  markers and how many were lost, the time traced against the time it
+  was set to trace (µs), the JOREK steps that spans (`3000 -> ~4882 /
+  5000`, interpolated between restarts), and why it stopped early if it
+  did (losses stalled, every marker off the grid). Read from `ptrace.log`
+  (`ptracing.trace_summary`); nothing is printed for other programs.
+- Tested on logs in `ptrace_gc.f90`'s formats; not yet on the HPC.
+
 ## 2026-10-19: `--color` for the `particle_exits` comparison
 
 - `plot --compare ... --diag particle_exits --color 'red, green'` sets each

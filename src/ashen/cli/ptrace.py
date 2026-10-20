@@ -41,6 +41,7 @@ from ashen.ptracing import (
     poll_job,
     ptrace_dir,
     run_ptrace,
+    trace_summary,
 )
 
 __all__ = ["DEFAULT_JOB", "build_parser", "main"]
@@ -177,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
                 for line in plan.describe():
                     print(f"  {line}")
                 continue
-            _print_concluded(poll_job(plan.work_dir))
+            _print_concluded(poll_job(plan.work_dir), plan.work_dir)
             print(
                 f"  steps {plan.steps[0]}..{plan.steps[-1]} ({len(plan.steps)} restart(s))"
             )
@@ -193,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             lost = " -- stopped at its first lost particle" if result.lost else ""
             status = "done" if result.ran else "[cached]"
             print(f"  {status}: {plan.work_dir}{lost}")
+            _print_summary(plan.work_dir)
             for note in result.notes:
                 print(f"  note: {note}")
         except (PtraceError, *CASE_ERRORS) as exc:
@@ -205,7 +207,13 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _print_concluded(queued) -> None:
+def _print_summary(work_dir: Path) -> None:
+    """What a finished trace covered: markers, lost, traced time and steps."""
+    for line in trace_summary(work_dir):
+        print(f"  {line}")
+
+
+def _print_concluded(queued, work_dir: Path) -> None:
     """Report a queued trace poll_job has just found ended."""
     if queued is None or queued.running:
         return
@@ -214,6 +222,7 @@ def _print_concluded(queued) -> None:
         return
     lost = " -- stopped at its first lost particle" if queued.result.lost else ""
     print(f"  job {queued.job_id} done{lost}")
+    _print_summary(work_dir)
     for note in queued.result.notes:
         print(f"  note: {note}")
 
@@ -226,7 +235,7 @@ def _report(case, run_dir: Path, site, omp_threads: int) -> None:
     if queued is not None and queued.running:
         print(f"  job {queued.job_id}: {queued.state.lower()}")
         return
-    _print_concluded(queued)
+    _print_concluded(queued, work_dir)
     if queued is not None:
         return
     plan = plan_ptrace(
@@ -238,6 +247,7 @@ def _report(case, run_dir: Path, site, omp_threads: int) -> None:
         print(f"  this trace is {work_dir.name}; also there: {', '.join(others)}")
     if is_current(plan):
         print(f"  [cached] {span}: {work_dir}")
+        _print_summary(work_dir)
     elif not (work_dir / META_FILE).is_file():
         print(f"  not traced yet ({span}); --run_i to trace here, --run to queue it")
     elif last_error(work_dir):
