@@ -27,6 +27,16 @@ cell, so much less noisy with few markers. As fractions of the wall:
   same poloidal pattern at every phi); well below 1 for a helical one,
   which can reach every poloidal and toroidal angle while wetting little.
 
+And the peak, which the participation ratio averages away:
+
+- peak_density: the densest (l, phi) cell's share of all hits per m^2 of
+  wall [1/m^2], the top of the map. Noisier than the measures above, and
+  biased high with few hits (one or two hits in a small inboard cell), and
+  it depends on the bins: compare it only at the same ptrace_wetted_bins.
+- peaking = peak_density * area: the peak over the hit-weighted mean
+  density, 1/area. 1 for hits spread evenly over the area they wet, larger
+  as a few cells take more than their share (a heat load's peaking factor).
+
 Error bars are bootstrap standard deviations: the hits resampled with
 replacement and each measure recomputed.
 
@@ -241,6 +251,12 @@ class WettedResult:
     f_tor_err: float
     f_tot_err: float
     s_err: float
+    #: The densest (l, phi) cell's share of all hits per m^2 [1/m^2].
+    peak_density: float
+    #: peak_density * area: 1 for an even footprint, more for a peaked one.
+    peaking: float
+    peak_density_err: float
+    peaking_err: float
     #: Hits per (l, phi) cell, (n_l, n_phi), and the edges.
     counts: np.ndarray
     l_edges: np.ndarray
@@ -251,8 +267,9 @@ class WettedResult:
     def as_dict(self) -> dict:
         return {
             key: float(getattr(self, key))
-            for key in ("f_pol", "f_tor", "f_tot", "s", "area",
-                        "f_pol_err", "f_tor_err", "f_tot_err", "s_err")
+            for key in ("f_pol", "f_tor", "f_tot", "s", "area", "peak_density", "peaking",
+                        "f_pol_err", "f_tor_err", "f_tot_err", "s_err",
+                        "peak_density_err", "peaking_err")
         }
 
 
@@ -269,7 +286,9 @@ def _fractions(counts: np.ndarray, cell_area: np.ndarray, wall_area: float) -> n
     pol = _participation(counts.sum(axis=1), cell_area.sum(axis=1)) / wall_area
     tor = _participation(counts.sum(axis=0), cell_area.sum(axis=0)) / wall_area
     tot = _participation(counts.ravel(), cell_area.ravel()) / wall_area
-    return np.array([pol, tor, tot, tot / (pol * tor)])
+    total = counts.sum()
+    peak = float(np.max(counts / cell_area)) / total if total else float("nan")
+    return np.array([pol, tor, tot, tot / (pol * tor), peak, peak * tot * wall_area])
 
 
 def wetted_area(
@@ -281,7 +300,8 @@ def wetted_area(
     n_boot: int = 200,
     seed: int = 0,
 ) -> WettedResult:
-    """f_pol, f_tor, f_tot and s over n_l x n_phi equal (l, phi) cells, with
+    """f_pol, f_tor, f_tot, s, peak_density and peaking over n_l x n_phi
+    equal (l, phi) cells, with
     bootstrap errors from n_boot resamplings of the hits."""
     l_edges = np.linspace(0.0, wall.length, n_l + 1)
     phi_edges = np.linspace(0.0, TWO_PI, n_phi + 1)
@@ -290,7 +310,7 @@ def wetted_area(
     counts, _, _ = np.histogram2d(hits.l, hits.phi, bins=[l_edges, phi_edges])
     values = _fractions(counts, cell_area, wall.area)
 
-    errors = np.full(4, np.nan)
+    errors = np.full(values.size, np.nan)
     if hits.n > 1 and n_boot > 1:
         rng = np.random.default_rng(seed)
         samples = []
@@ -304,5 +324,7 @@ def wetted_area(
         f_pol=values[0], f_tor=values[1], f_tot=values[2], s=values[3],
         area=values[2] * wall.area,
         f_pol_err=errors[0], f_tor_err=errors[1], f_tot_err=errors[2], s_err=errors[3],
+        peak_density=values[4], peaking=values[5],
+        peak_density_err=errors[4], peaking_err=errors[5],
         counts=counts, l_edges=l_edges, phi_edges=phi_edges, cell_area=cell_area,
     )

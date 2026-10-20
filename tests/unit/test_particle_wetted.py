@@ -800,3 +800,53 @@ def test_a_cut_colour_map_ends_where_it_was_cut():
     assert cut(1.0)[2] < 0.7                         # light yellow: blue well below white's 1
     both = _colormap("hot", (0.0, 0.9), "black")
     np.testing.assert_allclose(both.get_bad(), (0, 0, 0, 1))
+
+
+# --- peak_density and peaking ------------------------------------------------------
+
+def test_even_wetting_has_peaking_near_one(wall):
+    rng = np.random.default_rng(2)
+    n = 200_000
+    l = rng.uniform(0, wall.length, 4 * n)
+    keep = rng.uniform(0, R0 + A, l.size) < np.interp(l, wall.cum_l[:-1], wall.R)
+    l = l[keep][:n]
+    r = wetted_area(hits_at(l, rng.uniform(0, 2 * np.pi, l.size)), wall,
+                    n_l=12, n_phi=12, n_boot=20)
+    # every cell near 1 / (wall area), but the densest of 144 is ~3 sigma of
+    # counting noise above it (~1400 hits a cell: 2.7 %) -- the peak's high bias
+    noise = 1 / np.sqrt(n / 144)
+    assert 1 <= r.peak_density * wall.area <= 1 + 4 * noise
+    assert 1 <= r.peaking <= 1 + 4 * noise
+    assert 0 < r.peaking_err < 2 * noise
+
+
+def test_one_cell_holds_every_hit(wall):
+    r = wetted_area(hits_at([0.01] * 50, [0.01] * 50), wall, n_l=10, n_phi=8, n_boot=0)
+    assert r.peak_density == pytest.approx(1 / r.cell_area[0, 0])
+    assert r.peaking == pytest.approx(1.0)              # the area it wets, evenly
+    assert np.isnan(r.peak_density_err)
+
+
+def test_a_hot_spot_raises_the_peaking(wall):
+    rng = np.random.default_rng(3)
+    l = np.concatenate([rng.uniform(0, wall.length, 900), np.full(100, 0.01)])
+    phi = np.concatenate([rng.uniform(0, 2 * np.pi, 900), np.full(100, 0.01)])
+    r = wetted_area(hits_at(l, phi), wall, n_l=10, n_phi=8, n_boot=0)
+    assert r.peaking > 3
+    assert r.peaking == pytest.approx(r.peak_density * r.area)
+
+
+def test_peak_density_is_the_top_of_the_drawn_map(wall):
+    rng = np.random.default_rng(4)
+    r = wetted_area(hits_at(rng.uniform(0, wall.length, 300), rng.uniform(0, 1.0, 300)), wall,
+                    n_l=9, n_phi=7, n_boot=0)
+    drawn = r.counts / r.cell_area / r.counts.sum()     # as plot_wetted_area colours it
+    assert r.peak_density == drawn.max()
+    assert {"peak_density", "peaking", "peak_density_err", "peaking_err"} <= set(r.as_dict())
+
+
+def test_peak_quantities_are_on_the_scan_map_list():
+    from ashen.quantities import quantity
+
+    assert quantity("peak_density").log_scale and not quantity("peaking").log_scale
+    assert quantity("peaking").error is not None

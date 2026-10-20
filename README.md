@@ -1422,7 +1422,8 @@ python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta*0.1' --diag scan_map --x-quant
 ```
 
 **The particle wetted area** (`f_tot`, `f_pol`, `f_tor`, `s`, and `area`,
-the effective wetted area in m², `f_tot` times the wall's area) is
+the effective wetted area in m², `f_tot` times the wall's area; and the
+peak, `peak_density` and `peaking`, below) is
 available as quantities too, computed exactly as the case's own
 `--diag particle_wetted` figure computes it (same wall, trace window,
 `ptrace_initial_psi_n_range` and `ptrace_wetted_bins`). Their bootstrap
@@ -2464,6 +2465,24 @@ spread evenly at their mean density -- total load over peak load, but
 using every cell rather than the single peak, so steadier with few markers.
 Areas are true wall areas, `R dl dphi`, so an outboard cell counts for more
 than an inboard one.
+
+**The peak.** The participation ratio averages the peak away; two more
+measures keep it, in the JSON and as scan-map quantities with bootstrap
+errors:
+
+| | what it is |
+|---|---|
+| `peak_density` | the map's maximum: the densest cell's share of all hits per m² [1/m²] |
+| `peaking` | `peak_density × area`: the peak over the hit-weighted mean density `1/area`. 1 when the hits spread evenly over the area they wet; larger as a few cells take more than their share -- a heat load's peaking factor |
+
+Both are noisier than the fractions. With few hits the peak is set by one
+or two hits in one cell -- an inboard cell first, as it is smaller -- so it
+is **biased high**, the mirror of `f_tot` being biased low; even perfectly
+even wetting gives `peaking` a little above 1 (about 3 standard deviations
+of a cell's counting noise, `1/sqrt(hits per cell)`, for 36 x 36 cells).
+And it depends on the bins: halving them roughly halves the peak of a
+narrow stripe, so compare `peak_density` only at the same
+`ptrace_wetted_bins`. `peaking` is steadier against both.
 
 The map's colour is a hit density in 1/m^2: the share of all hits in a
 cell, divided by the cell's area. It integrates to 1 over the wall, so it

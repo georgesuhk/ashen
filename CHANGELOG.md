@@ -4,6 +4,17 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-20: the peak of the particle wetted map
+
+- New `particle_wetted` measures, in `particle_wetted.json` and as
+  scan-map quantities with bootstrap error bars:
+  - `peak_density`: the map's maximum, the densest (l, phi) cell's share
+    of all hits per m² [1/m²], exactly the top of the drawn map;
+  - `peaking`: `peak_density × area`, the peak over the hit-weighted mean
+    density. 1 for even wetting, larger for a peaked footprint.
+- Both are biased high with few hits, and `peak_density` depends on
+  `ptrace_wetted_bins` (README). The existing measures are unchanged.
+
 ## 2026-10-20: `ptrace` says what a finished trace covered
 
 - For a finished `ptrace_gc` trace -- `[cached]` in the status or on a
