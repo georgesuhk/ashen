@@ -109,6 +109,7 @@ __all__ = [
     "plan_ptrace",
     "run_ptrace",
     "stage",
+    "trace_summary",
     "traced_start",
     "traced_steps",
 ]
@@ -822,6 +823,107 @@ def poll_job(work_dir: Path) -> QueuedJob | None:
     _save_meta(work_dir, meta)
     result = None if error else PtraceResult(ran=True, lost=lost, notes=notes, job_id=job_id)
     return QueuedJob(job_id=job_id, state=state, running=False, result=result, error=error)
+
+
+# --- what a finished trace covered, from ptrace_gc's log ----------------------
+
+_LOG_FLOAT = r"([-+0-9.EeDd]+)"
+_LOG_START = re.compile(r"ptrace_gc: start time\s+" + _LOG_FLOAT + " s")
+_LOG_RESTART = re.compile(r"ptrace_gc: restart step (\d+) at t =\s*" + _LOG_FLOAT + " s")
+_LOG_TO_LAST = re.compile(r"ptrace_gc: tracing to the last restart, step (\d+), t =\s*"
+                          + _LOG_FLOAT + " s")
+_LOG_SPAN_CAPPED = "ptrace_gc: NOTE: stopped early -- t_span runs to"
+_LOG_DONE = re.compile(r"ptrace_gc: done at t =\s*" + _LOG_FLOAT
+                       + r" s,\s*(\d+) of (\d+) markers lost")
+_LOG_EARLY_STOPS = (
+    ("ptrace_gc: NOTE: losses stalled -- stopped", "losses stalled"),
+    ("ptrace_gc: NOTE: every marker is off the grid -- stopped", "every marker off the grid"),
+)
+_SETTINGS_T_SPAN = re.compile(r"^\s*t_span\s*=\s*([^\s,!/]+)", re.MULTILINE)
+
+
+def _log_float(text: str) -> float:
+    return float(text.lower().replace("d", "e"))
+
+
+def _step_at(t: float, table: list[tuple[int, float]]) -> tuple[float, bool] | None:
+    """The JOREK step at time t, interpolated linearly in time between the
+    restarts around it, and whether t is a restart's own time; None outside
+    the table (a t_span past the last restart, in its frozen field)."""
+    for (s0, t0), (s1, t1) in zip(table, table[1:]):
+        if t0 <= t <= t1:
+            if abs(t - t0) <= 1e-9 * max(abs(t0), 1e-12):
+                return float(s0), True
+            if abs(t - t1) <= 1e-9 * max(abs(t1), 1e-12):
+                return float(s1), True
+            return s0 + (s1 - s0) * (t - t0) / (t1 - t0), False
+    if table and abs(t - table[-1][1]) <= 1e-9 * max(abs(table[-1][1]), 1e-12):
+        return float(table[-1][0]), True
+    return None
+
+
+def trace_summary(work_dir: Path) -> list[str]:
+    """Lines saying what a finished trace covered, from ptrace_gc's log
+    (ptrace.log) and settings: how many markers and how many were lost, and
+    how far it got -- traced time against the time it was set to trace,
+    in microseconds, and the JOREK steps that spans (from the restart table
+    it logs; interpolated in time between restarts, so marked ~), with why
+    it stopped early if it did. Empty when the log has no 'done' line (a
+    trace that did not finish, or another program)."""
+    work_dir = Path(work_dir)
+    log = work_dir / LOG_FILE
+    text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+    done = _LOG_DONE.search(text)
+    start = _LOG_START.search(text)
+    if done is None or start is None:
+        return []
+    t_end, n_lost, n_markers = _log_float(done.group(1)), int(done.group(2)), int(done.group(3))
+    t_start = _log_float(start.group(1))
+    table = sorted(
+        {int(m.group(1)): _log_float(m.group(2)) for m in _LOG_RESTART.finditer(text)}.items(),
+        key=lambda item: item[1],
+    )
+
+    # where the trace was set to end: the last restart, or t_span on (cut
+    # back to the last restart when the fields ran out, as ptrace_gc logs)
+    t_stop = None
+    to_last = _LOG_TO_LAST.search(text)
+    if to_last is not None:
+        t_stop = _log_float(to_last.group(2))
+    else:
+        settings = work_dir / SETTINGS_FILE
+        match = _SETTINGS_T_SPAN.search(
+            settings.read_text(encoding="utf-8", errors="replace")) if settings.is_file() else None
+        try:
+            t_span = _log_float(match.group(1)) if match else 0.0
+        except ValueError:
+            t_span = 0.0
+        if t_span > 0:
+            t_stop = t_start + t_span
+            if _LOG_SPAN_CAPPED in text and table:
+                t_stop = max(table[-1][1], t_start)
+
+    pct = f"{100 * n_lost / n_markers:.3g} %" if n_markers else "-"
+    lines = [f"markers: {n_markers}, {n_lost} lost ({pct})"]
+
+    traced = (t_end - t_start) * 1e6
+    if t_stop is not None and t_stop > t_start:
+        planned = (t_stop - t_start) * 1e6
+        line = (f"traced {traced:.4g} / {planned:.4g} us "
+                f"({100 * (t_end - t_start) / (t_stop - t_start):.3g} %)")
+    else:
+        line = f"traced {traced:.4g} us"
+    first, last, target = (_step_at(t, table) for t in (t_start, t_end, t_stop or t_end))
+    if first is not None and last is not None:
+        reached = f"{'' if last[1] else '~'}{last[0]:.0f}"
+        line += f", JOREK steps {first[0]:.0f} -> {reached}"
+        if target is not None and t_stop is not None:
+            line += f" / {target[0]:.0f}"
+    lines.append(line)
+    why = next((reason for marker, reason in _LOG_EARLY_STOPS if marker in text), None)
+    if why is not None:
+        lines.append(f"stopped early: {why}")
+    return lines
 
 
 def last_error(work_dir: Path) -> str | None:

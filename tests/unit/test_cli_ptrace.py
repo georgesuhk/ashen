@@ -332,3 +332,22 @@ def test_each_energy_and_marker_count_gets_its_own_folder(campaign, capsys):
 def test_a_program_without_settings_keeps_its_folder(campaign):
     assert ptrace_cli.main(["--case", "other", "--run_i"]) == 0
     assert (campaign / "other" / "ptrace" / "ex7_jorek" / "diag.h5").is_file()
+
+
+def test_a_cached_trace_says_what_it_covered(campaign, capsys):
+    assert ptrace_cli.main(["--case", "run", "--run_i"]) == 0
+    folder = campaign / "run" / "ptrace" / "re_gc_current_density_initialisation"
+    log = folder / "ptrace.log"
+    log.write_text(log.read_text() + (
+        "ptrace_gc: start time   1.000000E-03 s\n"
+        "ptrace_gc: restart step 3000 at t =   1.000000E-03 s\n"
+        "ptrace_gc: restart step 3400 at t =   1.018500E-03 s\n"
+        "ptrace_gc: tracing to the last restart, step 3400, t =  1.01850E-03 s\n"
+        "ptrace_gc: done at t =  1.01850E-03 s, 7 of 50 markers lost\n"))
+    capsys.readouterr()
+    assert ptrace_cli.main(["--case", "run"]) == 0                          # status
+    out = capsys.readouterr().out
+    assert "[cached] steps" in out and "  markers: 50, 7 lost (14 %)\n" in out
+    assert "  traced 18.5 / 18.5 us (100 %), JOREK steps 3000 -> 3400 / 3400\n" in out
+    assert ptrace_cli.main(["--case", "run", "--run_i"]) == 0               # cached run
+    assert "  markers: 50, 7 lost (14 %)\n" in capsys.readouterr().out

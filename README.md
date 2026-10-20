@@ -1946,6 +1946,23 @@ particle file or executable change; `--force` reruns it. `--tool-output`
 echoes the program live. ex7 stopping at a lost particle is reported as
 such, not as a failure.
 
+A finished `ptrace_gc` trace -- `[cached]`, just done, or a queued job found
+ended -- also says what it covered, read from its `ptrace.log`:
+
+```
+  [cached] steps 3000..5000 (3 restart(s)): .../ptrace/ptrace_gc/E10MeV_n1000
+  markers: 1000, 640 lost (64 %)
+  traced 17.5 / 18.5 us (94.6 %), JOREK steps 3000 -> ~4882 / 5000
+  stopped early: losses stalled
+```
+
+The time is traced against what it was set to trace (to the last restart,
+or `t_span`). The JOREK step it reached is interpolated in time between
+the restarts around it, hence `~`; past the last restart (`t_span` with
+`hold_last_field`) there is no step and only the time is given. "stopped
+early" appears when `ptrace_gc` ended the trace itself (`stop_when_stalled`,
+or every marker off the grid). Other programs' logs give no summary.
+
 **ex6/ex7 start at a hard-coded 2.5 ms**, whatever `ptrace_start_step` is: they
 pick the last linked restart before that time, so choose restarts that span
 it -- otherwise the particle starts in fields from the wrong time, and the
