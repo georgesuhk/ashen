@@ -921,18 +921,18 @@ def test_peak_fraction_key_and_flag(campaign, monkeypatch, tmp_path, capsys):
     assert plot_cli.main(argv) == 0 and written() == 0.0
     cases = campaign / "cases.toml"
     cases.write_text(cases.read_text().replace(
-        "[cases.run]\n", "[cases.run]\nptrace_wetted_peak_fraction = 0.05\n", 1))
+        "[cases.run]\n", "[cases.run]\npeak_fraction = 0.05\n", 1))
     assert plot_cli.main(argv) == 0 and written() == 0.05
-    assert plot_cli.main(argv + ["--ptrace-wetted-peak-fraction", "0.2"]) == 0 and written() == 0.2
-    assert plot_cli.main(argv + ["--ptrace-wetted-peak-fraction", "5"]) == 1
+    assert plot_cli.main(argv + ["--peak-fraction", "0.2"]) == 0 and written() == 0.2
+    assert plot_cli.main(argv + ["--peak-fraction", "5"]) == 1
     assert "0 <= X <= 1" in capsys.readouterr().err
 
     from ashen.cases import CasesError, load_cases
     for value in ("-0.1", "1.5", '"5%"', "true"):
         bad = tmp_path / "bad.toml"
         bad.write_text('[cases.run]\nsteps = [1]\nptrace_exe = "./exe"\n'
-                       f"ptrace_wetted_peak_fraction = {value}\n", encoding="utf-8")
-        with pytest.raises(CasesError, match="ptrace_wetted_peak_fraction"):
+                       f"peak_fraction = {value}\n", encoding="utf-8")
+        with pytest.raises(CasesError, match="peak_fraction"):
             load_cases(bad)
 
 
@@ -965,11 +965,60 @@ def test_peak_fraction_flag_reaches_the_scan_map(tmp_path, monkeypatch):
     plot_cli._WETTED_NUMBERS.clear()
     assert plot_cli.main(["--compare", "scan/*", "--diag", "scan_map", "--x-quantity", "f_pol",
                           "--y-quantity", "peak_density", "--dpi", "40",
-                          "--ptrace-wetted-peak-fraction", "0.1"]) == 0
+                          "--peak-fraction", "0.1"]) == 0
     plot_cli._WETTED_NUMBERS.clear()
     assert plot_cli.main(["--case", "scan/half", "--diag", "particle_wetted", "--dpi", "40",
-                          "--ptrace-wetted-peak-fraction", "0.1"]) == 0
+                          "--peak-fraction", "0.1"]) == 0
     numbers = json.loads((tmp_path / "scan" / "half" / "ptrace" / "ptrace_gc" /
                           "particle_wetted.json").read_text(encoding="utf-8"))
     point = {p.label: p for p in drawn["points"]}["half"]
     assert numbers["peak_fraction"] == 0.1 and point.y == numbers["peak_density"]
+
+
+# --- peak_hits ---------------------------------------------------------------------
+
+def test_peak_hits_is_the_busiest_cell_s_count(wall):
+    rng = np.random.default_rng(9)
+    hits = hits_at(rng.uniform(0, wall.length, 300), rng.uniform(0, 1.5, 300))
+    r = wetted_area(hits, wall, n_l=9, n_phi=7, n_boot=0)
+    assert r.peak_hits == r.counts.max() and r.peak_hits == int(r.peak_hits)
+    assert r.as_dict()["peak_hits"] == r.counts.max()
+
+
+def test_peak_hits_over_a_fraction_is_the_area_weighted_mean_of_the_busiest(wall):
+    rng = np.random.default_rng(10)
+    hits = hits_at(rng.uniform(0, wall.length, 500), rng.uniform(0, 2.0, 500))
+    r = wetted_area(hits, wall, n_l=9, n_phi=7, n_boot=0, peak_fraction=0.1)
+    n, area = r.counts.ravel(), r.cell_area.ravel()
+    left, total = 0.1 * wall.area, 0.0
+    for k in np.argsort(n, kind="stable")[::-1]:
+        take = min(area[k], left)
+        total += n[k] * take
+        left -= take
+        if left <= 0:
+            break
+    assert r.peak_hits == pytest.approx(total / (0.1 * wall.area), rel=1e-12)
+    assert r.peak_hits <= r.counts.max()
+    # at 1 it is the area-weighted mean count over every cell
+    whole = wetted_area(hits, wall, n_l=9, n_phi=7, n_boot=0, peak_fraction=1.0)
+    assert whole.peak_hits == pytest.approx(np.sum(n * area) / wall.area)
+
+
+def test_peak_hits_on_the_scan_map_has_no_error_bar():
+    from ashen.quantities import QuantityContext, quantity
+
+    ctx = QuantityContext.__new__(QuantityContext)
+    object.__setattr__(ctx, "particle_wetted", lambda: {"peak_hits": 12.0})
+    q = quantity("peak_hits")
+    assert q.extract(ctx) == 12.0 and q.error(ctx) is None
+
+
+def test_peak_fraction_works_without_ptrace_exe_and_is_checked(tmp_path):
+    from ashen.cases import CasesError, load_cases
+
+    path = tmp_path / "cases.toml"
+    path.write_text("[cases.run]\nsteps = [1]\npeak_fraction = 0.05\n", encoding="utf-8")
+    assert load_cases(path)["run"].peak_fraction == 0.05
+    path.write_text("[cases.run]\nsteps = [1]\npeak_fraction = 2\n", encoding="utf-8")
+    with pytest.raises(CasesError, match="peak_fraction"):
+        load_cases(path)

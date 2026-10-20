@@ -2485,7 +2485,7 @@ narrow stripe, so compare `peak_density` only at the same
 `ptrace_wetted_bins`. `peaking` is steadier against both.
 
 **Averaging the peak over the densest part of the wall.**
-`ptrace_wetted_peak_fraction = x` makes `peak_density` (and so `peaking`)
+`peak_fraction = x` makes `peak_density` (and so `peaking`)
 the mean hit density over the densest `x` of the wall's **area** rather
 than the single densest cell: the cells are taken densest first until
 that area is filled, the last one in part. It is a fraction of area, not
@@ -2493,16 +2493,26 @@ of cells, because cells differ in area (inboard ones are smaller), so it
 means the same thing whatever the bins.
 
 ```toml
-ptrace_wetted_peak_fraction = 0.05    # the densest 5 % of the wall; 0 (default): the densest cell
+peak_fraction = 0.05    # the densest 5 % of the wall; 0 (default): the densest cell
 ```
 
-`--ptrace-wetted-peak-fraction X` overrides it for one run, for the
+`--peak-fraction X` overrides it for one run, for the
 figure's JSON and the scan map alike. It averages most of the single
 cell's noise and high bias away, and depends far less on the bins; pick
 `x` well above one cell's share of the wall (1/(n_l·n_phi), 0.08 % for
 36 x 36) and below the wetted fraction `f_tot`, or it averages in dry
 wall. At 1 it is the wall's mean, `1/wall area`, and `peaking` is `f_tot`.
 The value used is in the JSON, as `peak_fraction`.
+
+**How many hits the peak rests on.** `peak_hits` is the number of hits in
+the busiest cell -- or, with `peak_fraction` set, the mean hits per cell
+over the busiest cells filling that share of the wall (each weighted by
+the area it adds, the last in part). It is in the JSON and a scan-map
+quantity, without an error bar. It is a statistics check, not a load: it
+grows with the number of markers and ignores cell area (the busiest cell
+need not be the densest), so compare it only between cases traced with the
+same markers and bins. A `peak_hits` of a few means `peak_density` is
+mostly noise.
 
 The map's colour is a hit density in 1/m^2: the share of all hits in a
 cell, divided by the cell's area. It integrates to 1 over the wall, so it

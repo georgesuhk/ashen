@@ -37,6 +37,12 @@ And the peak, which the participation ratio averages away:
   peak_fraction of the wall's area -- the densest cells, taken in order,
   the last one in part -- which averages much of that noise away and
   depends far less on the bins.
+- peak_hits: how many hits the busiest cell holds -- or, with
+  peak_fraction > 0, the mean hits per cell over the busiest cells filling
+  that share of the wall's area (weighted by the area each adds, the last
+  one in part). Not a density: it grows with the number of markers and
+  ignores cell area, so it compares only cases traced with the same
+  markers and bins. It says how many hits the peak rests on; no error.
 - peaking = peak_density * area: the peak over the hit-weighted mean
   density, 1/area. 1 for hits spread evenly over the area they wet, larger
   as a few cells take more than their share (a heat load's peaking factor).
@@ -267,6 +273,9 @@ class WettedResult:
     phi_edges: np.ndarray
     #: Each (l, phi) cell's area [m^2].
     cell_area: np.ndarray
+    #: Hits in the busiest cell, or the mean over the busiest peak_fraction
+    #: of the wall's area.
+    peak_hits: float = float("nan")
     #: The share of the wall's area peak_density is averaged over; 0 = the
     #: densest cell alone.
     peak_fraction: float = 0.0
@@ -275,6 +284,7 @@ class WettedResult:
         return {
             key: float(getattr(self, key))
             for key in ("f_pol", "f_tor", "f_tot", "s", "area", "peak_density", "peaking",
+                        "peak_hits",
                         "f_pol_err", "f_tor_err", "f_tot_err", "s_err",
                         "peak_density_err", "peaking_err", "peak_fraction")
         }
@@ -306,6 +316,24 @@ def _peak(counts: np.ndarray, cell_area: np.ndarray, wall_area: float,
     before = np.concatenate(([0.0], np.cumsum(area)[:-1]))   # area filled before each cell
     taken = np.clip(target - before, 0.0, area)               # how much of each cell is in
     return float(np.sum(density[order] * taken)) / target / total
+
+
+def _peak_hits(counts: np.ndarray, cell_area: np.ndarray, wall_area: float,
+               peak_fraction: float) -> float:
+    """Hits in the busiest cell (peak_fraction 0), or the mean hits per cell
+    over the busiest cells filling peak_fraction of wall_area, each weighted
+    by the area it adds, the last one in part."""
+    if counts.sum() == 0:
+        return float("nan")
+    n = counts.ravel()
+    if peak_fraction <= 0:
+        return float(n.max())
+    order = np.argsort(n, kind="stable")[::-1]
+    area = cell_area.ravel()[order]
+    target = peak_fraction * wall_area
+    before = np.concatenate(([0.0], np.cumsum(area)[:-1]))
+    taken = np.clip(target - before, 0.0, area)
+    return float(np.sum(n[order] * taken) / target)
 
 
 def _fractions(counts: np.ndarray, cell_area: np.ndarray, wall_area: float,
@@ -357,5 +385,6 @@ def wetted_area(
         f_pol_err=errors[0], f_tor_err=errors[1], f_tot_err=errors[2], s_err=errors[3],
         peak_density=values[4], peaking=values[5],
         peak_density_err=errors[4], peaking_err=errors[5], peak_fraction=float(peak_fraction),
+        peak_hits=_peak_hits(counts, cell_area, wall.area, peak_fraction),
         counts=counts, l_edges=l_edges, phi_edges=phi_edges, cell_area=cell_area,
     )

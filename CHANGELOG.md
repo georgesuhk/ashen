@@ -4,6 +4,18 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-20: `peak_hits`; `peak_fraction` renamed
+
+- New `particle_wetted` measure `peak_hits`, in the JSON and as a
+  scan-map quantity (no error bar): the hits in the busiest (l, phi) cell,
+  or with `peak_fraction` the mean hits per cell over the busiest cells
+  filling that share of the wall's area. A check on how many hits the peak
+  rests on; it grows with the number of markers.
+- `ptrace_wetted_peak_fraction` is now `peak_fraction` in cases.toml, and
+  `--ptrace-wetted-peak-fraction` is now `--peak-fraction`. The old names
+  are gone (cases.toml reports the old key as unknown). It is now checked
+  on every case, with or without `ptrace_exe`.
+
 ## 2026-10-20: the wetted peak averaged over the densest part of the wall
 
 - `ptrace_wetted_peak_fraction = x` (case key) and
