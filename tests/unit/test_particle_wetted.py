@@ -629,7 +629,7 @@ def test_f_tot_is_linear_and_area_is_the_effective_wetted_area():
 
     assert not quantity("f_tot").log_scale
     assert quantity("area").log_scale
-    assert "effective wetted area" in quantity("area").label
+    assert quantity("area").label.startswith("wetted area")
 
 
 def test_ptrace_wetted_cmap_from_the_case_and_the_flag(campaign, monkeypatch):

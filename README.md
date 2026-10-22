@@ -1422,7 +1422,7 @@ python ~/ashen/bin/plot --compare 'qa2.1_g2.8/eta*0.1' --diag scan_map --x-quant
 ```
 
 **The particle wetted area** (`f_tot`, `f_pol`, `f_tor`, `s`, and `area`,
-the effective wetted area in m², `f_tot` times the wall's area; and the
+the wetted area in m², `f_tot` times the wall's area; and the
 peak, `peak_density` and `peaking`, below) is
 available as quantities too, computed exactly as the case's own
 `--diag particle_wetted` figure computes it (same wall, trace window,

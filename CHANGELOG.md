@@ -4,6 +4,12 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-20: `area` labelled "wetted area"
+
+- The scan-map quantity `area` is now labelled "wetted area [m²]" (was
+  "effective wetted area [m²]"), on its axis and in its description. Its
+  values, name and logarithmic axis are unchanged.
+
 ## 2026-10-20: `peak_hits`; `peak_fraction` renamed
 
 - New `particle_wetted` measure `peak_hits`, in the JSON and as a
