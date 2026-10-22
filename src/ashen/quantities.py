@@ -879,8 +879,8 @@ _register(
             "particle wetted fraction, toroidal bins (all l together)"),
     _wetted("s", r"$s = f_{\mathrm{tot}} / (f_{\mathrm{pol}} f_{\mathrm{tor}})$",
             "1 for a separable footprint, below 1 for a helical one"),
-    _wetted("area", r"effective wetted area [m$^2$]",
-            "effective wetted area, (sum n)^2 / sum(n^2 / A) over (l, phi) cells: "
+    _wetted("area", r"wetted area [m$^2$]",
+            "wetted area, (sum n)^2 / sum(n^2 / A) over (l, phi) cells: "
             "f_tot times the wall's area", log_scale=True),
     _wetted("peak_density", r"peak hit density [m$^{-2}$]",
             "densest (l, phi) cell's share of all hits per m^2, the particle_wetted "
