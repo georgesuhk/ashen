@@ -872,6 +872,40 @@ and `jorek_re`, e.g.:
   jorek_re = 6 digits
 ```
 
+### Which jorek2_* tools a run folder gets
+
+Every gather runs the `jorek2_postproc` (and `jorek2_poincare`) in the run
+folder itself. `run_jorek` links them in from one folder under
+`template/symlink/`: `RE` when the shotfile has `with_refluid = True`,
+`standard` otherwise. A tool must have been compiled with the same model
+and number of variables (`n_var`) as the run, or it stops on every restart
+with
+
+```
+ERROR: The number of variables in the restart file and the compiled JOREK binary does not agree.
+```
+
+and the gather reports outputs "not produced". For a run whose model
+matches neither folder, put its tools in a folder of their own and name it
+in the shotfile:
+
+```
+NL_kinks/template/symlink/model600_fixed_T_rho/jorek2_postproc -> <that build>/jorek2_postproc
+```
+
+```python
+diag_exe_folder = "model600_fixed_T_rho"
+```
+
+- It replaces the `RE`/`standard` choice. Only what that folder holds is
+  linked, so put every tool the run needs in it.
+- `util/` still follows `with_refluid`.
+- A name with no such folder stops `run_jorek` before anything is written,
+  listing the folders there are.
+- It takes effect when the folder is prepared (`run_jorek`, or
+  `--run_r` without `--keep-inputs`). In a folder prepared already, relink
+  by hand: `ln -sf <template>/symlink/<folder>/jorek2_postproc .`
+
 ### Seeing what the jorek2_* tools are doing
 
 By default a tool's stdout is discarded and its stderr kept back to be quoted
