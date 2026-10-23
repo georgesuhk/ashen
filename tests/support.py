@@ -79,3 +79,66 @@ def install_symlink_bypass(monkeypatch) -> None:
     monkeypatch.setattr(runner_module.fs, "symlink_dir", fake_symlink_dir)
     monkeypatch.setattr(runner_module.fs, "symlink_files_in", fake_symlink_files_in)
     monkeypatch.setattr(runner_module.fs, "symlink_file", fake_symlink_file)
+
+
+# --- JOREK main-run logs, for ashen.log_archive / tstep_history -------------
+
+#: Header lines as JOREK's mod_log_params.f90 prints them (the subset the
+#: time-step record reads), with this run's settings.
+JOREK_LOG_HEADER = """\
+  GIT revision        : v2.25.01.0-266-gda1ef6b4c-dirty
+ n_tor          =             5
+ n_plane        =             8
+ time_evol_scheme       = "Gears"
+ eta                    =   {eta:.4E}
+ n_radial               =           60
+ n_pol                  =           60
+ R_geo                  =   1.3680E+00
+ F0                     =   3.7000E+00
+ central_density        =   1.0000E-02
+ central_mass           =   2.0000E+00
+ gmres                  =            T
+ gmres_max_iter         =          {max_iter}
+ gmres tolerance        =   1.0000E-08
+ iter_precon            =           {iter_precon}
+ gmres_m                =           20
+ gmres_4                =   1.0000E+03
+ use_mumps              =            F
+ use_pastix             =            F
+ use_strumpack          =            T
+ re_adv_fact          =   1.0000E-01
+ sqrt(mu0*rho0)       =   6.4836E-08
+"""
+
+
+def jorek_log_text(steps, *, first_index=1, t0=None, ending=None, eta=1e-5, max_iter=200,
+                   iter_precon=40, killed_mid_step=False) -> str:
+    """A JOREK main-run log: header, then one block per step.
+
+    ``steps``: (dt, iterations, refactorised) per step. ``t0``: the restart
+    time (a ``restart time :`` line), None for a run from t = 0. ``ending``:
+    "gmresfail", "nan" or "sigterm" for the abort message after the last
+    step. ``killed_mid_step``: a last banner with no solve after it."""
+    out = [JOREK_LOG_HEADER.format(eta=eta, max_iter=max_iter, iter_precon=iter_precon)]
+    if t0 is not None:
+        out.append(f" *  restart time : {first_index - 1:6d} {t0:13.6f} *\n")
+    previous = steps[0][0] if steps else 0.0
+    for k, (dt, iters, refactor) in enumerate(steps):
+        out.append(f" *   time step : {1:7d}{k + 1:7d}{first_index + k:7d}"
+                   f"{dt:14.5f}{previous:14.5f}  *\n")
+        out.append(" Solving MHD system using iterative solver\n")
+        if refactor:
+            out.append(" Elapsed time updating preconditioner (s):  0.27\n")
+        out.append(f"{'Number of iterations: ':>32s}{iters:5d}\n")
+        previous = dt
+    if killed_mid_step:
+        k = len(steps)
+        out.append(f" *   time step : {1:7d}{k + 1:7d}{first_index + k:7d}"
+                   f"{previous:14.5f}{previous:14.5f}  *\n")
+    if ending == "gmresfail":
+        out.append(f">>>>> NO CONVERGENCE AFTER {steps[-1][1]:06d} ITERATIONS. ABORTING <<<<<\n")
+    elif ending == "nan":
+        out.append(" >>>>> NaNs DETECTED: EXITING THE CODE <<<<<\n")
+    elif ending == "sigterm":
+        out.append(" >>>>> SIGTERM RECEIVED: EXITING THE CODE <<<<<\n")
+    return "".join(out)

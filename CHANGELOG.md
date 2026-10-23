@@ -4,6 +4,35 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-23: time-step suggestions from the runs' GMRES iterations; logs kept
+
+- `run_jorek shotfile.py --suggest-tstep` suggests the time step for the
+  folder's next job. It prints every limit and which one sets the step.
+  `--apply` writes `tstep_n` / `nstep_n`, keeping the job's length, with
+  the old values in a comment. The suggestion comes from the GMRES
+  iteration count of every step on record: a step fails when GMRES reaches
+  `gmres_max_iter`. N ~ dt^q is measured where a crash and its restart
+  stepped the same state, and taken on the safe side. Further limits are
+  2 x the largest step run, half a NaN crash's step, and
+  `tstep_accuracy / gamma`. A run with no history takes the hardest step of
+  the most similar runs. New shotfile keys `tstep_safety` (0.5) and
+  `tstep_accuracy` (0.1). README, "Choosing the time step".
+- Each launch (`--run`, `--run_i`, `--run_r`, also with `--keep-inputs` and
+  `--scan`) first copies `log` into `logs/log_s<first>-s<last>[_<ending>].gz`
+  and updates `tstep_history.json.gz`. If the log cannot be copied, nothing
+  is launched.
+- `util --func archive_logs` files the logs already there, `log` and
+  SLURM's `.out` copies. It is preview first; `--apply` deletes each `.out`
+  once kept. On a copy of the two NL_kinks runs, 654 MB of `.out` files
+  became 47 MB. `util --func tstep_harvest` rebuilds the records.
+- A log two jobs wrote at once is read only up to where the second job
+  starts, and named `_mixed`. The local `qa2.1_g1.8/eta1e-5_adv0.1/log` is
+  one: the job restarted from step 3400 while the job from step 960 was
+  still writing.
+- Unverified: not yet run on the HPC; the q range comes from one crash and
+  restart pair; scaling limits between runs of different eta or density is
+  not attempted.
+
 ## 2026-10-23: `diag_exe_folder` picks the run folder's jorek2_* tools
 
 - New shotfile key `diag_exe_folder = "<name>"`: `run_jorek` links the

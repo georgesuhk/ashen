@@ -5,6 +5,7 @@ ashen.cli.run_jorek.main.
 
 from __future__ import annotations
 
+import math
 import tomllib
 from pathlib import Path
 
@@ -380,3 +381,93 @@ def test_run_r_refuses_to_switch_a_folder_between_density_formats(
 def test_legacy_density_does_not_go_with_keep_inputs(cli_campaign, submitted, capsys):
     assert main(["shotfile.py", "--run_r", "--keep-inputs", "--legacy-density"]) == 1
     assert "--legacy-density goes with preparing a folder" in capsys.readouterr().err
+
+
+# --- keeping the log, and --suggest-tstep ----------------------------------------
+
+
+def test_a_launch_keeps_the_previous_log_first(cli_campaign, submitted, symlinks_maybe_bypassed, capsys):
+    from support import jorek_log_text
+
+    assert main(["shotfile.py"]) == 0
+    text = jorek_log_text([(0.03, 4, True)] * 3, ending="gmresfail")
+    (cli_campaign / "log").write_text(text)
+
+    assert main(["shotfile.py", "--run_r"]) == 0
+
+    kept = cli_campaign / "logs" / "log_s000001-s000003_gmresfail.gz"
+    assert kept.is_file() and len(submitted) == 1
+    assert (cli_campaign / "tstep_history.json.gz").is_file()
+    assert "kept the previous log as logs/log_s000001-s000003_gmresfail.gz" in capsys.readouterr().out
+
+
+def test_a_log_that_cannot_be_kept_stops_the_launch(
+    cli_campaign, submitted, symlinks_maybe_bypassed, monkeypatch, capsys
+):
+    from ashen.cli import run_jorek
+
+    assert main(["shotfile.py"]) == 0
+    (cli_campaign / "log").write_text("x")
+
+    def refuse(run_dir, *, dry_run=False):
+        raise OSError("disk quota exceeded")
+
+    monkeypatch.setattr(run_jorek, "archive_current_log", refuse)
+    assert main(["shotfile.py", "--run"]) == 1
+    assert submitted == []
+    assert "nothing was launched" in capsys.readouterr().err
+
+
+def test_keep_inputs_restart_keeps_the_log_too(cli_campaign, submitted, symlinks_maybe_bypassed):
+    from support import jorek_log_text
+
+    _old_folder(cli_campaign)
+    (cli_campaign / "log").write_text(jorek_log_text([(0.03, 4, True)] * 2))
+    assert main(["shotfile.py", "--run_r", "--keep-inputs"]) == 0
+    assert (cli_campaign / "logs" / "log_s000001-s000002.gz").is_file() and len(submitted) == 1
+
+
+def _with_history(run_dir):
+    from support import jorek_log_text
+
+    assert main(["shotfile.py"]) == 0
+    (run_dir / "a.1.out").write_text(jorek_log_text([(0.03, 95, True)] * 20))
+
+
+def test_suggest_tstep_previews_and_writes_nothing(cli_campaign, symlinks_maybe_bypassed, capsys):
+    _with_history(cli_campaign)
+    shotfile = (cli_campaign / "shotfile.py").read_text()
+    capsys.readouterr()
+
+    assert main(["shotfile.py", "--suggest-tstep"]) == 0
+
+    out = capsys.readouterr().out
+    assert "suggested: tstep = 0.03" in out and "Nothing written" in out
+    assert (cli_campaign / "shotfile.py").read_text() == shotfile
+
+
+def test_suggest_tstep_apply_sets_tstep_and_keeps_the_run_length(
+    cli_campaign, symlinks_maybe_bypassed, capsys
+):
+    from ashen.shotfile import load_shotfile
+
+    _with_history(cli_campaign)
+    (cli_campaign / "a.1.out").write_text(
+        (cli_campaign / "a.1.out").read_text().replace("   95\n", "   48\n"))
+
+    assert main(["shotfile.py", "--suggest-tstep", "--apply"]) == 0
+
+    params = load_shotfile(cli_campaign / "shotfile.py")
+    (dt,) = params.tstep_n
+    (n,) = params.nstep_n
+    assert dt > 0.03 and n == math.ceil(0.03 * 3000 / dt - 1e-9)
+    text = (cli_campaign / "shotfile.py").read_text()
+    assert "# was tstep_n = [0.03], nstep_n = [3000] (run_jorek --suggest-tstep" in text
+    assert text.index("# was tstep_n") < text.index("tstep_n = [")
+
+
+def test_suggest_tstep_goes_alone(cli_campaign, capsys):
+    assert main(["shotfile.py", "--suggest-tstep", "--run"]) == 1
+    assert "launches nothing" in capsys.readouterr().err
+    assert main(["shotfile.py", "--apply"]) == 1
+    assert "--apply goes with --scan or --suggest-tstep" in capsys.readouterr().err
