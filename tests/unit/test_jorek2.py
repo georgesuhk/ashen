@@ -580,6 +580,52 @@ def test_restart_at_the_other_width_is_staged(stub_run, tmp_path):
     ).splitlines()
 
 
+def test_padded_restart_is_staged_under_both_widths(stub_run, tmp_path):
+    """An RE-fluid jorek2_postproc opens jorek%05d.h5 only; stub_run's
+    restarts are 6-wide. Both spellings must be in the scratch dir, the
+    alias being the same file, not a second copy."""
+    payload = stub_run.run_dir / "_stub_payload.py"
+    payload.write_text(
+        payload.read_text(encoding="utf-8").replace(
+            "sys.exit(",
+            "with open('inodes.txt', 'w') as f:\n"
+            "    f.write(' '.join(str(os.stat(n).st_ino) for n in "
+            "('jorek000100.h5', 'jorek00100.h5')))\n"
+            "sys.exit(",
+        ),
+        encoding="utf-8",
+    )
+    collected = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["cwd_listing.txt", "inodes.txt"], stdin_text="x",
+        restart_name="jorek000100.h5",
+    )
+    listing = collected["cwd_listing.txt"].read_text(encoding="utf-8").splitlines()
+    assert "jorek000100.h5" in listing
+    assert "jorek00100.h5" in listing
+    first, second = collected["inodes.txt"].read_text(encoding="utf-8").split()
+    assert first == second
+
+
+def test_fixed_restart_name_gets_no_alias(stub_run, tmp_path):
+    collected = run_tool(
+        stub_run, TOOL_NAME, step=100, dest_dir=tmp_path / "dest",
+        outputs=["cwd_listing.txt"], stdin_text="x", restart_name="jorek_restart.h5",
+    )
+    listing = collected["cwd_listing.txt"].read_text(encoding="utf-8").splitlines()
+    assert [n for n in listing if n.endswith(".h5")] == ["jorek_restart.h5"]
+
+
+def test_step_too_wide_for_five_digits_gets_no_alias(stub_run, tmp_path):
+    (stub_run.run_dir / "jorek123456.h5").write_bytes(b"six-wide")
+    collected = run_tool(
+        stub_run, TOOL_NAME, step=123456, dest_dir=tmp_path / "dest",
+        outputs=["cwd_listing.txt"], stdin_text="x", restart_name="jorek123456.h5",
+    )
+    listing = collected["cwd_listing.txt"].read_text(encoding="utf-8").splitlines()
+    assert [n for n in listing if n.endswith(".h5")] == ["jorek123456.h5"]
+
+
 def test_missing_output_names_the_paddings_tried(stub_run, tmp_path):
     with pytest.raises(Jorek2Error, match="nor under any other step padding"):
         run_tool(

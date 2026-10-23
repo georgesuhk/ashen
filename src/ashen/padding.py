@@ -16,6 +16,10 @@ answer here:
    (e.g. staging restarts for the particle tracer, whose field reader tries
    ``rst_file_ind_fmt(1)`` only): the width *that build* writes, read from
    the source tree it was compiled from -- :func:`source_pad_width`.
+   ``jorek2.run_tool`` sidesteps the question for the jorek2_* tools: it
+   stages a padded restart under every width (hard links to one copy), so
+   a build that opens one width only -- the RE-fluid branches' postproc,
+   ``i5.5`` -- finds it without ashen knowing which build it is running.
 
 Nothing outside this module should format a step index with a literal width
 or re-pad a filename by hand.

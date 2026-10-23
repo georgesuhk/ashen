@@ -833,6 +833,14 @@ including a run continued under a different build. What gets *collected*
 into a cache is filed under one spelling, so nothing downstream needs to
 know which build produced it.
 
+The other direction is covered too: a restart staged for a `jorek2_*` tool
+is put in its scratch folder under both widths (hard links to one copy, no
+extra disk). Some builds open a restart at one width only -- the RE-fluid
+branches' `jorek2_postproc` looks for `jorek%05d.h5` and nothing else -- so
+such a postproc can be used on a run written by a 6-digit build, e.g. for
+`--diag re_current`, whose `recurrdens` expression the develop-based
+branches do not have. Steps from 100000 up have no 5-digit spelling.
+
 Anything **ashen** writes -- the Poincare, profile and jorek2_four caches --
 keeps exactly one spelling. A second accepted name there would be a way to
 end up with two caches for one step rather than a way to find the one that
