@@ -4,6 +4,16 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-23: restarts staged under both step widths
+
+- Every `jorek2_*` call (postproc, four, ...) now finds its restart in the
+  scratch folder as both `jorek08002.h5` and `jorek008002.h5` (hard links,
+  no extra disk). An older RE-fluid `jorek2_postproc`, which only opens
+  5-digit names, therefore works on a run written by a 6-digit build:
+  put that postproc in the run folder and `analyse --diag re_current` as
+  usual. Nothing on disk is renamed. Steps from 100000 up have no 5-digit
+  name, so an old postproc still cannot read those.
+
 ## 2026-10-20: `area` labelled "wetted area"
 
 - The scan-map quantity `area` is now labelled "wetted area [m²]" (was

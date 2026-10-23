@@ -346,6 +346,14 @@ def run_tool(
     with tempfile.TemporaryDirectory(prefix=f"{tool}_") as tmp:
         workdir = Path(tmp)
         shutil.copy(restart_src, workdir / restart_name)
+        # A build may open its restart at one width only: the RE-fluid
+        # branches' jorek2_postproc looks for jorek%05d.h5 and nothing else,
+        # so it cannot see a run written with 6 digits. Each other spelling
+        # is a hard link to the one copy (no extra disk), so whichever width
+        # the binary wants is there -- padding rule 3 without having to know
+        # which build this is. A fixed name (jorek_restart.h5) has none.
+        for alias in step_name_variants(restart_name, step):
+            os.link(workdir / restart_name, workdir / alias)
         namelist_copy = workdir / run.namelist.name
         shutil.copy(run.namelist, namelist_copy)
         for profile in run.profiles:
