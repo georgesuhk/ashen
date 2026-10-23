@@ -188,6 +188,20 @@ def _real_psi_edge(paths: RunPaths) -> float:
         return 1.0
 
 
+def _step_time_axis(ax, run_dir: Path | str, x_is: str) -> None:
+    """The other of step / time along the top of ``ax`` (plotting.step_axis),
+    from the run's macroscopic_vars.dat. A run without one keeps its single
+    axis: the figure is still worth showing."""
+    from ashen.diagnostics.live_data import LIVE_DATA_FILE, read_step_times
+    from ashen.plotting.step_axis import add_step_time_axis
+
+    try:
+        step_times = read_step_times(Path(run_dir) / LIVE_DATA_FILE)
+    except (OSError, ValueError):
+        return
+    add_step_time_axis(ax, step_times, x_is=x_is)
+
+
 def _f0(run_dir: Path, site=None) -> float:
     """F0 from the run's own in_eq, else the campaign template's."""
     candidates = [run_dir / "in_eq", run_dir / "in_main"]
@@ -1076,8 +1090,10 @@ def four_figure(
         series = max_amplitude_series(paths, steps, variables=[variable])
         biggest = sorted(series, key=lambda k: -np.nanmax(series[k]))[:n_modes]
         modes = [(n, m) for _, n, m in biggest]
-    FourPlot(fig, load_four_data(run_dir, variable, modes), step=step, colors=colors, log=log,
-             log_radial=log_radial, real_psi_edge=_real_psi_edge(paths), rational=rational)
+    plot = FourPlot(fig, load_four_data(run_dir, variable, modes), step=step, colors=colors,
+                    log=log, log_radial=log_radial, real_psi_edge=_real_psi_edge(paths),
+                    rational=rational)
+    _step_time_axis(plot.ax_t, run_dir, "step")
     return fig
 
 
@@ -1172,6 +1188,9 @@ def re_current_figure(
     totals = rc.current_totals(paths, steps, rc.vpar_re_sign(paths))
     build(fig, totals, rc.current_density_series(paths, steps, coords_var), step=step,
           real_psi_edge=_real_psi_edge(paths), show=SPECIES if show is None else show)
+    if np.isfinite(totals.total).any():   # the left panel drew the totals
+        by_time = bool(np.isfinite(totals.time).all()) and len(totals.steps) > 0
+        _step_time_axis(fig.axes[0], run_dir, "time" if by_time else "step")
     return fig
 
 
@@ -1195,6 +1214,9 @@ def re_current_ratio_figure(run_dir: Path | str, *, coords_var: str = "Psi_N"):
     fig = Figure(figsize=(9, 6.2), layout="constrained")
     ratio_map_figure(fig, ratio_map, totals.time, real_psi_edge=_real_psi_edge(paths),
                      li=li_series(paths, ratio_map.steps, f0=f0))
+    if len(ratio_map.steps) >= 2:          # else the figure holds only a message
+        by_time = bool(np.isfinite(np.asarray(totals.time, dtype=float)).all())
+        _step_time_axis(fig.axes[0], run_dir, "time" if by_time else "step")
     return fig
 
 
@@ -1258,6 +1280,7 @@ def energies_figure(run_dir: Path | str, quantity: str = "magnetic_energies", *,
     ax = fig.subplots()
     try:
         draw_energies(ax, read_live_data(Path(run_dir) / LIVE_DATA_FILE, quantity), log=log)
+        _step_time_axis(ax, run_dir, "time")
     except (OSError, ValueError) as exc:
         ax.text(0.5, 0.5, str(exc), ha="center", transform=ax.transAxes, wrap=True, fontsize=9)
     return fig
@@ -1680,6 +1703,7 @@ def four_view(run_dir: Path | str = ".", *, variable: str = "Psi"):
                 state["plot"] = FourPlot(fig, data, step=step.value, colors=colors, log=log.value,
                                          log_radial=log_radial.value, real_psi_edge=edge,
                                          rational=amplitude.value)
+                _step_time_axis(state["plot"].ax_t, run_dir, "step")
             except Exception as exc:  # say what is missing, do not die
                 state.pop("plot", None)
                 holder.children = (w.HTML(
@@ -2311,7 +2335,9 @@ def energies_view(run_dir: Path | str = ".", *, quantity: str = "magnetic_energi
             state["first"] = True
             log.value = live.logy           # start as plot_live_data would
         fig, widget, draw = _live_figure(w, (9, 4.6))
-        draw_energies(fig.subplots(), live, log=log.value)
+        ax = fig.subplots()
+        draw_energies(ax, live, log=log.value)
+        _step_time_axis(ax, run_dir, "time")
         holder.children = (widget,)
         draw()
         note.value = (f"<small>{len(live.x)} time steps, to {live.xlabel.split('[')[0].strip()} "

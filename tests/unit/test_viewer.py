@@ -193,6 +193,16 @@ def test_four_figure_draws_the_largest_modes_in_matching_colours(run_dir):
     assert left == right
 
 
+def test_four_figure_has_the_time_on_top(run_dir):
+    assert viewer.four_figure(run_dir, "Psi", step=100).axes[0].child_axes == []   # no live data
+    (run_dir / "macroscopic_vars.dat").write_text(
+        "@times_ylabel_si: time [ms]\n@times_y2si:   2.0E-03\n@times: \"step\"     \"time\"\n"
+        + "".join(f"@times:  {s}   {0.5 * s:.9E}\n" for s in range(0, 201, 10))
+    )
+    ax_t = viewer.four_figure(run_dir, "Psi", step=100).axes[0]
+    assert [child.get_xlabel() for child in ax_t.child_axes] == ["time [ms]"]
+
+
 def test_four_figure_without_caches(tmp_path):
     (tmp_path / "jorek000000.h5").write_bytes(b"")
     assert viewer.four_figure(tmp_path).axes[0].texts
