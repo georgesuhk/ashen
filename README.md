@@ -448,6 +448,104 @@ it (or with `--keep-inputs`): plain `--run_r` refuses rather than switch
 the run to the current normalisation. `--legacy-density` does not go with
 `--keep-inputs`, which writes no profiles.
 
+## Choosing the time step
+
+```bash
+python ~/ashen/bin/run_jorek shotfile.py --suggest-tstep           # what it suggests, and why
+python ~/ashen/bin/run_jorek shotfile.py --suggest-tstep --apply   # set tstep_n / nstep_n to it
+```
+
+Run it in the run folder, before `--run` or `--run_r`. It launches
+nothing. With `--apply` it sets `tstep_n = [dt]` and an `nstep_n` that
+keeps the job's length in time, and leaves the old values in a comment
+above (`# was tstep_n = [0.5], nstep_n = [20000] (run_jorek --suggest-tstep,
+<date>)`).
+
+**What limits the step.** JOREK steps implicitly (Gears or
+Crank-Nicolson), so a large step is not unstable in the CFL sense. A step
+*fails* when GMRES does not converge within `gmres_max_iter` iterations
+(`>>>>> NO CONVERGENCE AFTER 000200 ITERATIONS. ABORTING <<<<<`). The
+preconditioner factorises each toroidal harmonic on its own, so GMRES has
+to supply the coupling between harmonics. That coupling grows with the step
+and with the size of the perturbation. The count (`Number of iterations:`
+in the log, every step) therefore climbs as the run goes nonlinear, and
+steeply as the step nears its limit. In `qa2.1_g1.8/eta1e-5_adv0.1` at
+dt = 1 it went 2 (to t = 600), 9 (t = 900), 41, 103, then 200 at t = 986
+and the job stopped. The restart at dt = 0.5 took 44 where dt = 1 had
+taken 200.
+
+**How the suggestion is made.** From every log the run has kept (below),
+each step's time step and iteration count:
+
+- *Iterations*: over the steps this job will repeat, the step that would
+  bring the count to `tstep_safety x gmres_max_iter` (default 0.5 x 200 =
+  100). That covers every kept job's steps from the restart time on,
+  including a later job's crash, and the steps just before it. It uses
+  N ~ dt^q, with q measured where two jobs stepped the same state with
+  different steps (a crash and its restart, matched by time). It takes
+  the safe side of the measured range: the largest q when the step would
+  grow, the smallest when it must shrink. With no such pair, q is assumed
+  in 1..3. A step that did not converge counts as at least the cap.
+- *Growth*: never more than 2 x the largest step a job has run. A step that
+  took 1 iteration says nothing about one ten times larger.
+- *NaN*: a job that stopped on NaNs after the restart time halves its step.
+  NaNs give no measure of how far over the limit it was, so this is a
+  heuristic.
+- *Accuracy*: `tstep_accuracy / gamma` (default 0.1), with gamma the linear
+  growth rate from `macroscopic_vars.dat`. A step the solver manages is not
+  therefore accurate. At 0.1, Gears' error in a growth rate is under 1%.
+- *Similar runs*: for a run with no history of its own, the hardest step
+  of the most similar runs in the campaign (eta, density, qa, l_i,
+  `re_adv_fact`). For a run with its own history they are only listed.
+  Nothing scales one run's limit to another's parameters yet: with a
+  handful of runs that cannot be checked.
+
+Only jobs whose iteration counts compare are used: the same `gmres_tol`,
+`gmres_4`, `gmres_m`, `iter_precon`, solver library, scheme and grid as
+the folder's `in_main_r` (or `in_main`). A raised `gmres_max_iter` only
+moves the target.
+
+The restart time is `jorek_restart.h5`'s. With no restart file, it is a
+new run, and the folder's own logs count as earlier attempts. The output
+lists each limit, marks the one that sets the step, and says when nothing
+is known of the time ahead (a run restarted from its furthest point). It
+also says when the run has not reached its nonlinear phase, with how much
+the count rose there in the runs on record.
+
+Settings, as shotfile keys:
+
+```python
+tstep_safety = 0.5      # aim for at most this fraction of gmres_max_iter
+tstep_accuracy = 0.1    # dt <= this / linear growth rate
+```
+
+### Where the history is kept
+
+Each launch (`--run`, `--run_i`, `--run_r`) first copies the folder's
+`log`, which the job is about to overwrite, into `logs/`, gzipped (about
+16 times smaller), named by the steps it ran and how it ended:
+
+```
+logs/log_s000001-s000986_gmresfail.gz
+logs/log_s000961-s004052.gz
+logs/log_s003401-s003589_mixed.gz
+```
+
+The endings are `gmresfail`, `nan`, `sigterm`, `walltime` (from SLURM's
+`.err`) or none. `_mixed` means another job's output follows in the same
+file: two jobs were launched in the folder at once, and the second's `tee`
+truncated `log` while the first went on writing into it. Only the first
+job's steps are read from such a file. If the log cannot be copied, nothing
+is launched. `logs/index.json` keeps each archive's checksum, so the same
+log is kept once.
+
+The steps are also read into `tstep_history.json.gz` (a few kB), which
+`--suggest-tstep` reads for other runs. It is rebuilt from `logs/` at any
+time (`util --func tstep_harvest`).
+
+Logs from before this, and SLURM's `<jobname>.<jobid>.out` copies of every
+batch job, are filed with `util --func archive_logs` (see Housekeeping).
+
 ## Looking at a case from a notebook
 
 Each run folder has a `case_viewer.ipynb` that shows that run: its current
@@ -2734,6 +2832,30 @@ is well under 1 GB.
   be running and appending to it).
 - It reads the whole file to repack it -- once, padding included -- and
   compresses on up to 8 cores, so a 34 GB file takes a minute or two.
+
+**`archive_logs`** files every JOREK job's log in each run folder:
+`log`, and SLURM's `<jobname>.<jobid>.out` copies (each batch job's
+stdout, the same text as its `log`). Each is kept once in `logs/`,
+gzipped, named by its steps and ending (see "Where the history is kept").
+Once a `.out` is kept it is deleted:
+
+```bash
+python ~/ashen/bin/util --func archive_logs            # what it would keep and free
+python ~/ashen/bin/util --func archive_logs --apply
+```
+
+- `log` itself stays: ashen reads it, and the next launch replaces it.
+- A `.out` written to in the last ten minutes is copied but not deleted,
+  because its job may still be running. The same goes for `.err` files,
+  `trace*.out`, and any `.out` that is not a JOREK main-run log.
+
+**`tstep_harvest`** reads each run's kept logs into `tstep_history.json.gz`
+(see "Choosing the time step") and prints one line per job: steps, time,
+time step, iteration range and ending. It writes only that file.
+
+```bash
+python ~/ashen/bin/util --func tstep_harvest
+```
 
 ## Simulation time at a restart step
 

@@ -471,3 +471,33 @@ n = 1 is largest in m = 4 (0.84 mT), 3 (0.81), 5 (0.71) and 6 (0.53), while
 the plasma, wall and coils at any (x, y, z) per restart. It is not built in
 the campaign's `exe/`. A sum over `m` at the edge (one value per `n`) was
 offered as a smaller step and not yet asked for.
+
+---
+
+## 13. `--suggest-tstep`: an empirical model of the solver, from little data
+
+**Status:** open, 2026-10-23.
+
+**What it assumes:** the GMRES iteration count N of a step goes as dt^q at
+a fixed state, with q measured from same-time pairs. In
+`qa2.1_g1.8/eta1e-5_adv0.1` q was 1.5 (one side reusing an older
+preconditioner) to 2.2 (both refactorised, N = 42..200). For preconditioned
+GMRES, N ~ ln(tol) / ln(rho), so q itself grows as N nears the cap. A q
+measured lower down can understate how quickly the count runs away. The
+safety fraction (`tstep_safety = 0.5`) is the margin for that.
+
+**What it does not know:**
+- Whether the state ahead is harder. The count rose from 2 to 200 at
+  dt = 1 in that run as it went nonlinear. A restart from the furthest
+  point says "nothing is known of the time ahead", and that should be
+  taken seriously.
+- NaN crashes, which come with no warning in the count.
+- How one run's limit scales to another eta, density or l_i. Similar runs
+  are matched by distance only, unscaled. With more runs on record, a
+  stiffness measure (the RE speed c sqrt(mu0 rho0) / grid spacing, the
+  growth rate, eta / dr^2) could be tested for whether it collapses the
+  limits. It has not been.
+- Whether a step that converges is accurate beyond the linear-phase
+  growth rate (`tstep_accuracy`). Saturated-phase dynamics have no such
+  check.
+

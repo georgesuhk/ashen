@@ -18,6 +18,14 @@ tracing -- one function at a time, chosen with --func.
   too big (ashen.diag_repack). Says how much it would free until given
   --apply. Finished traces are repacked by `ptrace` anyway; this is for
   the ones from before.
+- archive_logs: keep each JOREK job's log once, gzipped, in the run's
+  logs/ folder, named by its steps and how it ended (ashen.log_archive),
+  and delete SLURM's .out copies once kept. Says what it would keep and
+  free until given --apply. `run_jorek` keeps the log by itself before each
+  launch; this is for the logs from before.
+- tstep_harvest: read each run's logs into its time-step record,
+  tstep_history.json.gz, which `run_jorek --suggest-tstep` uses
+  (ashen.tstep_history), and print a line per job. Writes only that file.
 
 Run from the folder holding cases.toml, like `analyse`.
 """
@@ -31,13 +39,16 @@ from pathlib import Path
 from ashen.cli._common import CASE_ERRORS, CASE_HELP, error, load_cases_or_exit, resolve_selection
 from ashen.diag_repack import data_size, diag_files, is_compressed, repack
 from ashen.figure_clean import figure_files
+from ashen.log_archive import LIVE_LOG, apply_archive, plan_archive
 from ashen.restart_thin import apply_thin, case_steps, plan_thin
 from ashen.trace_tidy import job_may_be_running, apply_tidy, plan_tidy
+from ashen.tstep_history import harvest
 
 __all__ = ["FUNCS", "build_parser", "main"]
 
 #: What --func can be.
-FUNCS = ("trace_organize", "downsample_restarts", "delete_figures", "compress_traces")
+FUNCS = ("trace_organize", "downsample_restarts", "delete_figures", "compress_traces",
+         "archive_logs", "tstep_harvest")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -51,7 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
         "traces from older layouts to ptrace/<exe>/E<eV>eV_n<markers>/. "
         "downsample_restarts: keep only the restarts at multiples of --every steps. "
         "delete_figures: delete the figures plot made (it can draw them again). "
-        "compress_traces: repack trace diagnostics files losslessly to their data's size",
+        "compress_traces: repack trace diagnostics files losslessly to their data's size. "
+        "archive_logs: keep each JOREK job's log gzipped in logs/, deleting SLURM's .out "
+        "copies. tstep_harvest: update each run's time-step record from its logs",
     )
     parser.add_argument(
         "--cases", type=Path, default=Path("cases.toml"),
@@ -72,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--apply", action="store_true",
-        help="downsample_restarts, delete_figures, compress_traces: actually do it. "
+        help="downsample_restarts, delete_figures, compress_traces, archive_logs: actually do it. "
         "Without it, only what would be done, and the space it frees, is shown",
     )
     return parser
@@ -147,7 +160,91 @@ def main(argv: list[str] | None = None) -> int:
         return _delete_figures(names, apply=args.apply)
     if args.func == "compress_traces":
         return _compress_traces(names, apply=args.apply)
+    if args.func == "archive_logs":
+        return _archive_logs(names, apply=args.apply)
+    if args.func == "tstep_harvest":
+        return _tstep_harvest(names)
     return 1
+
+
+def _archive_logs(names: list[str], *, apply: bool) -> int:
+    root = Path.cwd()
+    before = after = kept = 0
+    failed = []
+    for name in names:
+        run_dir = root / name
+        if not run_dir.is_dir():
+            continue
+        try:
+            actions = plan_archive(run_dir)
+        except OSError as exc:
+            error(f"{name}: {exc}")
+            failed.append(name)
+            continue
+        if not actions:
+            continue
+        print(f"==== {name} ====")
+        for action in actions:
+            # log stays: ashen reads it, and the next launch replaces it.
+            # A .out goes once kept, unless a job may still be writing it.
+            remove = action.source.name != LIVE_LOG and not action.busy \
+                and action.kind in ("archive", "duplicate")
+            print(f"  {action.describe(run_dir)}" + ("" if not remove else
+                  f"; {'deleted' if apply else 'would delete'} {action.source.name}"))
+            if not apply:
+                if remove:
+                    before += action.size
+                continue
+            try:
+                written = apply_archive(action)
+            except OSError as exc:
+                error(f"{name}: {action.source.name}: {exc} -- left as it is")
+                failed.append(f"{name}/{action.source.name}")
+                continue
+            kept += written
+            if remove and action.target.is_file():    # deleted only once kept
+                before += action.size
+                action.source.unlink()
+    if apply:
+        print(f"kept {_human(kept)} of gzipped logs; deleted {_human(before)} of SLURM .out "
+              "copies")
+    else:
+        print(f"would delete {_human(before)} of SLURM .out copies once kept (gzipped, about "
+              "1/16 the size) -- nothing changed yet; add --apply")
+    if failed:
+        error(f"{len(failed)} failed: {', '.join(failed)}")
+        return 1
+    return 0
+
+
+def _tstep_harvest(names: list[str]) -> int:
+    root = Path.cwd()
+    failed = []
+    for name in names:
+        run_dir = root / name
+        if not run_dir.is_dir():
+            continue
+        try:
+            history = harvest(run_dir)
+        except Exception as exc:  # report, go on with the others
+            error(f"{name}: {exc}")
+            failed.append(name)
+            continue
+        print(f"==== {name} ====")
+        for job in history.jobs:
+            dts = ", ".join(f"{dt:g}" for dt in sorted(set(job.dt.tolist())))
+            print(f"  {job.source}: steps {job.index[0]}-{job.index[-1]} "
+                  f"(t {job.t0:.6g}-{job.t_end:.6g}), dt {dts}, "
+                  f"{job.iters.min()}-{job.iters.max()} GMRES iterations"
+                  + (f", ended: {job.outcome}" if job.outcome else "")
+                  + (", two jobs' output mixed after this" if "spliced_after" in job.params
+                     else ""))
+        if not history.jobs:
+            print("  no job logs with time steps")
+    if failed:
+        error(f"{len(failed)} case(s) failed: {', '.join(failed)}")
+        return 1
+    return 0
 
 
 #: A diagnostics file written to more recently than this [s] may belong to

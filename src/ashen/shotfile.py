@@ -112,6 +112,12 @@ class ShotParams:
     #: model. Read only by analyse; prepare_run ignores it. None = default.
     four_exe: str | None = None
 
+    #: `run_jorek --suggest-tstep`: aim for at most this fraction of
+    #: gmres_max_iter GMRES iterations per step (ashen.tstep_suggest).
+    tstep_safety: float = 0.5
+    #: and keep the time step below this over the linear growth rate.
+    tstep_accuracy: float = 0.1
+
     # --- required only for certain methods ---------------------------------
     rho_const: float | None = None
     bnd_file: str | None = None
@@ -186,6 +192,10 @@ class ShotParams:
                 "castor_root, e.g. 'DIIID_low_pres') or, for backward compatibility, "
                 "an explicit absolute 'machine_folder'"
             )
+        if not 0 < self.tstep_safety < 1:
+            raise ShotfileError(f"tstep_safety must be between 0 and 1, not {self.tstep_safety!r}")
+        if not self.tstep_accuracy > 0:
+            raise ShotfileError(f"tstep_accuracy must be positive, not {self.tstep_accuracy!r}")
         if self.rho_method == "const" and self.rho_const is None:
             raise ShotfileError("rho_const is required when rho_method='const'")
         if self.bnd_method in ("file", "template") and self.bnd_file is None:

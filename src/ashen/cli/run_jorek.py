@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 import copy
+import math
+import re
+from datetime import date
 from pathlib import Path
 
 from ashen.case_notebook import NOTEBOOK_NAME, write_case_notebook
@@ -19,8 +22,11 @@ from ashen.runner import (
     submit_restart,
     submit_starwall,
 )
+from ashen.log_archive import archive_current_log
 from ashen.scan import ScanError, apply_plan, format_value, load_scan, plan_scan, update_cases_toml
-from ashen.shotfile import ShotfileError, load_shotfile
+from ashen.shotfile import ShotfileError, load_shotfile, shotfile_text_with
+from ashen.tstep_history import harvest
+from ashen.tstep_suggest import Settings, format_suggestion, suggest
 
 
 LEGACY_DENSITY_WARNING = (
@@ -57,7 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="a scan file: list the run folders it would create; "
                            "with --apply, create and prepare them (and run the stages given)")
     scan.add_argument("--apply", action="store_true",
-                      help="with --scan: create the folders instead of only listing them")
+                      help="with --scan: create the folders instead of only listing them; "
+                           "with --suggest-tstep: write the suggestion into the shotfile")
     scan.add_argument("--force", action="store_true",
                       help="with --scan --apply: also rewrite a run folder whose "
                            "shotfile.py differs from the scan's")
@@ -82,14 +89,37 @@ def build_parser() -> argparse.ArgumentParser:
                              "rho_const / 1e20 in units of central_density, so the density is "
                              "normalised twice (rho_const = 1e18 runs at 1e16 m^-3). Only to "
                              "reproduce or continue runs prepared then.")
+    stages.add_argument("--suggest-tstep", action="store_true",
+                        help="suggest the time step for this folder's next job from the "
+                             "GMRES iterations its logs (and similar runs' records) show, "
+                             "capped for accuracy; with --apply, set tstep_n and nstep_n in "
+                             "the shotfile to it, keeping the run's length. Launches nothing.")
     stages.add_argument("--run_eq", action="store_true", help="equilibrium, interactive")
     stages.add_argument("--run_sw", action="store_true", help="equilibrium then STARWALL")
     return parser
 
 
+def _keep_log(run_dir: Path, *, dry_run: bool) -> None:
+    """Before a main run or restart tees over ``log``: keep it in logs/
+    (ashen.log_archive), and update the run's time-step record. Raises
+    OSError if the log cannot be kept -- launching would lose it. A record
+    that cannot be updated only warns: the log is kept, it can be read later."""
+    note = archive_current_log(run_dir, dry_run=dry_run)
+    if note:
+        print(note)
+    if dry_run:
+        return
+    try:
+        harvest(run_dir)
+    except Exception as exc:  # the launch matters more than the record
+        error(f"time-step record not updated (the logs are kept): {exc}")
+
+
 def _submit(args, paths, site, params, *, dry_run: bool) -> None:
     if args.run_eq:
         submit_eq(paths, site, params, dry_run=dry_run)
+    if args.run_i or args.run or args.run_r:
+        _keep_log(paths.run_dir, dry_run=dry_run)
     if args.run_i:
         submit_main(paths, site, params, interactive=True, dry_run=dry_run)
     if args.run:
@@ -133,9 +163,45 @@ def _restart_keeping_inputs(args, params, site, run_dir: Path) -> int:
     else:
         print(f"inputs kept; in_main_r: tstep_n = {params.tstep_n}, nstep_n = {params.nstep_n}, "
               f"nout = {params.nout}")
+    try:
+        _keep_log(result.paths.run_dir, dry_run=args.dry_run)
+    except OSError as exc:
+        error(f"the previous log could not be kept, so nothing was launched: {exc}")
+        return 1
     command = submit_restart(result.paths, site, params, dry_run=args.dry_run)
     if args.dry_run:
         print(f"  would run: {command.splitlines()[-1]}")
+    return 0
+
+
+def _suggest_tstep(args, params, site, run_dir: Path) -> int:
+    """--suggest-tstep: print the suggestion; with --apply, write it."""
+    span = sum(float(t) * float(n) for t, n in zip(params.tstep_n, params.nstep_n))
+    result = suggest(run_dir, site.root,
+                     settings=Settings(safety=params.tstep_safety, accuracy=params.tstep_accuracy),
+                     span=span)
+    print(format_suggestion(result))
+    if result.dt is None:
+        return 0
+    nstep = max(1, math.ceil(span / result.dt - 1e-9))
+    if not args.apply:
+        print(f"Nothing written. Add --apply to set tstep_n = [{result.dt:g}], "
+              f"nstep_n = [{nstep}] in {args.shot_file} (the same {span:g} time units).")
+        return 0
+    path = Path(args.shot_file)
+    try:
+        text = shotfile_text_with(path.read_text(encoding="utf-8"),
+                                  {"tstep_n": [result.dt], "nstep_n": [nstep]}, source=path)
+    except (OSError, ShotfileError) as exc:
+        error(str(exc))
+        return 1
+    note = (f"# was tstep_n = {params.tstep_n}, nstep_n = {params.nstep_n} "
+            f"(run_jorek --suggest-tstep, {date.today().isoformat()})")
+    lines = text.splitlines()
+    at = next(i for i, line in enumerate(lines) if re.match(r"\s*tstep_n\s*=", line))
+    lines.insert(at, note)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"{path}: tstep_n = [{result.dt:g}], nstep_n = [{nstep}]")
     return 0
 
 
@@ -224,8 +290,13 @@ def main(argv: list[str] | None = None) -> int:
                   "without --apply it only lists")
             return 1
         return _run_scan(args)
-    if args.apply or args.force:
-        error("--apply and --force go with --scan")
+    if args.force or (args.apply and not args.suggest_tstep):
+        error("--apply goes with --scan or --suggest-tstep, --force with --scan")
+        return 1
+    if args.suggest_tstep and (args.run or args.run_i or args.run_r or args.run_eq
+                               or args.run_sw or args.keep_inputs or args.dry_run):
+        error("--suggest-tstep launches nothing and goes alone (or with --apply); "
+              "launch afterwards")
         return 1
 
     if args.shot_file is None:
@@ -263,6 +334,9 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as exc:
         error(str(exc))
         return 1
+
+    if args.suggest_tstep:
+        return _suggest_tstep(args, params, site, run_dir)
 
     if args.keep_inputs:
         return _restart_keeping_inputs(args, params, site, run_dir)
@@ -317,6 +391,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"eta:          {params.eta}")
         print(f"JOREK shot folder populated at: {run_dir}")
 
-    _submit(args, result.paths, site, params, dry_run=args.dry_run)
+    try:
+        _submit(args, result.paths, site, params, dry_run=args.dry_run)
+    except OSError as exc:
+        error(f"the previous log could not be kept, so nothing was launched: {exc}")
+        return 1
 
     return 0
