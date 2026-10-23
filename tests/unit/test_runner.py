@@ -462,6 +462,43 @@ def test_real_run_with_refluid_inserts_re_fields(synthetic_campaign, tmp_path, s
     assert fields["dre_par"] == pytest.approx(1e-6)
 
 
+def test_diag_exe_folder_overrides_re_or_standard(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    site, template_dir, params = synthetic_campaign
+    custom = template_dir / "symlink" / "model600_nvar9"
+    custom.mkdir()
+    (custom / "jorek2_postproc").write_text("custom")
+    params = dataclasses.replace(params, diag_exe_folder="model600_nvar9")
+    run_dir = tmp_path / "rundir"
+
+    prepare_run(params, site, run_dir, dry_run=False)
+
+    assert (run_dir / "jorek2_postproc").read_text() == "custom"
+    # only what the custom folder holds: standard's poincare is not mixed in
+    assert not (run_dir / "jorek2_poincare").exists()
+
+
+def test_diag_exe_folder_unset_follows_with_refluid(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
+    site, template_dir, params = synthetic_campaign
+    (template_dir / "symlink" / "standard" / "jorek2_postproc").write_text("standard")
+    run_dir = tmp_path / "rundir"
+
+    prepare_run(params, site, run_dir, dry_run=False)
+
+    assert (run_dir / "jorek2_postproc").read_text() == "standard"
+
+
+def test_diag_exe_folder_missing_raises_before_any_write(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    params = dataclasses.replace(params, diag_exe_folder="no_such_build")
+    run_dir = tmp_path / "rundir"
+
+    with pytest.raises(ShotfileError, match="no_such_build") as exc:
+        prepare_run(params, site, run_dir, dry_run=True)
+
+    assert "RE" in str(exc.value) and "standard" in str(exc.value)
+    assert not run_dir.exists()
+
+
 def test_real_run_empty_preexisting_folder_succeeds(synthetic_campaign, tmp_path, symlinks_maybe_bypassed):
     """The normal first-time case: a user mkdir's an empty run folder
     themselves before invoking the tool."""

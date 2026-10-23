@@ -112,6 +112,13 @@ class ShotParams:
     #: model. Read only by analyse; prepare_run ignores it. None = default.
     four_exe: str | None = None
 
+    #: Folder under template/symlink/ whose files (jorek2_postproc,
+    #: jorek2_poincare, ...) prepare_run links into the run folder, in place
+    #: of "RE" or "standard" -- for diagnostic tools built against a different
+    #: model or n_var. None = "RE" if with_refluid else "standard". util/
+    #: still follows with_refluid.
+    diag_exe_folder: str | None = None
+
     # --- required only for certain methods ---------------------------------
     rho_const: float | None = None
     bnd_file: str | None = None

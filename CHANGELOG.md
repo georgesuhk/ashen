@@ -4,6 +4,22 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-23: `diag_exe_folder` picks the run folder's jorek2_* tools
+
+- New shotfile key `diag_exe_folder = "<name>"`: `run_jorek` links the
+  diagnostic tools (`jorek2_postproc`, `jorek2_poincare`, ...) from
+  `template/symlink/<name>/` in place of `RE` or `standard`. For runs
+  whose model or number of variables differs from both, where the usual
+  postproc stops with "The number of variables in the restart file and the
+  compiled JOREK binary does not agree" and every zeroD, qprofile and
+  profile gather comes back "not produced".
+- Unset, the choice is as before (`RE` if `with_refluid`, else
+  `standard`). `util/` still follows `with_refluid`. A folder that does not
+  exist stops `run_jorek` before anything is written.
+- Applies when a folder is prepared. For a folder prepared already, relink
+  `jorek2_postproc` by hand (README, "Which jorek2_* tools a run folder
+  gets").
+
 ## 2026-10-23: case viewer shows step and time together
 
 - The case viewer's time-series panels carry a second x axis along the top:

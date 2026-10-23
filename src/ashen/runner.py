@@ -333,6 +333,25 @@ def _validate_starwall_options(params: ShotParams, site: Site) -> None:
         )
 
 
+def _diag_exe_dir(params: ShotParams, site: Site) -> Path:
+    """The template/symlink/ folder whose diagnostic tools go into the run
+    folder: the shotfile's diag_exe_folder, else "RE" or "standard" by
+    with_refluid. Checked up front, so a typo stops prepare_run before
+    anything is written rather than leaving a folder without a postproc.
+    """
+    symlink_root = site.template / "symlink"
+    if params.diag_exe_folder is None:
+        return symlink_root / ("RE" if params.with_refluid else "standard")
+    folder = symlink_root / params.diag_exe_folder
+    if not folder.is_dir():
+        available = sorted(p.name for p in symlink_root.iterdir() if p.is_dir()) if symlink_root.is_dir() else []
+        raise ShotfileError(
+            f"diag_exe_folder={params.diag_exe_folder!r}: no folder {folder}; "
+            f"folders in {symlink_root}: {available or 'none'}"
+        )
+    return folder
+
+
 def prepare_run(
     params: ShotParams,
     site: Site,
@@ -373,6 +392,8 @@ def prepare_run(
 
     if params.starwall_options:
         _validate_starwall_options(params, site)
+
+    diag_exe_dir = _diag_exe_dir(params, site)
 
     # ---- pure computation first: psi, profiles, boundary --------------------
     castor_dir = None
@@ -622,8 +643,7 @@ def prepare_run(
         disk.symlink_file(template_bnd, run_dir / params.bnd_file)
 
     disk.symlink_dir(site.jorek_util(params.with_refluid), run_dir, "util")
-    model_symlinks = "RE" if params.with_refluid else "standard"
-    disk.symlink_files_in(site.template / "symlink" / model_symlinks, run_dir)
+    disk.symlink_files_in(diag_exe_dir, run_dir)
 
     disk.set_fields(
         paths.namelists,
