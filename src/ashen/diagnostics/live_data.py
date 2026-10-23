@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-__all__ = ["LIVE_DATA_FILE", "LiveData", "read_live_data"]
+__all__ = ["LIVE_DATA_FILE", "LiveData", "StepTimes", "read_live_data", "read_step_times"]
 
 LIVE_DATA_FILE = "macroscopic_vars.dat"
 
@@ -70,7 +70,9 @@ def read_live_data(path: Path | str, quantity: str = "magnetic_energies") -> Liv
     labels: list[str] = []
     numeric = []
     for row in rows:
-        if row.lstrip().startswith(b"%"):
+        # the column names: %"time" "E_{mag,00}" ... for most quantities,
+        # but "step" "time" with no % for times
+        if row.lstrip().startswith((b"%", b'"')):
             labels = re.findall(r'"([^"]*)"', row.decode(errors="replace"))[1:]
             continue
         numeric.append(row.replace(b"D", b"E").replace(b"d", b"e"))
@@ -107,3 +109,22 @@ def read_live_data(path: Path | str, quantity: str = "magnetic_energies") -> Liv
         ylabel=_meta(data, quantity, "ylabel_si") or quantity,
         logy=(_meta(data, quantity, "logy") or "0").strip() == "1",
     )
+
+
+@dataclass(frozen=True)
+class StepTimes:
+    """Which time each time step reached: JOREK's ``times`` live data."""
+
+    steps: np.ndarray     #: the time step index, as in jorek<step>.h5; ascending
+    time: np.ndarray      #: in the file's SI unit (time_label says which: ms)
+    time_label: str
+
+
+def read_step_times(path: Path | str) -> StepTimes:
+    """Step -> time from ``macroscopic_vars.dat``'s ``times`` quantity, one
+    row per time step, the rows a restart overwrote dropped as in
+    read_live_data. Raises as read_live_data does."""
+    live = read_live_data(path, "times")
+    order = np.argsort(live.x, kind="stable")
+    steps, keep = np.unique(live.x[order], return_index=True)
+    return StepTimes(steps=steps, time=live.values[order, 0][keep], time_label=live.ylabel)

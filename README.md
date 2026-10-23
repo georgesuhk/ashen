@@ -524,6 +524,15 @@ shell or a job as before and just re-run the cell afterwards.
 | `viewer.four_view(RUN)` | for Psi (`variable="T"` for another): mode amplitudes against step and their radial structure at one step (linear unless "log radial structure" is ticked). The modes are chosen from the shotfile's qa (`current_qa` for a `"q_li"` profile, else `qa`): for n = 1 and 2, m up to one past the highest rational surface in the plasma, so qa = 2.8 gives 1/1 2/1 3/1 and 3/2 4/2 5/2 6/2. A checkbox per mode turns it off. **amplitude** switches the left panel between each mode's maximum over the radius and its value on its own q = m/n surface (needs the steps' q-profile caches, which `analyse --diag four` gathers; dots then mark the surfaces on the right). Controls update the figure in place. With `ipympl` installed (`pip install --user ipympl`, restart the kernel) the figure has a toolbar to zoom and pan; a zoomed range is kept across steps until **Reset view**. | the `four` caches, `shotfile.py` |
 | `viewer.profiles_view(RUN)` | a cached radial profile at every gathered step | the `profiles` caches |
 
+**Step and time together.** Every panel against time (magnetic energies,
+the runaway current totals and ratio map) has the time step along its top
+edge, and every panel against the step (the four view's amplitudes, and the
+runaway panels when the zeroD caches give no times) has the time along its
+top. The mapping is the run's own, from the `times` lines of
+`macroscopic_vars.dat`, so a run whose `tstep` changed part way is labelled
+correctly: the top axis is then unevenly spaced. Without that file the
+panel keeps its one axis.
+
 **The folder's own profile.** Whenever the run folder has an
 `ffprime_prof.dat`, the tuner also draws that profile as a broad grey line
 on all three panels, and gives its q0, l_i and qa: the current density, the

@@ -4,6 +4,17 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-23: case viewer shows step and time together
+
+- The case viewer's time-series panels carry a second x axis along the top:
+  the time step over a time axis (magnetic energies, runaway current
+  totals and ratio map), the time [ms] over a step axis (four view
+  amplitudes). Taken from the run's `macroscopic_vars.dat` `times` lines,
+  so it stays right when `tstep` changed during the run. A folder without
+  that file shows the panels as before.
+- Fix: reading `times` from `macroscopic_vars.dat` failed, because its
+  column-name line has no leading `%`.
+
 ## 2026-10-23: restarts staged under both step widths
 
 - Every `jorek2_*` call (postproc, four, ...) now finds its restart in the
