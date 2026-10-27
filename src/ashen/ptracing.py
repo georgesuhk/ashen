@@ -72,6 +72,8 @@ from ashen.config import Site
 from ashen.jorek2 import tool_output_enabled
 from ashen.padding import JOREK_PAD_WIDTHS, restart_name, restart_steps
 from ashen.paths import RunPaths
+from ashen.runner import job_name
+from ashen.shotfile import load_shotfile
 from ashen.castor_io import load_two_col_data
 from ashen.particle_programs import (
     BOUNDARY_FILE,
@@ -455,7 +457,7 @@ def plan_ptrace(
                 " ".join(shlex.quote(word) for word in (
                     "sbatch", "--parsable", str(jobscript),
                     os.path.relpath(exe, work_dir), namelist.name, LOG_FILE,
-                    _job_name(case),
+                    _job_name(case, run_dir),
                 )),
             ) if line
         )
@@ -486,10 +488,16 @@ def _jobscript(site: Site, job: str) -> Path:
     return path
 
 
-def _job_name(case: Case) -> str:
-    """The SLURM job name: "pt_" and the last part of the case's name."""
-    tail = case.name.rstrip("/").rsplit("/", 1)[-1]
-    return "pt_" + re.sub(r"[^A-Za-z0-9._-]", "_", tail)
+def _job_name(case: Case, run_dir: Path) -> str:
+    """The SLURM job name: "pt_" and the run's g, li and eta as
+    runner.job_name writes them, read from its shotfile.py; without a
+    shotfile that loads, the last part of the case's name."""
+    try:
+        return "pt_" + job_name(load_shotfile(run_dir / "shotfile.py"))
+    except Exception:
+        # Only a label: a run folder without a readable shotfile still queues.
+        tail = case.name.rstrip("/").rsplit("/", 1)[-1]
+        return "pt_" + re.sub(r"[^A-Za-z0-9._-]", "_", tail)
 
 
 def _read_meta(work_dir: Path) -> dict:

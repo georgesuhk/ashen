@@ -58,6 +58,7 @@ from ashen import profiles as prof_mod
 from ashen.castor_io import load_two_col_data
 from ashen.config import Site
 from ashen.paths import RunPaths, read_float, write_float
+from ashen.scan import format_value
 from ashen.shotfile import ShotfileError, ShotParams
 
 __all__ = [
@@ -225,10 +226,16 @@ def starwall_response_name(params: ShotParams) -> str:
 
 
 def job_name(params: ShotParams) -> str:
-    """The batch job's name: ``<g>_<eta>``; without g, ``<boundary>_<eta>``."""
-    if params.g is None:
-        return f"{Path(params.bnd_file).stem}_{params.eta:g}"
-    return f"{params.g:.1f}_{params.eta:g}"
+    """The batch job's name: ``g2.3_li1.0_eta1e-3``, the values written as
+    in scan folder names. Without g the boundary stands in for it
+    (``boundary1_li1.0_eta1e-3``); li is left out unless the current
+    profile is built from it (ffprime_method="q_li")."""
+    parts = [f"g{format_value(params.g)}" if params.g is not None
+             else Path(params.bnd_file).stem]
+    if params.current_li is not None:
+        parts.append(f"li{format_value(params.current_li)}")
+    parts.append(f"eta{format_value(params.eta)}")
+    return "_".join(parts)
 
 
 def _toroidal_f0(params: ShotParams, site: Site) -> float:
