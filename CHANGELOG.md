@@ -4,14 +4,16 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
-## 2026-10-27: job names from g, li and eta
+## 2026-10-27: job names from qa, g, li and eta
 
-- SLURM jobs are named after the run's g, li and eta, written as in scan
-  folder names: `g2.3_li1.2_eta1e-3` for `run_jorek` and
-  `pt_g2.3_li1.2_eta1e-3` for `ptrace --run` (was `2.3_0.001` and
+- SLURM jobs are named after the run's qa, g, li and eta, written as in
+  scan folder names: `qa2.1_g2.3_li1.2_eta1e-3` for `run_jorek` and
+  `pt_qa2.1_g2.3_li1.2_eta1e-3` for `ptrace --run` (was `2.3_0.001` and
   `pt_<last part of the case name>`). li appears only for
   `ffprime_method = "q_li"`; a run on a campaign boundary has its boundary
-  in place of g (`boundary1_li1.2_eta1e-3`). ptrace reads these from the
+  in place of qa and g (`boundary1_li1.2_eta1e-3`). `squeue` shows 8
+  characters of a name by default: `squeue -o "%.10i %.30j %.8T %R"`
+  shows it whole. ptrace reads these from the
   run folder's `shotfile.py`, and falls back to the old name without one.
 - `Columbia/jobscripts` has 1-node versions, `1node_2h` and `1node_23h`
   (`p.tok.openmp`, QOS `p.tok.openmp.2h` / `.24h`, still 8 tasks x 32

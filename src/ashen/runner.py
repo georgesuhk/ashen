@@ -226,12 +226,13 @@ def starwall_response_name(params: ShotParams) -> str:
 
 
 def job_name(params: ShotParams) -> str:
-    """The batch job's name: ``g2.3_li1.0_eta1e-3``, the values written as
-    in scan folder names. Without g the boundary stands in for it
+    """The batch job's name: ``qa2.1_g2.3_li1.0_eta1e-3``, the values written
+    as in scan folder names. Without qa and g the boundary stands in for them
     (``boundary1_li1.0_eta1e-3``); li is left out unless the current
     profile is built from it (ffprime_method="q_li")."""
-    parts = [f"g{format_value(params.g)}" if params.g is not None
-             else Path(params.bnd_file).stem]
+    parts = [f"qa{format_value(params.qa)}"] if params.qa is not None else []
+    parts.append(f"g{format_value(params.g)}" if params.g is not None
+                 else Path(params.bnd_file).stem)
     if params.current_li is not None:
         parts.append(f"li{format_value(params.current_li)}")
     parts.append(f"eta{format_value(params.eta)}")
