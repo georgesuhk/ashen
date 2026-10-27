@@ -1067,7 +1067,7 @@ def test_steps_view_previews_and_saves_a_step_size(tmp_path):
     cases = tmp_path / "cases.toml"
     cases.write_text('# keep me\n[cases."qa2.1/eta1e-3"]\nsteps = [0, 200]\n', encoding="utf-8")
 
-    now, row, preview, log = viewer.steps_view(run).children
+    now, row, preview, log, _ = viewer.steps_view(run).children
     start, size, save = row.children
     assert (start.value, size.value) == (0, 200)               # from 0, at the restart spacing
     assert "steps = [0, 200]" in now.value and "2 steps: 0, 200" in now.value
@@ -1112,10 +1112,63 @@ def test_steps_view_adds_a_case_and_says_when_there_is_no_cases_toml(tmp_path):
 
     cases = tmp_path / "camp" / "cases.toml"
     cases.write_text('[cases."other"]\nsteps = [0]\n', encoding="utf-8")
-    now, row, _, _ = viewer.steps_view(run).children
+    now, row, _, _, poincare = viewer.steps_view(run).children
     assert "saving adds it" in now.value and "no restarts in this folder yet" in now.value
+    # Poincare steps for a case not in the file yet: refused, nothing written
+    _, p_row, _, p_log = poincare.children
+    p_row.children[3].click()
+    assert "not saved" in p_log.value and "save its own steps" in p_log.value
+    assert cases.read_text() == '[cases."other"]\nsteps = [0]\n'
     row.children[2].click()
     assert cases.read_text().endswith('\n[cases."new"]\nsteps = { start = 0, step = 1 }\n')
+
+
+def test_steps_view_sets_poincare_steps_of_their_own(tmp_path):
+    pytest.importorskip("ipywidgets")
+    from ashen.cases import load_cases
+
+    run = tmp_path / "qa2.1" / "eta1e-3"
+    run.mkdir(parents=True)
+    for step in range(0, 2001, 200):
+        (run / f"jorek{step:05d}.h5").write_bytes(b"")
+    cases = tmp_path / "cases.toml"
+    text = ('[cases."qa2.1/eta1e-3"]\nsteps = { start = 200, step = 200 }\n\n'
+            '[cases."qa2.1/eta1e-3".four]\nsteps = [1000]\n\n'
+            '# the next campaign\n[cases."other"]\nsteps = [0]\n')
+    cases.write_text(text, encoding="utf-8")
+
+    now, row, _, _, poincare = viewer.steps_view(run).children
+    start, size, _ = row.children
+    p_now, p_row, p_preview, p_log = poincare.children
+    p_start, p_size, copy, p_save = p_row.children
+    assert (p_start.value, p_size.value) == (200, 200)          # starts at the case's
+    assert "Poincaré uses the case's steps" in p_now.value
+
+    start.value, size.value = 400, 400                          # edited, not saved
+    copy.click()
+    assert (p_start.value, p_size.value) == (400, 400)
+    p_size.value = 800
+    assert "{ start = 400, step = 800 }" in p_preview.value and "3 steps: 400, 1200, 2000" in p_preview.value
+    assert cases.read_text() == text                            # nothing written yet
+
+    p_save.click()
+    assert "saved to" in p_log.value and "added the table" in p_log.value
+    assert cases.read_text() == text.replace(
+        "steps = [1000]\n", 'steps = [1000]\n\n[cases."qa2.1/eta1e-3".poincare]\n'
+        "steps = { start = 400, step = 800 }\n")
+    case = load_cases(cases, run_root=tmp_path)["qa2.1/eta1e-3"]
+    assert case.steps == list(range(200, 2001, 200))            # case steps untouched
+    assert case.steps_for("poincare") == [400, 1200, 2000]
+    assert "3 steps" in p_now.value and "<code>poincare</code>" in now.value
+
+    p_start.value = 0
+    p_save.click()
+    assert "replaced" in p_log.value
+    assert load_cases(cases, run_root=tmp_path)["qa2.1/eta1e-3"].steps_for("poincare") == [0, 800, 1600]
+
+    # opened again, the Poincare boxes start at their own saved values
+    p_start, p_size, _, _ = viewer.steps_view(run).children[4].children[1].children
+    assert (p_start.value, p_size.value) == (0, 800)
 
 
 def test_steps_section_sits_between_the_inputs_and_the_gathered_views():

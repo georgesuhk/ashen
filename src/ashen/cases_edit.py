@@ -55,7 +55,15 @@ def _value_end(lines: list[str], start: int, stop: int) -> int:
     raise CasesError("could not find where the case's steps value ends")
 
 
-def set_case_steps(path: Path | str, name: str, steps: dict) -> str:
+def _under_case(header: dict | None, name: str) -> bool:
+    """Whether a header opens ``[cases."<name>"]`` or one of its sub-tables."""
+    return (
+        isinstance(header, dict) and list(header) == ["cases"]
+        and isinstance(header["cases"], dict) and list(header["cases"]) == [name]
+    )
+
+
+def set_case_steps(path: Path | str, name: str, steps: dict, *, diag: str | None = None) -> str:
     """Set ``steps`` of ``[cases."<name>"]`` in cases.toml to a range table.
 
     Replaces the case's own ``steps`` (a list over several lines too), adds
@@ -64,9 +72,15 @@ def set_case_steps(path: Path | str, name: str, steps: dict) -> str:
     comment on the replaced ``steps`` line itself goes with the old value.
     Per-diag ``[cases.NAME.<diag>]`` step overrides are not touched.
 
+    With ``diag`` (e.g. "poincare") it sets that diag's own steps instead,
+    in ``[cases."<name>".<diag>]``: the table is added after the case's
+    other tables if it is not there yet. The case itself must already be in
+    the file -- a case listed only for one diag would have no ``steps``.
+
     Returns what was done: "replaced", "added to the case" or "added the
-    case". Raises CasesError, having written nothing, if the file is not
-    valid TOML or the edit would change anything else.
+    case" ("added the table" for a new diag table). Raises CasesError,
+    having written nothing, if the file is not valid TOML or the edit would
+    change anything else.
     """
     path = Path(path)
     try:
@@ -76,16 +90,40 @@ def set_case_steps(path: Path | str, name: str, steps: dict) -> str:
         raise CasesError(f"{path}: not found") from None
     except tomllib.TOMLDecodeError as exc:
         raise CasesError(f"{path}: malformed TOML -- {exc}") from exc
+    if diag is not None and name not in before.get("cases", {}):
+        raise CasesError(
+            f"{path}: case {name!r} is not in the file; save its own steps before its {diag} steps"
+        )
 
     new_line = f"steps = {format_steps_table(steps)}\n"
     lines = text.splitlines(keepends=True)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
-    wanted = {"cases": {name: {}}}
+    wanted = {"cases": {name: {} if diag is None else {diag: {}}}}
+    table = f"[cases.{json.dumps(name)}]" if diag is None else f"[cases.{json.dumps(name)}.{diag}]"
     head = next((i for i, line in enumerate(lines) if _header(line) == wanted), None)
-    if head is None:
+    if head is None and diag is not None:
+        case_head = next(
+            (i for i, line in enumerate(lines) if _under_case(_header(line), name)), None
+        )
+        if case_head is None:   # e.g. the case written as an inline table
+            at = len(lines)
+        else:
+            # After the case and its sub-tables, before blank lines and any
+            # comment that leads into the next table.
+            at = next(
+                (i for i in range(case_head + 1, len(lines))
+                 if _header(lines[i]) is not None and not _under_case(_header(lines[i]), name)),
+                len(lines),
+            )
+            while at > case_head + 1 and (not lines[at - 1].strip()
+                                          or lines[at - 1].lstrip().startswith("#")):
+                at -= 1
+        lines[at:at] = ["\n", table + "\n", new_line]
+        done = "added the table"
+    elif head is None:
         gap = [] if not lines or not lines[-1].strip() else ["\n"]
-        lines += gap + [f"[cases.{json.dumps(name)}]\n", new_line]
+        lines += gap + [table + "\n", new_line]
         done = "added the case"
     else:
         stop = next(
@@ -102,14 +140,18 @@ def set_case_steps(path: Path | str, name: str, steps: dict) -> str:
 
     new_text = "".join(lines)
     expected = copy.deepcopy(before)
-    expected.setdefault("cases", {}).setdefault(name, {})["steps"] = dict(steps)
+    target = expected.setdefault("cases", {}).setdefault(name, {})
+    if diag is not None:
+        target = target.setdefault(diag, {})
+    target["steps"] = dict(steps)
     try:
         after = tomllib.loads(new_text)
     except tomllib.TOMLDecodeError:
         after = None
     if after != expected:
+        which = f"{name!r}" if diag is None else f"{name!r} for {diag}"
         raise CasesError(
-            f"{path}: could not set steps of case {name!r} without changing something else "
+            f"{path}: could not set steps of case {which} without changing something else "
             "in the file; nothing was written. Edit the case's steps by hand."
         )
 

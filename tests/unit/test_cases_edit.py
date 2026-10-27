@@ -105,3 +105,61 @@ def test_writes_nothing_when_the_file_or_the_edit_is_not_sound(tmp_path):
         set_case_steps(bad, "a", SPEC)
     assert bad.read_text() == inline
     assert list(tmp_path.iterdir()) == [bad]                   # no temp file left
+
+
+# --- a diag's own steps -------------------------------------------------------------
+
+
+def test_replaces_a_diag_override_and_nothing_else(path):
+    assert set_case_steps(path, "qa2.1/eta1e-3", SPEC, diag="four") == "replaced"
+    old, new = FILE.splitlines(keepends=True), path.read_text().splitlines(keepends=True)
+    changed = [i for i, (a, b) in enumerate(zip(old, new)) if a != b]
+    assert len(old) == len(new) and changed == [10] and new[10] == LINE
+    data = tomllib.loads(path.read_text())["cases"]["qa2.1/eta1e-3"]
+    assert data["four"]["steps"] == SPEC and data["steps"]["step"] == 200   # case steps kept
+
+
+def test_adds_a_diag_table_after_the_case_and_its_tables(path):
+    assert set_case_steps(path, "qa2.1/eta1e-3", SPEC, diag="poincare") == "added the table"
+    text = path.read_text()
+    assert ('[cases."qa2.1/eta1e-3".four]\nsteps = [1000, 2000]\n\n'
+            '[cases."qa2.1/eta1e-3".poincare]\n' + LINE + '\n[cases."qa2.1/eta1e-4"]\n') in text
+    assert tomllib.loads(text)["cases"]["qa2.1/eta1e-3"]["poincare"] == {"steps": SPEC}
+
+    # the last case in the file
+    assert set_case_steps(path, "plain", SPEC, diag="poincare") == "added the table"
+    assert path.read_text().endswith('\n[cases."plain".poincare]\n' + LINE)
+
+
+def test_a_diag_table_keeps_a_comment_leading_into_the_next_table(tmp_path):
+    path = tmp_path / "cases.toml"
+    path.write_text('[cases.a]\nsteps = [0]\n\n# next one\n[cases.b]\nsteps = [1]\n')
+    set_case_steps(path, "a", SPEC, diag="poincare")
+    assert path.read_text() == (
+        '[cases.a]\nsteps = [0]\n\n[cases."a".poincare]\n' + LINE + '\n# next one\n[cases.b]\nsteps = [1]\n')
+
+
+def test_diag_steps_load_as_that_diags_override(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    for step in range(0, 2001, 200):
+        (run / f"jorek{step:05d}.h5").write_bytes(b"")
+    path = tmp_path / "cases.toml"
+    path.write_text('[cases."run"]\nsteps = { step = 200 }\n', encoding="utf-8")
+    set_case_steps(path, "run", {"start": 400, "step": 800}, diag="poincare")
+    case = load_cases(path, run_root=tmp_path)["run"]
+    assert case.steps == list(range(0, 2001, 200))
+    assert case.steps_for("poincare") == [400, 1200, 2000]
+
+
+def test_diag_steps_need_the_case_in_the_file(path):
+    with pytest.raises(CasesError, match="save its own steps"):
+        set_case_steps(path, "qa3.3/new run", SPEC, diag="poincare")
+    assert path.read_text() == FILE
+
+    # an inline poincare table cannot take a header after it: refused, nothing written
+    inline = '[cases.a]\nsteps = [0]\npoincare = { steps = [1] }\n'
+    path.write_text(inline, encoding="utf-8")
+    with pytest.raises(CasesError, match="nothing was written"):
+        set_case_steps(path, "a", SPEC, diag="poincare")
+    assert path.read_text() == inline

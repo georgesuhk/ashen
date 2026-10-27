@@ -1813,7 +1813,8 @@ _SECTIONS = [
         "<i>step size</i>-th step from the <i>start step</i> to the last restart. "
         "<b>Save to cases.toml</b> writes "
         "that as this case's <code>steps</code>; restarts written later are picked up without "
-        "saving again.",
+        "saving again. Below, Poincaré tracing (slow) can have steps of its own, set the same "
+        "way; <b>Copy from case steps</b> starts them from the case's.",
         lambda run_dir, step: steps_view(run_dir),
     ),
     (
@@ -1992,6 +1993,11 @@ def steps_view(run_dir: Path | str = "."):
 
     Shows the entry as it is now and what the chosen values would give
     before anything is written. A case not yet in cases.toml is added.
+
+    Below it, the same for the Poincare steps alone,
+    ``[cases."<name>".poincare] steps = { start, step }``: tracing field
+    lines is slow, so ``analyse --diag poincare`` can take fewer steps than
+    the rest. **Copy from case steps** fills its boxes with the case's.
     """
     import tomllib
 
@@ -2006,6 +2012,7 @@ def steps_view(run_dir: Path | str = "."):
     except ShotfileError as exc:
         return w.HTML(f"<pre>{html.escape(str(exc))}</pre>")
     path = root / "cases.toml"
+    DIAG = "poincare"
 
     def resolve(spec):
         return cases._steps_from_spec(spec, case_name=name, source=path, run_dir=run_dir)
@@ -2021,29 +2028,57 @@ def steps_view(run_dir: Path | str = "."):
         )
         return raw is not None, own, data.get("defaults", {}).get("steps"), overrides
 
+    def poincare_entry():
+        """The case's [cases.NAME.poincare] steps, or None."""
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        sub = data.get("cases", {}).get(name, {}).get(DIAG)
+        return sub.get("steps") if isinstance(sub, dict) else None
+
     available = restart_steps(run_dir)
     spacing = min((b - a for a, b in zip(available, available[1:])), default=1)
     try:
         _, own, _, _ = entry()
     except Exception:
         own = None
-    saved = own if isinstance(own, dict) else {}
-    saved_start, saved_size = saved.get("start"), saved.get("step")
-    start = w.BoundedIntText(
-        value=saved_start if isinstance(saved_start, int) and saved_start >= 0 else 0,
-        min=0, max=10**9, step=spacing, description="start step",
-        layout=w.Layout(width="200px"))
-    size = w.BoundedIntText(
-        value=saved_size if isinstance(saved_size, int) and saved_size >= 1 else spacing,
-        min=1, max=10**9, step=spacing, description="step size",
-        layout=w.Layout(width="200px"))
+    try:
+        own_poincare = poincare_entry()
+    except Exception:
+        own_poincare = None
+
+    def boxes(saved, fallback):
+        """(start step, step size) boxes at a saved range table's values,
+        else at ``fallback``'s."""
+        saved = saved if isinstance(saved, dict) else {}
+        first, every = saved.get("start"), saved.get("step")
+        start = w.BoundedIntText(
+            value=first if isinstance(first, int) and first >= 0 else fallback[0],
+            min=0, max=10**9, step=spacing, description="start step",
+            layout=w.Layout(width="200px"))
+        size = w.BoundedIntText(
+            value=every if isinstance(every, int) and every >= 1 else fallback[1],
+            min=1, max=10**9, step=spacing, description="step size",
+            layout=w.Layout(width="200px"))
+        return start, size
+
+    start, size = boxes(own, (0, spacing))
     save = w.Button(description="Save to cases.toml", button_style="primary",
                     layout=w.Layout(width="auto"),
                     tooltip="Writes this case's steps; the rest of the file stays as it is")
     now, preview, log = w.HTML(), w.HTML(), _Log(w)
+    p_start, p_size = boxes(own_poincare, (start.value, size.value))
+    p_copy = w.Button(description="Copy from case steps", layout=w.Layout(width="auto"),
+                      tooltip="Sets these boxes to the case's start step and step size above")
+    p_save = w.Button(description="Save Poincaré steps", button_style="primary",
+                      layout=w.Layout(width="auto"),
+                      tooltip=f"Writes [cases.\"{name}\".{DIAG}] steps; "
+                              "the rest of the file stays as it is")
+    p_now, p_preview, p_log = w.HTML(), w.HTML(), _Log(w)
 
     def spec():
         return {"start": int(start.value), "step": int(size.value)}
+
+    def p_spec():
+        return {"start": int(p_start.value), "step": int(p_size.value)}
 
     def refresh_now():
         code = html.escape(f'[cases."{name}"]')
@@ -2070,11 +2105,26 @@ def steps_view(run_dir: Path | str = "."):
         now.value = (f"<code>{html.escape(str(path))}</code>, <code>{code}</code><br>"
                      f"now: {text}<br>{restarts}")
 
-    def refresh_preview(*_):
-        chosen = resolve(spec())
-        line = (f"would write <code>steps = {html.escape(format_steps_table(spec()))}</code> "
+    def refresh_p_now():
+        code = html.escape(f'[cases."{name}".{DIAG}]')
+        try:
+            steps = poincare_entry()
+            if steps is not None:
+                text = (f"<code>steps = {html.escape(_toml_value(steps))}</code> &rarr; "
+                        f"{_steps_summary(resolve(steps))}")
+            else:
+                text = "no table of its own: Poincaré uses the case's steps"
+        except Exception as exc:
+            text = (f"<span style='color:{_RED}'>{html.escape(type(exc).__name__)}: "
+                    f"{html.escape(str(exc))}</span>")
+        p_now.value = (f"<b>Poincaré steps</b> (slow to trace, so they can be fewer), "
+                       f"<code>{code}</code><br>now: {text}")
+
+    def preview_line(chosen_spec):
+        chosen = resolve(chosen_spec)
+        line = (f"would write <code>steps = {html.escape(format_steps_table(chosen_spec))}</code> "
                 f"&rarr; {_steps_summary(chosen)}")
-        first, every = int(start.value), int(size.value)
+        first, every = chosen_spec["start"], chosen_spec["step"]
         pattern = f"a multiple of {every}" if first == 0 else f"{first} plus a multiple of {every}"
         if available and first > available[-1]:
             line += (f"<br><span style='color:{_RED}'>the start step is after the last "
@@ -2083,7 +2133,13 @@ def steps_view(run_dir: Path | str = "."):
             line += f"<br><span style='color:{_RED}'>no restart is at {pattern}</span>"
         elif available and chosen[-1] != available[-1]:
             line += f"<br>the last restart, {available[-1]}, is not {pattern} and is left out"
-        preview.value = line
+        return line
+
+    def refresh_preview(*_):
+        preview.value = preview_line(spec())
+
+    def refresh_p_preview(*_):
+        p_preview.value = preview_line(p_spec())
 
     def on_save(_):
         with log:
@@ -2095,12 +2151,34 @@ def steps_view(run_dir: Path | str = "."):
             print(f"saved to {path}: steps = {format_steps_table(spec())} ({done}).")
         refresh_now()
 
+    def on_copy(_):
+        p_start.value, p_size.value = start.value, size.value
+
+    def on_p_save(_):
+        with p_log:
+            try:
+                done = set_case_steps(path, name, p_spec(), diag=DIAG)
+            except Exception as exc:
+                print(f"not saved: {exc}")
+                return
+            print(f"saved to {path}: [{DIAG}] steps = {format_steps_table(p_spec())} ({done}).")
+        refresh_now()
+        refresh_p_now()
+
     for control in (start, size):
         control.observe(refresh_preview, names="value")
+    for control in (p_start, p_size):
+        control.observe(refresh_p_preview, names="value")
     save.on_click(on_save)
+    p_copy.on_click(on_copy)
+    p_save.on_click(on_p_save)
     refresh_now()
     refresh_preview()
-    return w.VBox([now, w.HBox([start, size, save]), preview, log.widget])
+    refresh_p_now()
+    refresh_p_preview()
+    poincare = w.VBox([p_now, w.HBox([p_start, p_size, p_copy, p_save]), p_preview, p_log.widget],
+                      layout=w.Layout(margin="10px 0 0 0"))
+    return w.VBox([now, w.HBox([start, size, save]), preview, log.widget, poincare])
 
 
 def _toml_value(value) -> str:

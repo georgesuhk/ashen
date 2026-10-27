@@ -717,6 +717,15 @@ that gives before you press
 **Save to cases.toml**. Comments and every other line of the file are kept;
 per-diag step overrides are left alone.
 
+Poincaré tracing is the slow diag, so the section has a second row for its
+own steps, set the same way and written as
+`[cases."<run>".poincare] steps = { start = <start>, step = <size> }`
+(added after the case's other tables if it is not there). **Copy from case
+steps** fills the row with the start step and step size above, to edit from
+there; **Save Poincaré steps** writes them. `analyse --diag poincare` then
+traces only those steps; every other diag keeps the case's. The case itself
+must be in cases.toml first.
+
 **Trying it without JOREK.** `notebooks/case_viewer_demo.ipynb` writes a
 made-up campaign into `notebooks/demo_campaign/` (`ashen.demo.
 make_demo_campaign`) and shows every view on it. The run's inputs come from

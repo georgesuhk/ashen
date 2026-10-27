@@ -4,6 +4,23 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-27: Poincaré steps of their own from the case viewer
+
+- The case viewer's "Steps to analyse (cases.toml)" section has a second
+  row for the Poincaré steps alone. It has its own start step and step size,
+  a **Copy from case steps** button that fills them from the case's row,
+  and **Save Poincaré steps**, which writes
+  `[cases."<run>".poincare] steps = { start = ..., step = ... }`. It
+  previews them the way the case's row does. `analyse --diag poincare`
+  reads that table already (`Case.steps_for`), so tracing can take fewer
+  steps than the rest. Saving refuses a case not yet in cases.toml.
+- `cases_edit.set_case_steps(..., diag="poincare")` makes that edit: it
+  replaces the table's `steps`, or adds the table after the case and its
+  other tables. As before, it writes nothing unless the result parses to
+  the old file with only that value changed.
+- Unverified: not yet clicked through in a live notebook; tested through
+  the widgets in the unit tests.
+
 ## 2026-10-23: time-step suggestions from the runs' GMRES iterations; logs kept
 
 - `run_jorek shotfile.py --suggest-tstep` suggests the time step for the
