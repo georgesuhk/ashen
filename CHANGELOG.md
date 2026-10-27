@@ -4,6 +4,19 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-27: job names from g, li and eta
+
+- SLURM jobs are named after the run's g, li and eta, written as in scan
+  folder names: `g2.3_li1.2_eta1e-3` for `run_jorek` and
+  `pt_g2.3_li1.2_eta1e-3` for `ptrace --run` (was `2.3_0.001` and
+  `pt_<last part of the case name>`). li appears only for
+  `ffprime_method = "q_li"`; a run on a campaign boundary has its boundary
+  in place of g (`boundary1_li1.2_eta1e-3`). ptrace reads these from the
+  run folder's `shotfile.py`, and falls back to the old name without one.
+- `Columbia/jobscripts` has 1-node versions, `1node_2h` and `1node_23h`
+  (`p.tok.openmp`, QOS `p.tok.openmp.2h` / `.24h`, still 8 tasks x 32
+  threads). Use them with `jobscript = "1node_2h"` or `--job 1node_2h`.
+
 ## 2026-10-27: Poincaré steps of their own from the case viewer
 
 - The case viewer's "Steps to analyse (cases.toml)" section has a second

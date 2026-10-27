@@ -159,6 +159,18 @@ def test_queuing_leaves_the_restart_links_for_the_job(run_dir, slurm):
     assert not is_current(plan)
 
 
+def test_the_job_is_named_after_the_runs_g_li_and_eta(run_dir, slurm):
+    (run_dir / "shotfile.py").write_text(
+        "qa = 2.1\ng = 2.3\neta = 1e-5\ntstep_n = [0.03]\nnstep_n = [10]\nnout = 1\n"
+        "exe = 'jorek_model600'\njobscript = '2h'\nffprime_method = 'q_li'\n"
+        "T_method = 'const'\nT_const = 100.0\nrho_method = 'const'\nrho_const = 1e18\n"
+        "bnd_method = 'file'\nbnd_file = 'b.dat'\n"
+        "current_q0 = 1.0\ncurrent_li = 1.2\ncurrent_qa = 3.0\n"
+    )
+    plan, _ = _queue(run_dir, slurm)
+    assert (plan.work_dir / "sbatch_args.txt").read_text().split()[-1] == "pt_g2.3_li1.2_eta1e-5"
+
+
 def test_a_job_still_queued_is_left_alone(run_dir, slurm, monkeypatch):
     plan, _ = _queue(run_dir, slurm)
     monkeypatch.setenv("FAKE_SQUEUE", "PENDING")

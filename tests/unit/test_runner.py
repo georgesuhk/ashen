@@ -526,14 +526,14 @@ def test_submit_eq_dry_run_returns_command_without_running(synthetic_campaign, t
     assert params.exe in command
 
 
-def test_submit_main_batch_uses_qa_g_eta_in_jobname(synthetic_campaign, tmp_path):
+def test_submit_main_batch_uses_g_eta_in_jobname(synthetic_campaign, tmp_path):
     site, template_dir, params = synthetic_campaign
     result = prepare_run(params, site, tmp_path / "rundir", dry_run=True)
 
     command = submit_main(result.paths, site, params, interactive=False, dry_run=True)
 
     assert "submit_jorek.sh" in command
-    assert f"{params.g:.1f}_{params.eta:g}" in command
+    assert command.endswith(" log g2.3_eta1e-3")
     assert "in_main" in command and "in_main_r" not in command
 
 
@@ -962,11 +962,11 @@ def test_starwall_response_is_named_after_the_boundary(synthetic_campaign, tmp_p
 
     site, template_dir, params = synthetic_campaign
     assert starwall_response_name(params) == "starwall-response_qa2.1_g2.300.dat"
-    assert job_name(params) == "2.3_0.001"
+    assert job_name(params) == "g2.3_eta1e-3"
 
     on_template = _template_params(params, tmp_path / "r", template_dir)
     assert starwall_response_name(on_template) == "starwall-response_boundary1_ext1.2.dat"
-    assert job_name(on_template) == "boundary1_0.001"
+    assert job_name(on_template) == "boundary1_li1.2_eta1e-3"
     assert starwall_response_name(
         dataclasses.replace(on_template, extend_bnd=False)
     ) == "starwall-response_boundary1_noext.dat"
