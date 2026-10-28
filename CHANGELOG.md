@@ -4,6 +4,12 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-10-28: bigger axis labels on the wetted-area figure
+
+- Every axis label on `particle_wetted.png` (map, both profiles, colourbar)
+  is now 18 pt, up from the style's 12. Tick labels and the caption keep
+  their size. The size is `LABEL_SIZE` in `ashen/plotting/particle_wetted.py`.
+
 ## 2026-10-27: job names from qa, g, li and eta
 
 - SLURM jobs are named after the run's qa, g, li and eta, written as in

@@ -45,6 +45,9 @@ def wetted_caption(
     ) + (f"\n{note}" if note else "")
 
 
+#: Font size of every axis label, colourbar's included (the style's is 12).
+LABEL_SIZE = 18
+
 #: The map's colour scale: a density, so not bounded by 1.
 DENSITY_LABEL = r"(fraction of total hits) / m$^2$"
 #: ...and in counts mode: how many particles hit each cell.
@@ -134,22 +137,23 @@ def plot_wetted_area(
         extend = "neither"
         if density_range is not None and density.max() > density_range[1]:
             extend = "max"
-        fig.colorbar(mesh, ax=ax_pol if profiles else ax_map, extend=extend, label=label)
+        fig.colorbar(mesh, ax=ax_pol if profiles else ax_map, extend=extend).set_label(
+            label, fontsize=LABEL_SIZE)
         ax_map.set_xlim(0, 2 * np.pi)
         ax_map.set_ylim(result.l_edges[0], result.l_edges[-1])
         ax_map.set_xticks(_PHI_TICKS[0])
         ax_map.set_xticklabels(_PHI_TICKS[1])
-        ax_map.set_xlabel(r"toroidal angle $\phi$")
-        ax_map.set_ylabel(r"poloidal arc length $l$ [m]")
+        ax_map.set_xlabel(r"toroidal angle $\phi$", fontsize=LABEL_SIZE)
+        ax_map.set_ylabel(r"poloidal arc length $l$ [m]", fontsize=LABEL_SIZE)
 
         if profiles:
             ax_tor.stairs(result.counts.sum(axis=0) / scale, result.phi_edges,
                           fill=True, color="tab:blue", alpha=0.7)
-            ax_tor.set_ylabel(profile_label)
+            ax_tor.set_ylabel(profile_label, fontsize=LABEL_SIZE)
             ax_tor.tick_params(labelbottom=False)
             ax_pol.stairs(result.counts.sum(axis=1) / scale, result.l_edges,
                           fill=True, color="tab:blue", alpha=0.7, orientation="horizontal")
-            ax_pol.set_xlabel(profile_label)
+            ax_pol.set_xlabel(profile_label, fontsize=LABEL_SIZE)
             ax_pol.tick_params(labelleft=False)
 
         fig.suptitle(wetted_caption(result, hits, duration=duration, note=note), fontsize=9)
