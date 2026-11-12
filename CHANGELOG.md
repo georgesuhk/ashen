@@ -4,6 +4,26 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-12: jorek2_four from diag_exe_folder
+
+- `analyse --diag four` now runs the `jorek2_four` in the run folder
+  itself when there is one. `run_jorek` links it in with the run's other
+  `jorek2_*` tools from `template/symlink/<diag_exe_folder>/` (or
+  `RE`/`standard`). Without one it runs `exe/jorek2_four` (the main build),
+  as before. So one `diag_exe_folder` now sets postproc, poincare and four
+  for a run with a non-default model or `n_var`: put a `jorek2_four` link in
+  that folder.
+- `four_exe` in the shotfile still wins over both.
+- `analyse` prints which `jorek2_four` it runs, e.g.
+  `four: using jorek2_four (linked in from template/symlink/)`.
+- A dangling `jorek2_four` link in the run folder is an error. It does not
+  fall back to `exe/`, whose build may be for another model.
+- Folders prepared already get no link: relink by hand with
+  `ln -sf <template>/symlink/<folder>/jorek2_four .`
+- Unverified on the HPC: if `template/symlink/RE`, `standard` or `base`
+  already holds a `jorek2_four`, runs using that folder switch to it from
+  `exe/jorek2_four`.
+
 ## 2026-10-28: bigger axis labels on the wetted-area figure
 
 - Every axis label on `particle_wetted.png` (map, both profiles, colourbar)

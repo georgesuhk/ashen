@@ -109,11 +109,12 @@ class ShotParams:
 
     #: Filename under the run's exe/ that `analyse --diag four` runs in place
     #: of the default jorek2_four -- e.g. one built against a different
-    #: model. Read only by analyse; prepare_run ignores it. None = default.
+    #: model. Read only by analyse; prepare_run ignores it. Wins over a
+    #: jorek2_four from diag_exe_folder. None = default (four_exe_path).
     four_exe: str | None = None
 
     #: Folder under template/symlink/ whose files (jorek2_postproc,
-    #: jorek2_poincare, ...) prepare_run links into the run folder, in place
+    #: jorek2_poincare, jorek2_four, ...) prepare_run links into the run folder, in place
     #: of "RE" or "standard" -- for diagnostic tools built against a different
     #: model or n_var. None = "RE" if with_refluid else "standard". util/
     #: still follows with_refluid.
