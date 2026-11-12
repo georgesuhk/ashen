@@ -4,6 +4,27 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-12: particle_wetted up to an earlier step
+
+- New case key `ptrace_wetted_end_step = STEP`: `plot --diag
+  particle_wetted` counts only the wall hits up to that restart step's
+  time, not to `ptrace_end_step`'s. The scan-map wetted quantities
+  (`f_tot`, `area`, `s`, ...) use the same cut.
+- Plot-time only. It isn't part of the trace's fingerprint, so changing it
+  never makes `ptrace --run` retrace.
+- `--ptrace-wetted-end-step STEP` (alias `--wetted-end-step`) overrides
+  the key for one run, on every case plotted.
+- Output goes to `particle_wetted_end<STEP>.png`/`.json` (after any
+  `_psi<lo>-<hi>` suffix), beside the whole-trace files. The caption says
+  `hits up to step STEP, t = ... ms`, and the JSON has `wetted_end_step`
+  (null for the whole trace).
+- The step's time comes from `ptrace.log`, else the zeroD cache. If
+  neither has it, or the step is not after `ptrace_start_step`, or it is
+  past `ptrace_end_step`, the figure is skipped with a note rather than
+  drawn over a different span. `cases.toml` refuses the last two up front.
+- An unfinished trace is judged against the cut: a trace that got past
+  `ptrace_wetted_end_step` counts as finished for this figure.
+
 ## 2026-11-12: jorek2_four from diag_exe_folder
 
 - `analyse --diag four` now runs the `jorek2_four` in the run folder

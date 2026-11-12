@@ -1022,3 +1022,117 @@ def test_peak_fraction_works_without_ptrace_exe_and_is_checked(tmp_path):
     path.write_text("[cases.run]\nsteps = [1]\npeak_fraction = 2\n", encoding="utf-8")
     with pytest.raises(CasesError, match="peak_fraction"):
         load_cases(path)
+
+
+# --- ptrace_wetted_end_step: hits only up to a chosen step ---------------------------------
+
+_THREE_RESTARTS = (
+    "ptrace_gc: restart step 3000 at t =   0.000000E+00 s\n"
+    "ptrace_gc: restart step 3100 at t =   1.000000E-06 s\n"
+    "ptrace_gc: restart step 3200 at t =   2.000000E-06 s\n"
+)
+
+
+def _staggered(campaign, extra=""):
+    """20 markers inside the wall at t = 0; the first 10 reach it at 1 us,
+    the other 10 at 2 us (restarts 3000, 3100, 3200)."""
+    np.savetxt(campaign / "run" / "original_bnd.dat", circle(200))
+    folder = campaign / "run" / "ptrace" / "ptrace_gc"
+    angles = np.linspace(0, 2 * np.pi, 20, endpoint=False)
+    r = [np.full(20, 0.3), np.r_[np.full(10, 0.7), np.full(10, 0.3)], np.full(20, 0.7)]
+    write_diag(folder / "ptrace_diag.h5",
+               [R0 + ri * np.cos(angles) for ri in r], [ri * np.sin(angles) for ri in r],
+               [angles] * 3, np.zeros((3, 20), int))
+    (folder / "ptrace.log").write_text(_THREE_RESTARTS, encoding="utf-8")
+    (campaign / "cases.toml").write_text(CASES + extra, encoding="utf-8")
+    return folder
+
+
+def test_wetted_end_step_counts_hits_only_up_to_its_time(campaign, capsys):
+    folder = _staggered(campaign, "ptrace_wetted_end_step = 3100\n")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "10 of 20 particles hit the wall" in out
+    assert "hits up to step 3100, t = 0.001 ms (ptrace_wetted_end_step)" in out
+    # beside the whole-trace figure, not over it; and not an "unfinished" trace
+    assert (folder / "particle_wetted_end3100.png").is_file()
+    assert not (folder / "particle_wetted.png").exists()
+    assert "unfinished" not in out
+    numbers = json.loads((folder / "particle_wetted_end3100.json").read_text(encoding="utf-8"))
+    assert numbers["wetted_end_step"] == 3100 and numbers["n_hits"] == 10
+    assert numbers["duration_microseconds"] == pytest.approx(1.0, rel=1e-5)
+    assert numbers["trace_fraction"] is None
+
+
+def test_wetted_without_end_step_counts_the_whole_trace(campaign, capsys):
+    folder = _staggered(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert "20 of 20 particles hit the wall" in capsys.readouterr().out
+    numbers = json.loads((folder / "particle_wetted.json").read_text(encoding="utf-8"))
+    assert numbers["wetted_end_step"] is None
+    assert numbers["duration_microseconds"] == pytest.approx(2.0, rel=1e-5)
+
+
+def test_wetted_end_step_flag_overrides_the_key(campaign, capsys):
+    folder = _staggered(campaign, "ptrace_wetted_end_step = 3200\n")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40",
+                          "--wetted-end-step", "3100"]) == 0
+    assert "10 of 20 particles hit the wall" in capsys.readouterr().out
+    assert (folder / "particle_wetted_end3100.json").is_file()
+
+
+def test_wetted_end_step_with_a_psi_range_carries_both_suffixes(campaign, capsys):
+    folder = _staggered(campaign, "ptrace_wetted_end_step = 3100\n"
+                                  "ptrace_initial_psi_n_range = [0, 1]\n")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40"]) == 0
+    assert (folder / "particle_wetted_psi0-1_end3100.png").is_file()
+
+
+def test_wetted_end_step_without_a_known_time_is_skipped(campaign, capsys):
+    folder = _staggered(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40",
+                          "--wetted-end-step", "3150"]) == 0
+    out = capsys.readouterr().out
+    assert "no time for ptrace_wetted_end_step 3150" in out and "skipped" in out
+    assert not list(folder.glob("particle_wetted*.png"))
+
+
+def test_wetted_end_step_past_ptrace_end_step_is_skipped(campaign, capsys):
+    folder = _staggered(campaign, "ptrace_end_step = 3100\n")
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40",
+                          "--wetted-end-step", "3200"]) == 0
+    assert "is past ptrace_end_step 3100" in capsys.readouterr().out
+    assert not list(folder.glob("particle_wetted*.png"))
+
+
+def test_wetted_end_step_at_the_start_is_skipped(campaign, capsys):
+    _staggered(campaign)
+    assert plot_cli.main(["--case", "run", "--diag", "particle_wetted", "--dpi", "40",
+                          "--wetted-end-step", "3000"]) == 0
+    assert "is not after the trace's start" in capsys.readouterr().out
+
+
+def test_wetted_end_step_key_is_checked(tmp_path):
+    from ashen.cases import CasesError, load_cases
+
+    path = tmp_path / "cases.toml"
+    path.write_text(CASES + "ptrace_wetted_end_step = 3100\n", encoding="utf-8")
+    assert load_cases(path)["run"].ptrace_wetted_end_step == 3100
+    for bad, message in (("-1", "must be a step"), ("true", "must be a step"),
+                         ("2.5", "must be a step"), ("3000", "must be after"),
+                         ("3300\nptrace_end_step = 3200", "is past ptrace_end_step")):
+        path.write_text(CASES + f"ptrace_wetted_end_step = {bad}\n", encoding="utf-8")
+        with pytest.raises(CasesError, match=message):
+            load_cases(path)
+
+
+def test_wetted_end_step_is_not_part_of_the_trace_fingerprint(tmp_path):
+    """Plot-time only: changing it must never make ptrace --run retrace."""
+    from ashen import ptracing
+    from ashen.cases import load_cases
+
+    path = tmp_path / "cases.toml"
+    path.write_text(CASES + "ptrace_wetted_end_step = 3100\n", encoding="utf-8")
+    case = load_cases(path)["run"]
+    assert "ptrace_wetted_end_step" not in ptracing._RESULT_FIELDS
+    assert not case.ptrace_settings
