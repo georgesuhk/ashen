@@ -174,6 +174,17 @@ def _positive_int(text: str) -> int:
     return value
 
 
+def _step_int(text: str) -> int:
+    """argparse type: a restart step, a whole number >= 0."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be a step >= 0, got {text!r}") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be a step >= 0, got {text!r}")
+    return value
+
+
 def _colormap_name(text: str) -> str:
     """argparse type: a matplotlib colour map name, as cases.toml's are."""
     from matplotlib import colormaps
@@ -400,6 +411,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="particle_wetted: use only this part of the colour map, fractions "
         "0 <= LO < HI <= 1, stretched over the colourbar (0 0.9 of hot ends in "
         "light yellow); overrides each case's ptrace_wetted_cmap_range",
+    )
+    parser.add_argument(
+        "--ptrace-wetted-end-step", "--ptrace_wetted_end_step", "--wetted-end-step",
+        type=_step_int, default=None, dest="ptrace_wetted_end_step", metavar="STEP",
+        help="particle_wetted: count wall hits only up to this restart step's "
+        "time (overrides each case's ptrace_wetted_end_step); also for scan "
+        "maps. Written beside the whole-trace figure, as particle_wetted_end<STEP>.png",
     )
     parser.add_argument(
         "--ptrace-exit-psi-n", "--ptrace_exit_psi_n", "--exit-psi-n",
@@ -2685,7 +2703,9 @@ _EARLY_STOPS = (
 _WRITTEN_T_SPAN = re.compile(r"^\s*t_span\s*=\s*([^\s,!]+)", re.MULTILINE)
 
 
-def _unfinished_trace(case: Case, folder: Path, window, history, *, diag: str):
+def _unfinished_trace(
+    case: Case, folder: Path, window, history, *, diag: str, end_label: str | None = None,
+):
     """For a trace that stopped before its end -- still running, out of
     time, killed -- the plots draw what was traced, and say so: a note for
     the captions, and how far it got as a fraction of start..end; printed
@@ -2694,6 +2714,8 @@ def _unfinished_trace(case: Case, folder: Path, window, history, *, diag: str):
 
     The end is ptrace_end_step's time; without one, the last restart the
     trace was given (ptrace.log), unless it traced a t_span instead.
+    end_label names window's end when that is some other step's time
+    (particle_wetted's ptrace_wetted_end_step).
     """
     if history.dropped_rows:
         print(f"  {diag}: the last {history.dropped_rows} row(s) of {history.path.name} were "
@@ -2701,7 +2723,7 @@ def _unfinished_trace(case: Case, folder: Path, window, history, *, diag: str):
     if window is None or history.time.size == 0:
         return None, None
     t_min, t_max = window
-    to = f"ptrace_end_step {case.ptrace_end_step}"
+    to = end_label or f"ptrace_end_step {case.ptrace_end_step}"
     if t_max is None:
         settings = folder / SETTINGS_FILE
         match = _WRITTEN_T_SPAN.search(settings.read_text(encoding="utf-8", errors="replace")) \
@@ -2736,6 +2758,54 @@ def _unfinished_trace(case: Case, folder: Path, window, history, *, diag: str):
     return note, fraction
 
 
+def _restart_times(paths: RunPaths, folder: Path, steps) -> dict[int, float]:
+    """{step: time [s]} for those of steps whose time is known: from
+    ptrace_gc's restart table in ptrace.log, else an existing zeroD cache
+    (never gathered here: that would run JOREK's tools)."""
+    times = _logged_restart_times(folder)
+    for step in steps:
+        if step not in times and zero_d_is_usable(paths.zero_d(step)):
+            try:
+                times[step] = float(read_zeroD(paths.zero_d(step))["Time"])
+            except (OSError, KeyError, ValueError):
+                pass
+    return {step: times[step] for step in steps if step in times}
+
+
+def _wetted_window(case: Case, paths: RunPaths, folder: Path, window):
+    """window (_traced_window's) with its end moved to the time of the
+    case's ptrace_wetted_end_step: (window, note, suffix, end label for
+    _unfinished_trace). Without the key, window unchanged and no note.
+    None, with a message, when the cut can't be made as asked -- the
+    figure is skipped rather than drawn over a different span."""
+    end_step = case.ptrace_wetted_end_step
+    if end_step is None:
+        return window, None, "", None
+    if window is None:
+        print(f"  particle_wetted: ptrace_wetted_end_step {end_step} is set but the "
+              "trace's window is unknown (above); skipped")
+        return None
+    t_min, t_max = window
+    t_end = _restart_times(paths, folder, [end_step]).get(end_step)
+    if t_end is None:
+        print(f"  particle_wetted: no time for ptrace_wetted_end_step {end_step} in "
+              f"{LOG_FILE} or the zeroD cache (analyse --diag zerod gathers it); skipped")
+        return None
+    tol = 1e-9
+    if t_end <= t_min + abs(t_min) * tol:
+        print(f"  particle_wetted: ptrace_wetted_end_step {end_step} (t = {t_end * 1e3:.6g} ms) "
+              f"is not after the trace's start (t = {t_min * 1e3:.6g} ms); skipped")
+        return None
+    if t_max is not None and t_end > t_max + abs(t_max) * tol:
+        print(f"  particle_wetted: ptrace_wetted_end_step {end_step} (t = {t_end * 1e3:.6g} ms) "
+              f"is past ptrace_end_step {case.ptrace_end_step} (t = {t_max * 1e3:.6g} ms); "
+              "the wetted area counts only the traced window; skipped")
+        return None
+    note = f"hits up to step {end_step}, t = {t_end * 1e3:.6g} ms (ptrace_wetted_end_step)"
+    print(f"  particle_wetted: {note}")
+    return (t_min, t_end), note, f"_end{end_step}", f"ptrace_wetted_end_step {end_step}"
+
+
 def _traced_window(
     case: Case, paths: RunPaths, folder: Path, *, diag: str,
 ) -> tuple[float, float | None] | None:
@@ -2753,13 +2823,7 @@ def _traced_window(
     wanted = [start]
     if case.ptrace_end_step is not None:
         wanted.append(case.ptrace_end_step)
-    times = _logged_restart_times(folder)
-    for step in wanted:
-        if step not in times and zero_d_is_usable(paths.zero_d(step)):
-            try:
-                times[step] = float(read_zeroD(paths.zero_d(step))["Time"])
-            except (OSError, KeyError, ValueError):
-                pass
+    times = _restart_times(paths, folder, wanted)
     missing = [step for step in wanted if step not in times]
     if missing:
         print(f"  {diag}: no time for step(s) {missing} in {LOG_FILE} or the zeroD cache; "
@@ -3230,20 +3294,25 @@ def _particle_wetted_numbers(
         return None
 
     window = _traced_window(case, paths, folder, diag="particle_wetted")
+    cut = _wetted_window(case, paths, folder, window)
+    if cut is None:
+        return None
+    window, cut_note, cut_suffix, end_label = cut
     wall = Wall.from_points(boundary)
     inputs = _wetted_inputs(folder, diag, boundary, window, wall)
     unfinished, trace_fraction = _unfinished_trace(
         case, folder, window,
         SimpleNamespace(path=diag, time=inputs.time, dropped_rows=inputs.dropped_rows),
-        diag="particle_wetted",
+        diag="particle_wetted", end_label=end_label,
     )
     selection = _initial_psi_mask(case, inputs.start_psi_n, inputs.n, diag="particle_wetted")
     if selection is None:
         return None
     n_markers = inputs.n
     mask, selected, suffix = selection
+    suffix += cut_suffix
     n_selected = n_markers if mask is None else int(np.count_nonzero(mask))
-    notes = "\n".join(note for note in (selected, unfinished) if note) or None
+    notes = "\n".join(note for note in (selected, cut_note, unfinished) if note) or None
     hits = inputs.hits.wall_hits(mask)
     if hits.n == 0:
         print(f"  particle_wetted: none of {hits.n_considered} particles hit the wall"
@@ -3253,7 +3322,8 @@ def _particle_wetted_numbers(
     result = wetted_area(hits, wall, n_l=n_l, n_phi=n_phi,
                          peak_fraction=case.peak_fraction)
     # How much of the trace the hits were collected over: the diagnostics
-    # times used, i.e. within ptrace_start_step..ptrace_end_step. The
+    # times used, i.e. within ptrace_start_step..ptrace_end_step (or
+    # ptrace_wetted_end_step). The
     # fractions grow with it, so numbers from different spans don't compare.
     t_start, t_end = float(inputs.time[0]), float(inputs.time[-1])
     duration = t_end - t_start
@@ -3270,6 +3340,9 @@ def _particle_wetted_numbers(
         # How far an unfinished trace got, as a fraction of start..end; null
         # for one that got to its end (or whose end is not known).
         "trace_fraction": trace_fraction,
+        # The step whose time the hits were counted up to, when not the
+        # whole trace (ptrace_wetted_end_step); null for the whole trace.
+        "wetted_end_step": case.ptrace_wetted_end_step,
     }
     return SimpleNamespace(result=result, hits=hits, numbers=numbers, folder=folder,
                            suffix=suffix, notes=notes, duration=duration)
@@ -3554,6 +3627,12 @@ def main(argv: list[str] | None = None) -> int:
         cases = {
             name: dataclasses.replace(
                 case, peak_fraction=args.peak_fraction)
+            for name, case in cases.items()
+        }
+    if args.ptrace_wetted_end_step is not None:
+        cases = {
+            name: dataclasses.replace(
+                case, ptrace_wetted_end_step=args.ptrace_wetted_end_step)
             for name, case in cases.items()
         }
 

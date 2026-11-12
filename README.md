@@ -2741,8 +2741,8 @@ ptrace_wetted_empty_color = "black"
 hits again: changing the bins, colour ranges, counts or
 `ptrace_initial_psi_n_range` just redraws. The cache is used only while
 the diagnostics file (its name, size and modification time),
-`original_bnd.dat` and the `ptrace_start_step..ptrace_end_step` times are
-what it was made from; otherwise -- a trace still running, retraced,
+`original_bnd.dat` and the `ptrace_start_step..ptrace_end_step` (or
+`ptrace_wetted_end_step`) times are what it was made from; otherwise -- a trace still running, retraced,
 repacked -- it is recomputed and overwritten. Delete it to force that.
 
 `ptrace_wetted_bins = [n_l, n_phi]` (default `[36, 36]`, or one number for
@@ -2754,6 +2754,28 @@ seeing the numbers barely move is a quick check. The figure,
 poloidal profiles alongside; the numbers also go to `particle_wetted.json`
 in the ptrace folder. Like the other particle plots it is clipped to
 `ptrace_start_step..ptrace_end_step`.
+
+**Hits up to an earlier step.** `ptrace_wetted_end_step = STEP` counts
+only the hits up to that restart step's time, instead of to
+`ptrace_end_step`'s. It is plot-time only: it isn't part of the trace's
+fingerprint, so setting or changing it never makes `ptrace --run` retrace
+(changing `ptrace_end_step` would). The figure and numbers are written as
+`particle_wetted_end<STEP>.png`/`.json`, beside the whole-trace ones, and
+the caption says `hits up to step STEP, t = ... ms`. The scan-map wetted
+quantities (`f_tot`, `area`, ...) use the same cut.
+`--ptrace-wetted-end-step STEP` (or `--wetted-end-step`) overrides it for
+one run, on every case plotted.
+
+```toml
+ptrace_wetted_end_step = 3400
+```
+
+- The step's time comes from `ptrace.log`'s restart table, else the zeroD
+  cache. A step with neither is skipped with a note, not drawn over the
+  whole trace: give it a restart the trace was given, or gather zeroD.
+- It must be after `ptrace_start_step` and no later than `ptrace_end_step`
+  (`cases.toml` refuses either; the flag skips the case with a note).
+- The cut falls on a restart's time, so pick a step the run wrote.
 
 The caption, the printed line and the JSON also say how much of the trace
 the hits were collected over (`over 123 µs of trace`; in the JSON

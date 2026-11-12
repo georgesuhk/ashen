@@ -54,7 +54,7 @@ _CASE_KEYS = (
     "ptrace_wetted_density_range", "ptrace_initial_psi_n_range", "ptrace_loss_bins",
     "ptrace_wetted_counts", "ptrace_wetted_count_range", "ptrace_wetted_cmap",
     "ptrace_wetted_profiles", "ptrace_wetted_empty_color",
-    "ptrace_wetted_cmap_range", "peak_fraction",
+    "ptrace_wetted_cmap_range", "ptrace_wetted_end_step", "peak_fraction",
     "re_current_coords",
 )
 
@@ -346,6 +346,14 @@ class Case:
     #: [0, 0.9] of "hot" ends in light yellow, not white. None = all of it.
     #: `--ptrace-wetted-cmap-range LO HI` overrides it.
     ptrace_wetted_cmap_range: list[float] | None = None
+    #: `plot --diag particle_wetted` (and the scan-map wetted quantities):
+    #: count only the wall hits up to this restart step's time, not to
+    #: ptrace_end_step's. Plot-time only -- not part of the trace's
+    #: fingerprint, so changing it never makes `ptrace --run` retrace. The
+    #: figure and numbers are written under names ending _end<step>, beside
+    #: the whole-trace ones. None = the whole traced window.
+    #: `--ptrace-wetted-end-step` overrides it.
+    ptrace_wetted_end_step: int | None = None
     #: `plot --diag particle_wetted`: peak_density (and peaking) as the mean
     #: hit density over the densest this-fraction of the wall's area, e.g.
     #: 0.05 for the densest 5 %; 0 = the single densest cell.
@@ -624,6 +632,23 @@ def _check_ptrace_fields(merged: dict, *, case_name: str, source: Path) -> None:
                 f"{where}: ptrace_end_step ({end}) is before ptrace_start_step ({start})"
             )
         merged["ptrace_end_step"] = end
+    if merged.get("ptrace_wetted_end_step") is not None:
+        wetted_end = merged["ptrace_wetted_end_step"]
+        if isinstance(wetted_end, bool) or not isinstance(wetted_end, int) or wetted_end < 0:
+            raise CasesError(
+                f"{where}: ptrace_wetted_end_step must be a step >= 0, got {wetted_end!r}"
+            )
+        if start is not None and wetted_end <= start:
+            raise CasesError(
+                f"{where}: ptrace_wetted_end_step ({wetted_end}) must be after "
+                f"ptrace_start_step ({start})"
+            )
+        end = merged.get("ptrace_end_step")
+        if end is not None and wetted_end > end:
+            raise CasesError(
+                f"{where}: ptrace_wetted_end_step ({wetted_end}) is past "
+                f"ptrace_end_step ({end}); the wetted area counts only traced hits"
+            )
 
     if merged.get("ptrace_particles") is not None:
         particles = merged["ptrace_particles"]
