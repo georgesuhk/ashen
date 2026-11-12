@@ -320,8 +320,14 @@ def _run_case(
     if "four" in diags:
         four_steps = case.steps_for("four")
         four_tool = _four_tool(run_dir)
+        four_exe = four_diag.four_exe_path(jrun, four_tool)
         if four_tool is not None:
-            print(f"  four: using exe/{four_tool} (shotfile four_exe)")
+            source = "shotfile four_exe"
+        elif four_exe.parent == jrun.exe_dir:
+            source = "linked in from template/symlink/"
+        else:
+            source = "site exe; none linked into the run folder"
+        print(f"  four: using {four_exe.relative_to(run_dir)} ({source})")
 
         # q-profile locates each mode's q=m/n rational surface for plot's
         # rational_surface_series (diagnostics.four_modes) -- gathered

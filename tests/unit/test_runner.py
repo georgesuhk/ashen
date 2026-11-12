@@ -467,12 +467,15 @@ def test_diag_exe_folder_overrides_re_or_standard(synthetic_campaign, tmp_path, 
     custom = template_dir / "symlink" / "model600_nvar9"
     custom.mkdir()
     (custom / "jorek2_postproc").write_text("custom")
+    (custom / "jorek2_four").write_text("custom four")
     params = dataclasses.replace(params, diag_exe_folder="model600_nvar9")
     run_dir = tmp_path / "rundir"
 
     prepare_run(params, site, run_dir, dry_run=False)
 
     assert (run_dir / "jorek2_postproc").read_text() == "custom"
+    # jorek2_four comes from the same folder; analyse prefers it over exe/'s
+    assert (run_dir / "jorek2_four").read_text() == "custom four"
     # only what the custom folder holds: standard's poincare is not mixed in
     assert not (run_dir / "jorek2_poincare").exists()
 

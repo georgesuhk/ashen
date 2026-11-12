@@ -120,6 +120,53 @@ def test_run_four_step_uses_named_tool(run, paths):
     assert not report.cached and report.n_records > 0
 
 
+_OTHER_FOUR = _FOUR.replace("psi_n * (l + 1)", "psi_n * (l + 7)")
+
+
+def _first_imag(cache_path):
+    from ashen.diagnostics import four_cache as fc_mod
+
+    return [r for r in fc_mod.read_cache(cache_path).values() if r.m == 1][0].imag[-1]
+
+
+def test_run_folder_four_wins_over_exe(run, paths):
+    """A jorek2_four linked into the run folder (from diag_exe_folder) is
+    the one run, not exe/'s -- told apart by what each stub writes."""
+    _install(run.run_dir, "jorek2_four", _OTHER_FOUR)
+    assert four.four_exe_path(run) == run.run_dir / f"jorek2_four{_EXT}"
+
+    report = four.run_four_step(run, paths, 100)
+    assert _first_imag(report.cache) == pytest.approx(8.0)
+
+
+def test_exe_four_used_when_run_folder_has_none(run, paths):
+    assert four.four_exe_path(run) == run.run_dir / "exe" / f"jorek2_four{_EXT}"
+
+    report = four.run_four_step(run, paths, 100)
+    assert _first_imag(report.cache) == pytest.approx(2.0)
+
+
+def test_four_exe_wins_over_run_folder_four(run, paths):
+    """The shotfile's explicit four_exe still names an exe/ entry, even when
+    the diag_exe_folder linked a jorek2_four in."""
+    _install(run.run_dir, "jorek2_four", _OTHER_FOUR)
+    alt = f"jorek2_four_alt{_EXT}"
+    _install(run.run_dir / "exe", "jorek2_four_alt", _FOUR)
+    assert four.four_exe_path(run, alt) == run.run_dir / "exe" / alt
+
+    report = four.run_four_step(run, paths, 100, tool=alt)
+    assert _first_imag(report.cache) == pytest.approx(2.0)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks")
+def test_dangling_run_folder_four_fails_rather_than_falling_back(run, paths):
+    """A broken link from diag_exe_folder must not silently fall back to
+    exe/'s jorek2_four, which may be built for another model."""
+    (run.run_dir / f"jorek2_four{_EXT}").symlink_to(run.run_dir / "no_such_build")
+    with pytest.raises(FileNotFoundError):
+        four.run_four_step(run, paths, 100)
+
+
 def test_analyse_four_tool_rejects_missing_exe(tmp_path):
     from ashen.cli.analyse import _four_tool
 

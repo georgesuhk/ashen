@@ -35,10 +35,17 @@ field-line coordinates by following one field line per flux surface
 Fortran `stop` -- exit status 0, no output. After a crash has broken up the
 flux surfaces that is a property of the step, not a fault, so it surfaces as
 FieldLineTracingError and run_four_scan skips the step rather than the case.
+
+Which executable: see four_exe_path. A jorek2_four linked into the run
+folder itself (prepare_run links in everything in the shotfile's
+diag_exe_folder, else RE/standard, alongside jorek2_postproc) wins over
+exe/jorek2_four (site.exe's build), so one folder sets every jorek2_* tool
+a run with a non-default model or n_var needs.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import warnings
 from collections.abc import Callable
@@ -61,14 +68,42 @@ from ashen.paths import RunPaths
 
 __all__ = [
     "FieldLineTracingError", "FourStepReport", "four_params_nml",
-    "run_four_step", "run_four_scan",
+    "four_exe_path", "run_four_step", "run_four_scan",
 ]
 
-#: The jorek2_four executable, resolved under a prepared run folder's ``exe/``
-#: symlink (to site.exe) rather than a per-tool top-level symlink. Module-level
-#: so tests can point it at a stub -- on Windows an extensionless file cannot
-#: be executed, so a stub has to be called ``jorek2_four.cmd``.
+#: The jorek2_four executable's name: in the run folder itself when the
+#: diag_exe_folder provides one, else under ``exe/`` (see four_exe_path).
+#: Module-level so tests can point it at a stub -- on Windows an extensionless
+#: file cannot be executed, so a stub has to be called ``jorek2_four.cmd``.
 FOUR_TOOL = "jorek2_four"
+
+
+def _four_exe_location(run: Jorek2Run, tool: str | None) -> tuple[str | None, str]:
+    """(exe_subdir, name) for run_tool; see four_exe_path."""
+    if tool is not None:
+        return "exe", tool
+    # lexists, not is_file: a dangling link means the diag_exe_folder meant
+    # to provide jorek2_four, so run_tool should fail on it rather than
+    # silently fall back to a build for another model.
+    if os.path.lexists(run.exe_dir / FOUR_TOOL):
+        return None, FOUR_TOOL
+    return "exe", FOUR_TOOL
+
+
+def four_exe_path(run: Jorek2Run, tool: str | None = None) -> Path:
+    """The jorek2_four that run_four_step runs, first match wins:
+
+    1. tool (the shotfile's four_exe), under exe/.
+    2. FOUR_TOOL in the run folder itself -- linked in by prepare_run from
+       the shotfile's diag_exe_folder (else RE/standard) when that folder
+       holds one, like jorek2_postproc and jorek2_poincare.
+    3. FOUR_TOOL under exe/ (site.exe's build), as before diag_exe_folder
+       covered jorek2_four.
+
+    FOUR_TOOL is read at call time so a test's monkeypatch of it applies.
+    """
+    subdir, name = _four_exe_location(run, tool)
+    return (run.exe_dir / subdir if subdir else run.exe_dir) / name
 
 #: jorek2_four.f90:99-119 -- one file per (variable, toroidal mode n).
 _FILE_RE = re.compile(r"^(?P<var>.+)_modes_n(?P<n>\d{3})$")
@@ -194,10 +229,11 @@ def run_four_step(
     Cached whole: unlike Poincare tracing, not incremental -- a step with
     an existing cache does nothing unless force=True.
 
-    tool names the executable under exe/; None means FOUR_TOOL, looked up
-    at call time so a test's monkeypatch of it still applies.
+    tool names the executable under exe/; None means FOUR_TOOL, from the
+    run folder if diag_exe_folder linked one in, else exe/ -- see
+    four_exe_path.
     """
-    tool = tool or FOUR_TOOL
+    exe_subdir, tool = _four_exe_location(run, tool)
     cache_path = paths.four_cache(step)
     if not force and cache_path.is_file():
         return FourStepReport(
@@ -221,7 +257,7 @@ def run_four_step(
                 )
             },
             env={"OMP_NUM_THREADS": str(max(int(omp_threads), 1))},
-            exe_subdir="exe",
+            exe_subdir=exe_subdir,
             # Captured (teed, if echoing) so a tracing abort can be told
             # apart from any other silent failure.
             capture_stdout=True,
