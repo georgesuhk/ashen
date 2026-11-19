@@ -1637,7 +1637,9 @@ encoding its `marker` does. Both fields can be set on the same
 `[comparisons.X.datasets.Y]` table regardless of which figure is drawn from
 it; `plot` notes when a figure ignores the one it doesn't need. `c_quantity`
 is optional -- omitted, the figure is a plain 2D scatter of runs with no
-third quantity at all.
+third quantity at all, and under `color` encoding each dataset is then drawn
+in its own `color` as well as its own `marker`, since colour encodes nothing
+else.
 
 **`edge_q`'s clamping.** `jorek2_postproc` writes the q-profile over the
 case's `rad_range`, whose default outer bound is `0.999` -- so the default

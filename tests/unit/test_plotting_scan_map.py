@@ -330,3 +330,31 @@ def test_encode_not_in_encodings_raises():
     assert set(ENCODINGS) == {"color", "size"}
     with pytest.raises(ValueError):
         plot_scan_map([ScanPoint(x=1, y=1, c=0.1)], "unused.png", encode="rainbow")
+
+
+def test_plot_scan_map_datasets_without_c_uses_each_datasets_color(tmp_path, monkeypatch):
+    # no third quantity: colour encodes nothing, so datasets get their own
+    from matplotlib.colors import to_rgba
+
+    captured = _spy_subplots(monkeypatch)
+    series = [("a", [ScanPoint(x=1, y=1)]), ("b", [ScanPoint(x=2, y=2)])]
+    plot_scan_map_datasets(
+        series, tmp_path / "scan.png", encode=COLOR_ENCODING, colors=["tab:red", None],
+    )
+    fig, ax = captured[-1]
+    faces = [coll.get_facecolor()[0] for coll in ax.collections]
+    assert faces[0] == pytest.approx(to_rgba("tab:red"))
+    assert faces[1] == pytest.approx(to_rgba(DISCRETE_PALETTE[1]))
+
+
+def test_plot_scan_map_datasets_with_c_ignores_dataset_colors(tmp_path, monkeypatch):
+    from matplotlib.colors import to_rgba
+
+    captured = _spy_subplots(monkeypatch)
+    series = [("a", [ScanPoint(x=1, y=1, c=0.1)]), ("b", [ScanPoint(x=2, y=2, c=0.9)])]
+    plot_scan_map_datasets(
+        series, tmp_path / "scan.png", encode=COLOR_ENCODING, colors=["tab:red", "tab:red"],
+    )
+    fig, ax = captured[-1]
+    faces = [coll.get_facecolor()[0] for coll in ax.collections]
+    assert all(face != pytest.approx(to_rgba("tab:red")) for face in faces)

@@ -4,6 +4,16 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-18: scan-map datasets keep their colours without a third quantity
+
+- A `datasets` scan map with no `c_quantity` now draws each dataset in its
+  `color` as well as its `marker`, under the default `map_encoding =
+  "color"`. Before, every dataset was blue, told apart only by shape, and
+  plot printed "color is ignored under map_encoding='color'".
+- `color` left unset is assigned from the palette by position, as under
+  `size` encoding. With a `c_quantity`, nothing changes: colour shows its
+  value and datasets differ by marker.
+
 ## 2026-11-18: plot gathers zeroD in parallel by default
 
 - The zeroD and q-profile caches plot fills in on demand (true-time axes,

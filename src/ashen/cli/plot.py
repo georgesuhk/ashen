@@ -2461,7 +2461,7 @@ def _compare_scan_map(
                     f"  dataset {ds_name!r}: marker is ignored under "
                     "map_encoding='size' (colour tells datasets apart there)"
                 )
-            if encode == "color" and ds.color is not None:
+            if encode == "color" and ds.color is not None and c_name:
                 print(
                     f"  dataset {ds_name!r}: color is ignored under "
                     "map_encoding='color' (marker tells datasets apart there)"
