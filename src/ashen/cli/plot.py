@@ -359,9 +359,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--n-workers", type=int, default=None,
-        help="poincare steps rendered concurrently, and steps gathered "
-        "concurrently under --analyse (default: site.toml's [diagnostics] "
-        "n_workers)",
+        help="steps gathered concurrently (zeroD/q-profile top-ups, "
+        "--analyse) and poincare steps rendered concurrently (default: "
+        "site.toml's [diagnostics] n_workers; unset, gathers derive it from "
+        "the core count as analyse does, and rendering is serial)",
     )
     parser.add_argument(
         "--analyse", action="store_true",
@@ -2044,6 +2045,7 @@ def _delta_b_xy(
     quantity: str,
     mode: tuple[int, int] | None,
     steps: list[int] | str | None,
+    n_workers: int = 1,
 ) -> tuple[list[float], list[float]]:
     """One (x, delta-B) point per case in `labelled_cases` -- the per-case
     computation shared by both a flat comparison's single series and each
@@ -2091,8 +2093,8 @@ def _delta_b_xy(
                       "the Btor profile at the plasma edge for step 0)")
                 continue
 
-        _ensure_qprofile(case, paths, case_steps)
-        _ensure_zero_d(case, paths, case_steps)
+        _ensure_qprofile(case, paths, case_steps, n_workers=n_workers)
+        _ensure_zero_d(case, paths, case_steps, n_workers=n_workers)
         converted = delta_b_series(
             paths, case_steps, r_axis=r0, f0=f0, modes=modes_filter, b_ref=b_ref,
             edge=case.four_delta_b_at == "edge",
@@ -2144,6 +2146,7 @@ def _compare_delta_b(
     dpi: int | None,
     steps: list[int] | str | None,
     dataset_names: list[str] | None = None,
+    n_workers: int = 1,
 ) -> None:
     """Delta-B (or delta-B/B), one scalar per case (see _delta_b_xy),
     plotted against a numeric x-axis -- e.g. max delta-B vs. eta. Needs
@@ -2171,6 +2174,7 @@ def _compare_delta_b(
         lambda labelled, x_by_case: _delta_b_xy(
             labelled, x_by_case, cases,
             variable=variable, quantity=quantity, mode=mode, steps=steps,
+            n_workers=n_workers,
         ),
         what=variable,
         out_stem=f"{comparison.name}_{variable}_{quantity}",
@@ -2519,6 +2523,26 @@ def _resolve_n_workers(args) -> int:
     return max(1, diagnostics.n_workers) if diagnostics.n_workers else 1
 
 
+def _resolve_gather_workers(args) -> int:
+    """Steps gathered at once by plot's on-demand top-ups (_ensure_zero_d,
+    _ensure_qprofile): resolved as analyse resolves its own -- --n-workers,
+    else site.toml's [diagnostics] n_workers, else derived from the core
+    count (config.Diagnostics.resolve) -- since each is a jorek2_postproc
+    call per step, which is what analyse fans out. Poincare rendering keeps
+    _resolve_n_workers' serial default."""
+    from ashen.config import Diagnostics
+
+    try:
+        diagnostics = load_site(args.site).diagnostics
+    except SiteConfigError:
+        diagnostics = Diagnostics()
+    if args.n_workers is not None:
+        diagnostics = Diagnostics(
+            n_workers=max(1, args.n_workers), omp_threads=diagnostics.omp_threads,
+        )
+    return diagnostics.resolve()[0]
+
+
 def _run_case(
     case: Case,
     *,
@@ -2528,6 +2552,7 @@ def _run_case(
     smooth: bool,
     dpi: int | None,
     n_workers: int = 1,
+    render_workers: int = 1,
     psi_range: tuple[float, float] | None = None,
     four_log: bool = True,
     four_radial_log: bool = False,
@@ -2571,7 +2596,7 @@ def _run_case(
     if "poincare" in diags:
         _plot_poincare(
             case, paths, step_lists["poincare"], dpi=dpi,
-            n_workers=n_workers, point_size=point_size,
+            n_workers=render_workers, point_size=point_size,
         )
     if "connection_length" in diags:
         # --psi-range (if given) further bounds-filters whichever list is
@@ -3709,6 +3734,7 @@ def _run_comparisons(
                 comparison, cases,
                 variable=delta_b_variable, quantity=delta_b_quantity, mode=delta_b_mode,
                 dpi=dpi, steps=steps, dataset_names=dataset_names,
+                n_workers=n_workers,
             )
         if "particle_exits" in comparable:
             _compare_particle_exits(
@@ -3859,10 +3885,11 @@ def main(argv: list[str] | None = None) -> int:
             error(f"{flag}: unknown quantity {value!r}; --list-quantities to see them")
             return 1
 
-    # Resolved before the --compare branch too: a scan map's on-demand
-    # zeroD/qprofile top-up needs it, and _run_comparisons didn't take it at
-    # all before scan_map existed.
-    n_workers = _resolve_n_workers(args)
+    # Steps the on-demand zeroD/qprofile top-ups gather at once, defaulting
+    # as analyse's do (_resolve_gather_workers). Resolved before the
+    # --compare branch too: a scan map's top-up needs it. Poincare rendering
+    # resolves its own (_resolve_n_workers, serial by default).
+    n_workers = _resolve_gather_workers(args)
 
     if args.comparisons:
         return _run_comparisons(
@@ -3928,6 +3955,7 @@ def main(argv: list[str] | None = None) -> int:
                 smooth=args.smooth,
                 dpi=dpi,
                 n_workers=n_workers,
+                render_workers=_resolve_n_workers(args),
                 psi_range=psi_range,
                 four_log=not args.four_linear,
                 four_radial_log=args.four_radial_log,

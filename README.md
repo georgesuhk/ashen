@@ -1133,6 +1133,11 @@ touching the gathering path.
   python ~/ashen/bin/plot --compare 'qa3.1_g*/eta1e-3_adv0.1' --diag scan_map \
       --x-quantity li --y-quantity delta_b_max --analyse
   ```
+- `--n-workers N` sets how many steps plot's gathers run at once: the zeroD
+  and q-profile caches it fills in on demand, and `--analyse`. Left unset,
+  it is site.toml's `[diagnostics] n_workers`, else derived from the core
+  count exactly as `analyse` derives it. Poincare figures are rendered
+  `--n-workers` at a time too, but serially when neither is set.
 - `--dpi N` overrides the figure resolution.
 - `scan_map` (comparison-only, see below): `--x-quantity`/`--y-quantity`/
   `--c-quantity NAME` pick the per-run scalars; `--map-encoding
