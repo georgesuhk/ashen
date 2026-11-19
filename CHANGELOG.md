@@ -4,6 +4,25 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-18: scan-map delta-B over every step (fix)
+
+- Bug: the scan map's delta-B quantities (`delta_b_max`,
+  `delta_b_over_b_*`, `delta_b_mode_max`, `*_at_deconfinement`,
+  `energy_32_over_21_*`) could silently come out at noise level.
+- Cause: delta-B divides by each surface's minor radius, which needs zeroD
+  and the q-profile at every `four` step. `analyse --diag four` (and the
+  case viewer's button) gathers the q-profile but not zeroD. The `--diag
+  four` figures fill in the missing zeroD, but the scan map didn't. So any
+  step without zeroD dropped out of the max, and a run whose zeroD covered
+  only its early steps reported the pre-growth value. That is how 3e-16 T
+  came out for qa3.1_g2.0.
+- Fix: these quantities now fill in zeroD and the q-profile for every step
+  they read, as the `four` figures do. A step that has a `four` cache but
+  still no value (zeroD can't be gathered) is named in a note saying the
+  value is over the other steps.
+- Nothing to rerun: plot again and the missing zeroD is gathered. It is
+  one `jorek2_postproc` call per step.
+
 ## 2026-11-18: plot --analyse gathers first
 
 - `plot --analyse` runs `analyse`'s own gather before drawing, for the

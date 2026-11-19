@@ -490,6 +490,47 @@ def _value_at_step(series: dict, variable: str, steps: list[int], step: int) -> 
     return float(max(finite)) if finite else None
 
 
+def _ensure_radius_caches(ctx: QuantityContext, steps: list[int]) -> None:
+    """Top up the zeroD and q-profile caches delta_b's minor radius reads
+    at every one of `steps` (four_modes.minor_radius_profile). Without
+    them a step's delta_b is nan and silently drops out of a max -- which
+    `analyse --diag four` alone leaves happening, since it gathers the
+    q-profile but not zeroD. cli/plot's --diag four figures top up the
+    same way (_ensure_zero_d)."""
+    if ctx.ensure_zero_d is not None:
+        ctx.ensure_zero_d(steps)
+    if ctx.ensure_qprofile is not None:
+        ctx.ensure_qprofile(steps)
+
+
+def _report_valueless_steps(
+    ctx: QuantityContext, steps: list[int], series, what: str,
+) -> None:
+    """Name the steps whose four cache exists but which still gave no value
+    (no usable zeroD or q-profile there), since a max or ratio over the rest
+    is over fewer steps than asked for. Steps with no four cache at all are
+    the usual unreached tail of a run, so they are not listed."""
+    stacked = np.vstack([np.asarray(v, dtype=float) for v in series])
+    has_value = np.any(np.isfinite(stacked), axis=0)
+    lacking = [
+        step for step, ok in zip(steps, has_value)
+        if not ok and ctx.paths.four_cache(step).is_file()
+    ]
+    if lacking:
+        ctx.report(
+            f"  {ctx.case.name}: {what} has no value at {len(lacking)} of "
+            f"{len(steps)} step(s) with a four cache ({_step_list(lacking)}): no "
+            "usable zeroD or q-profile there; the value is over the other steps"
+        )
+
+
+def _step_list(steps: list[int], limit: int = 6) -> str:
+    """`steps` for a one-line note, shortened past `limit`."""
+    if len(steps) <= limit:
+        return ", ".join(map(str, steps))
+    return f"{', '.join(map(str, steps[:limit]))}, ... {steps[-1]}"
+
+
 def _delta_b_value(ctx: QuantityContext, *, variable: str, reduction: str) -> float | None:
     """The per-case body of cli/plot.py's _delta_b_xy, lifted verbatim
     minus its loop, its x bookkeeping and its Jorek2Run literal.
@@ -530,6 +571,7 @@ def _delta_b_value(ctx: QuantityContext, *, variable: str, reduction: str) -> fl
             )
             return None
 
+    _ensure_radius_caches(ctx, steps)
     converted = delta_b_series(
         paths, steps, r_axis=r0, f0=f0, modes=modes_filter, b_ref=b_ref,
         edge=case.four_delta_b_at == "edge",
@@ -545,6 +587,7 @@ def _delta_b_value(ctx: QuantityContext, *, variable: str, reduction: str) -> fl
     if all(np.all(np.isnan(v)) for v in converted.values()):
         ctx.report(f"  {case.name}: {variable} needs {DELTA_B_NEEDS}, skipped")
         return None
+    _report_valueless_steps(ctx, steps, converted.values(), variable)
 
     if reduction == "max":
         value = _peak_of_variable(converted, variable)
@@ -611,6 +654,7 @@ def _mode_energy_fraction(ctx: QuantityContext, *, reduction: str) -> float | No
         ctx.report(f"  {case.name}: skipping ({exc})")
         return None
 
+    _ensure_radius_caches(ctx, steps)
     series = delta_b_series(
         paths, steps, r_axis=r0, f0=f0, modes=[(n32, m32), (n21, m21)],
         edge=case.four_delta_b_at == "edge",
@@ -628,6 +672,8 @@ def _mode_energy_fraction(ctx: QuantityContext, *, reduction: str) -> float | No
     if np.all(np.isnan(db32)) or np.all(np.isnan(db21)):
         ctx.report(f"  {case.name}: mode energy fraction needs {DELTA_B_NEEDS}, skipped")
         return None
+    # nan where either mode is: the ratio needs both
+    _report_valueless_steps(ctx, steps, [db32 + db21], "mode energy fraction")
 
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = (db32**2) / (db21**2)

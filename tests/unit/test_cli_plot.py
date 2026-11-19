@@ -3761,3 +3761,54 @@ def test_analyse_with_step_all_is_an_error(scan_campaign, gathered):
         "--compare", "scan", "--diag", "scan_map", "--analyse", "--step", "all",
     ]) == 1
     assert gathered == []
+
+
+# --- scan-map delta_b over steps whose zeroD analyse --diag four didn't gather -
+
+
+@pytest.fixture
+def late_growth(scan_campaign, monkeypatch):
+    """scan/eta1e-3 grows by step 200 (peak 400 vs 4 at step 100), with a
+    four cache there but no zeroD -- what `analyse --diag four` leaves, as
+    it gathers the q-profile but not zeroD. The minor radius needs zeroD,
+    so it is None at a step without one, as minor_radius_profile's is."""
+    from ashen.diagnostics import four_modes
+
+    run_dir = scan_campaign / "scan" / "eta1e-3"
+    (run_dir / "jorek000200.h5").write_bytes(b"")
+    _write_four_cache(run_dir, 200, records=[_four_record("Psi", 1, 2, real_peak=400.0)])
+
+    def radius_needs_zero_d(paths, step, *, f0, r_axis):
+        if not paths.zero_d(step).is_file():
+            return None
+        return np.array([0.0, 1.0]), np.array([r_axis, r_axis])
+
+    monkeypatch.setattr(four_modes, "minor_radius_profile", radius_needs_zero_d)
+    monkeypatch.setattr(plot_cli, "_ensure_qprofile", lambda *a, **k: None)
+    return scan_campaign
+
+
+def _delta_b_scan(capsys) -> str:
+    plot_cli.main([
+        "--compare", "scan/*", "--diag", "scan_map", "--x-quantity", "eta",
+        "--y-quantity", "delta_b_max", "--step", "100", "--step", "200",
+    ])
+    return capsys.readouterr().out
+
+
+def test_scan_map_delta_b_tops_up_zero_d_at_every_step(late_growth, monkeypatch, capsys):
+    monkeypatch.setattr(plot_cli, "run_zero_d", _fake_run_zero_d_writes_cache)
+    out = _delta_b_scan(capsys)
+    # |m| |Psi| / r_axis**2 = 2 * 400 / 4 at step 200; 2 at step 100 alone
+    assert "scan/eta1e-3: eta=0.001, delta_b_max=200" in out
+    assert "has no value" not in out
+
+
+def test_scan_map_delta_b_names_steps_left_without_a_value(late_growth, monkeypatch, capsys):
+    def no_postproc(*args, **kwargs):
+        raise FileNotFoundError("no jorek2_postproc")
+
+    monkeypatch.setattr(plot_cli, "run_zero_d", no_postproc)
+    out = _delta_b_scan(capsys)
+    assert "scan/eta1e-3: delta_b has no value at 1 of 2 step(s) with a four cache (200)" in out
+    assert "scan/eta1e-3: eta=0.001, delta_b_max=2" in out
