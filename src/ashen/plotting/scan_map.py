@@ -430,8 +430,8 @@ def plot_scan_map_datasets(
 
     As in plot_scan_map: if every point's `c` is None (no `c_quantity`
     configured), no colorer/sizer is built and no colourbar/size legend is
-    attached -- datasets are still told apart per `encode` (marker or
-    colour), there is simply nothing third to encode.
+    attached. Colour then encodes nothing, so under COLOR_ENCODING each
+    dataset is drawn in its own colour as well as its own marker.
     """
     import matplotlib.pyplot as plt
 
@@ -470,11 +470,17 @@ def plot_scan_map_datasets(
                 marker = markers[idx] if markers is not None and idx < len(markers) else None
                 if marker is None:
                     marker = MARKER_CYCLE[idx % len(MARKER_CYCLE)]
+                # With no third quantity, colour encodes nothing, so each
+                # dataset gets its own as well as its marker.
+                plain = {}
+                if not has_c:
+                    color = colors[idx] if colors is not None and idx < len(colors) else None
+                    plain["color"] = color or DISCRETE_PALETTE[idx % len(DISCRETE_PALETTE)]
                 draw_scan_map(
                     ax, pts, encode=encode, xlabel=xlabel, ylabel=ylabel,
                     log_x=log_x, log_y=log_y, log_c=log_c, marker=marker,
                     colorer=shared_colorer, point_size=60.0, label=label,
-                    annotate=annotate,
+                    annotate=annotate, **plain,
                 )
             ax.legend(loc="upper left")
             if shared_colorer is not None:
