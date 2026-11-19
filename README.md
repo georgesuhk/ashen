@@ -1117,6 +1117,22 @@ touching the gathering path.
   threshold (comparison-only, see below).
 - `--compare NAME` (repeatable) draws a `[comparisons.*]` figure instead of
   per-case figures; `--list-comparisons` shows what's defined (see below).
+- `--analyse` first gathers what the requested figures read, exactly as
+  `analyse --diag ...` would, then draws them. It gathers only the steps
+  the figures draw (`--step`, else each figure's `[cases.NAME.<diag>]`
+  steps). A scan map gathers for its quantities: the delta-B family needs
+  `four`, `wetted_fraction` and `lc_finite_*` need `poincare`, and the
+  equilibrium ones (`li`, `q95`, `eta`, ...) need nothing beyond zeroD and
+  the q-profile, which plot gathers on demand anyway. Cached steps are
+  kept; add `--force` to regather them. A case that fails to gather is
+  reported and left out of the figure, and the exit status is 1.
+  `--n-workers` sets how many steps are gathered at once. `--step all`
+  can't be combined with it.
+
+  ```bash
+  python ~/ashen/bin/plot --compare 'qa3.1_g*/eta1e-3_adv0.1' --diag scan_map \
+      --x-quantity li --y-quantity delta_b_max --analyse
+  ```
 - `--dpi N` overrides the figure resolution.
 - `scan_map` (comparison-only, see below): `--x-quantity`/`--y-quantity`/
   `--c-quantity NAME` pick the per-run scalars; `--map-encoding

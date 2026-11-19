@@ -3663,3 +3663,152 @@ def test_re_current_is_silent_for_a_case_without_it_unless_asked(campaign, capsy
 
     plot_cli._plot_re_current(case, paths, [100, 200], dpi=None, explicit=True)
     assert "run analyse --diag re_current" in capsys.readouterr().out
+
+
+# --- --analyse: gather what the figures read, then draw ----------------------
+
+
+@pytest.fixture
+def gathered(monkeypatch):
+    """Record analyse's per-case gather instead of running jorek2_*: one
+    (case name, {diag: steps}, force) per call."""
+    from ashen.cli import analyse as analyse_cli
+
+    calls = []
+
+    def fake_run_case(case, *, diags, force, n_workers, omp_threads):
+        calls.append((case.name, {d: case.steps_for(d) for d in diags}, force))
+
+    monkeypatch.setattr(analyse_cli, "_run_case", fake_run_case)
+    return calls
+
+
+def test_analyse_gathers_four_for_a_delta_b_scan_map(scan_campaign, gathered):
+    assert plot_cli.main([
+        "--compare", "scan/*", "--diag", "scan_map",
+        "--x-quantity", "li3", "--y-quantity", "delta_b_max", "--analyse",
+    ]) == 0
+    assert gathered == [
+        ("scan/eta1e-3", {"four": [100]}, False),
+        ("scan/eta1e-4", {"four": [100]}, False),
+    ]
+    assert (scan_campaign / "figures" / "scan_scan_map_delta_b_max_vs_li3.png").is_file()
+
+
+def test_analyse_reads_a_comparisons_own_quantities(scan_campaign, gathered):
+    # [comparisons.scan] has c_quantity = "delta_b_max": four, nothing else
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map", "--analyse"]) == 0
+    assert [diags for _, diags, _ in gathered] == [{"four": [100]}, {"four": [100]}]
+
+
+def test_analyse_gathers_nothing_for_equilibrium_quantities(scan_campaign, gathered, capsys):
+    assert plot_cli.main([
+        "--compare", "scan/*", "--diag", "scan_map",
+        "--x-quantity", "eta", "--y-quantity", "q95", "--analyse",
+    ]) == 0
+    assert gathered == []
+    assert "read nothing analyse gathers" in capsys.readouterr().out
+
+
+def test_analyse_gathers_the_cli_steps_and_passes_force(scan_campaign, gathered):
+    plot_cli.main([
+        "--compare", "scan/*", "--diag", "four", "--step", "100", "--step", "200",
+        "--analyse", "--force",
+    ])
+    assert gathered[0] == ("scan/eta1e-3", {"four": [100, 200]}, True)
+
+
+def test_analyse_gathers_the_steps_a_diag_override_names(scan_campaign):
+    # theta_hist's own steps are what its figure reads, so they are what
+    # poincare gathers -- not the case's poincare steps
+    cases = plot_cli.load_cases_or_exit(scan_campaign / "cases.toml")
+    case = cases["scan/eta1e-3"]
+    cases["scan/eta1e-3"] = plot_cli.dataclasses.replace(
+        case, diag_steps={"theta_hist": [300, 400]},
+    )
+    plan = plot_cli._case_gather_plan(
+        ["scan/eta1e-3"], cases, ["poincare", "theta_hist", "four", "particles"], None,
+    )
+    assert plan == {"scan/eta1e-3": {"poincare": {100, 300, 400}, "four": {100}}}
+
+
+def test_analyse_per_case_gathers_then_plots(scan_campaign, gathered):
+    assert plot_cli.main(["--case", "scan/eta1e-3", "--diag", "four", "--analyse"]) == 0
+    assert gathered == [("scan/eta1e-3", {"four": [100]}, False)]
+
+
+def test_analyse_failure_still_plots_and_exits_1(scan_campaign, monkeypatch, capsys):
+    from ashen.cli import analyse as analyse_cli
+
+    def failing(case, **kwargs):
+        if case.name == "scan/eta1e-4":
+            raise FileNotFoundError("no jorek2_four")
+
+    monkeypatch.setattr(analyse_cli, "_run_case", failing)
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map", "--analyse"]) == 1
+    captured = capsys.readouterr()
+    assert "scan/eta1e-4: no jorek2_four" in captured.err
+    assert (scan_campaign / "figures" / "scan_scan_map_q95_vs_eta_delta_b_max.png").is_file()
+
+
+def test_force_without_analyse_is_an_error(scan_campaign, gathered):
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map", "--force"]) == 1
+    assert gathered == []
+
+
+def test_analyse_with_step_all_is_an_error(scan_campaign, gathered):
+    assert plot_cli.main([
+        "--compare", "scan", "--diag", "scan_map", "--analyse", "--step", "all",
+    ]) == 1
+    assert gathered == []
+
+
+# --- scan-map delta_b over steps whose zeroD analyse --diag four didn't gather -
+
+
+@pytest.fixture
+def late_growth(scan_campaign, monkeypatch):
+    """scan/eta1e-3 grows by step 200 (peak 400 vs 4 at step 100), with a
+    four cache there but no zeroD -- what `analyse --diag four` leaves, as
+    it gathers the q-profile but not zeroD. The minor radius needs zeroD,
+    so it is None at a step without one, as minor_radius_profile's is."""
+    from ashen.diagnostics import four_modes
+
+    run_dir = scan_campaign / "scan" / "eta1e-3"
+    (run_dir / "jorek000200.h5").write_bytes(b"")
+    _write_four_cache(run_dir, 200, records=[_four_record("Psi", 1, 2, real_peak=400.0)])
+
+    def radius_needs_zero_d(paths, step, *, f0, r_axis):
+        if not paths.zero_d(step).is_file():
+            return None
+        return np.array([0.0, 1.0]), np.array([r_axis, r_axis])
+
+    monkeypatch.setattr(four_modes, "minor_radius_profile", radius_needs_zero_d)
+    monkeypatch.setattr(plot_cli, "_ensure_qprofile", lambda *a, **k: None)
+    return scan_campaign
+
+
+def _delta_b_scan(capsys) -> str:
+    plot_cli.main([
+        "--compare", "scan/*", "--diag", "scan_map", "--x-quantity", "eta",
+        "--y-quantity", "delta_b_max", "--step", "100", "--step", "200",
+    ])
+    return capsys.readouterr().out
+
+
+def test_scan_map_delta_b_tops_up_zero_d_at_every_step(late_growth, monkeypatch, capsys):
+    monkeypatch.setattr(plot_cli, "run_zero_d", _fake_run_zero_d_writes_cache)
+    out = _delta_b_scan(capsys)
+    # |m| |Psi| / r_axis**2 = 2 * 400 / 4 at step 200; 2 at step 100 alone
+    assert "scan/eta1e-3: eta=0.001, delta_b_max=200" in out
+    assert "has no value" not in out
+
+
+def test_scan_map_delta_b_names_steps_left_without_a_value(late_growth, monkeypatch, capsys):
+    def no_postproc(*args, **kwargs):
+        raise FileNotFoundError("no jorek2_postproc")
+
+    monkeypatch.setattr(plot_cli, "run_zero_d", no_postproc)
+    out = _delta_b_scan(capsys)
+    assert "scan/eta1e-3: delta_b has no value at 1 of 2 step(s) with a four cache (200)" in out
+    assert "scan/eta1e-3: eta=0.001, delta_b_max=2" in out

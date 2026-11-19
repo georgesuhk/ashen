@@ -4,6 +4,58 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-18: scan-map delta-B over every step (fix)
+
+- Bug: the scan map's delta-B quantities (`delta_b_max`,
+  `delta_b_over_b_*`, `delta_b_mode_max`, `*_at_deconfinement`,
+  `energy_32_over_21_*`) could silently come out at noise level.
+- Cause: delta-B divides by each surface's minor radius, which needs zeroD
+  and the q-profile at every `four` step. `analyse --diag four` (and the
+  case viewer's button) gathers the q-profile but not zeroD. The `--diag
+  four` figures fill in the missing zeroD, but the scan map didn't. So any
+  step without zeroD dropped out of the max, and a run whose zeroD covered
+  only its early steps reported the pre-growth value. That is how 3e-16 T
+  came out for qa3.1_g2.0.
+- Fix: these quantities now fill in zeroD and the q-profile for every step
+  they read, as the `four` figures do. A step that has a `four` cache but
+  still no value (zeroD can't be gathered) is named in a note saying the
+  value is over the other steps.
+- Nothing to rerun: plot again and the missing zeroD is gathered. It is
+  one `jorek2_postproc` call per step.
+
+## 2026-11-18: plot --analyse gathers first
+
+- `plot --analyse` runs `analyse`'s own gather before drawing, for the
+  cases being plotted and only the steps their figures read. It works with
+  `--case` and `--compare`, including case patterns:
+
+  ```bash
+  python ~/ashen/bin/plot --compare 'qa3.1_g*/eta1e-3_adv0.1' --diag scan_map \
+      --x-quantity li --y-quantity delta_b_max --analyse
+  ```
+
+- Which gather each figure needs:
+  - `four` (per case or compared) and scan-map delta-B and energy
+    quantities gather `four`, with the q-profile beside it as `analyse`
+    gathers it.
+  - `poincare`, `connection_length`, `theta_hist`, `wetted_fraction`, and
+    the scan-map `wetted_fraction`/`lc_finite_*` quantities gather
+    `poincare`, with zeroD beside it.
+  - `profiles` and `re_current` gather themselves.
+  - The particle figures and equilibrium quantities (`li`, `q95`, `eta`,
+    ...) gather nothing extra.
+- Steps follow the figure, not the gather: `--step` if given, else the
+  figure's own `[cases.NAME.<diag>]` steps. So a `theta_hist` steps
+  override is traced by `poincare` even where `poincare`'s own steps
+  differ.
+- Cached steps are skipped. `--force` (only with `--analyse`) regathers
+  them. `--n-workers` is shared with the gather. `--step all` with
+  `--analyse` is refused, since it draws only what is cached.
+- A case whose gather fails is reported, plotting continues without it,
+  and the exit status is 1.
+- Unverified: tested with the gather mocked. Not yet run against real
+  `jorek2_four` on toki.
+
 ## 2026-11-12: particle_wetted up to an earlier step
 
 - New case key `ptrace_wetted_end_step = STEP`: `plot --diag
