@@ -6,6 +6,7 @@ Poincare cache -> the plotting functions -> files on disk.
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import matplotlib
 
@@ -3812,3 +3813,55 @@ def test_scan_map_delta_b_names_steps_left_without_a_value(late_growth, monkeypa
     out = _delta_b_scan(capsys)
     assert "scan/eta1e-3: delta_b has no value at 1 of 2 step(s) with a four cache (200)" in out
     assert "scan/eta1e-3: eta=0.001, delta_b_max=2" in out
+
+
+# --- worker counts: gathers default as analyse's do, rendering stays serial ---
+
+
+def _no_site(monkeypatch, cpus=32):
+    from ashen import config
+
+    def missing(site):
+        raise config.SiteConfigError("no site.toml")
+
+    monkeypatch.setattr(plot_cli, "load_site", missing)
+    monkeypatch.setattr(config.os, "cpu_count", lambda: cpus)
+
+
+def test_gather_workers_default_from_the_core_count(monkeypatch):
+    _no_site(monkeypatch, cpus=32)
+    args = plot_cli.build_parser().parse_args([])
+    # analyse's default: omp = min(8, cpus), workers = cpus // omp
+    assert plot_cli._resolve_gather_workers(args) == 4
+    assert plot_cli._resolve_n_workers(args) == 1
+
+
+def test_n_workers_flag_sets_both(monkeypatch):
+    _no_site(monkeypatch)
+    args = plot_cli.build_parser().parse_args(["--n-workers", "3"])
+    assert plot_cli._resolve_gather_workers(args) == 3
+    assert plot_cli._resolve_n_workers(args) == 3
+
+
+def test_site_n_workers_sets_gather_workers(monkeypatch):
+    from ashen import config
+    from ashen.config import Diagnostics
+
+    monkeypatch.setattr(config.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(
+        plot_cli, "load_site",
+        lambda site: SimpleNamespace(diagnostics=Diagnostics(n_workers=6)),
+    )
+    args = plot_cli.build_parser().parse_args([])
+    assert plot_cli._resolve_gather_workers(args) == 6
+
+
+def test_scan_map_zero_d_top_up_uses_the_gather_workers(late_growth, monkeypatch, capsys):
+    _no_site(monkeypatch, cpus=16)
+    seen = []
+    monkeypatch.setattr(
+        plot_cli, "_ensure_zero_d",
+        lambda case, paths, steps, *, n_workers=1: seen.append(n_workers),
+    )
+    _delta_b_scan(capsys)
+    assert seen and set(seen) == {2}

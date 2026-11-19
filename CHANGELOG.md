@@ -4,6 +4,21 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-18: plot gathers zeroD in parallel by default
+
+- The zeroD and q-profile caches plot fills in on demand (true-time axes,
+  delta-B's minor radius, scan-map quantities, `--mark_rational`) are now
+  gathered several steps at once by default, as `analyse` does:
+  `--n-workers`, else site.toml's `[diagnostics] n_workers`, else derived
+  from the core count (min(8, cores) threads per tool, cores / that many
+  workers). They used to run one step at a time unless `--n-workers` or
+  `n_workers` was set.
+- `--compare ... --diag four` used to gather its missing zeroD one step at
+  a time even with `--n-workers`. It now uses the same count.
+- Poincare rendering keeps its serial default. `--n-workers` still sets it.
+- On a node shared with other work, set `[diagnostics] n_workers` (or pass
+  `--n-workers`) to hold it down, as for `analyse`.
+
 ## 2026-11-18: scan-map delta-B over every step (fix)
 
 - Bug: the scan map's delta-B quantities (`delta_b_max`,
