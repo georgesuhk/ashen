@@ -12,7 +12,9 @@ ashen.postproc.read_zeroD). Two things are gathered here anyway, cheaply and
 on demand, rather than requiring a prior `analyse` pass: `ensure_edge_
 toroidal_field`'s Btor profile (delta_b_over_b only) and `_ensure_zero_d`'s
 per-step zeroD cache (every true-time x-axis). Both are single-valued/cheap;
-a whole diagnostic (Poincare, jorek2_four) is never auto-gathered here.
+a whole diagnostic (Poincare, jorek2_four) is never auto-gathered here unless
+asked for with --analyse, which runs analyse's own gather (_analyse_first)
+for the steps the requested figures read before drawing them.
 
 Diagnostics not ported from the legacy `data_jorek.py`/`gather_profiles.py`
 (macroscopic traces, field-line diffusion, stochastic factor, the
@@ -161,6 +163,26 @@ COMPARABLE_DIAGS = ("theta_hist", "wetted_fraction", "four", "scan_map", "partic
 #: real entry: its x, y and colour/size are each one number per RUN, so a
 #: single case is a single point and there is no figure to draw.
 COMPARISON_ONLY_DIAGS = ("scan_map",)
+
+#: The `analyse --diag` whose caches each figure reads, for --analyse. Keys
+#: are plot diags and scan-map Quantity.steps_diag values alike (both name
+#: the [cases.NAME.<diag>] steps a figure reads). The particle figures read
+#: a ptrace's output, which analyse does not make, so they are absent;
+#: zeroD and the q-profile are topped up on demand anyway (_ensure_*).
+ANALYSE_FOR_DIAG = {
+    "poincare": "poincare",
+    "connection_length": "poincare",
+    "theta_hist": "poincare",
+    "wetted_fraction": "poincare",
+    "four": "four",
+    "profiles": "profiles",
+    "re_current": "re_current",
+}
+
+#: The steps key each --compare figure reads, where it is not the diag's
+#: own name: the wetted-fraction comparison pools theta_hist's steps
+#: (_wetted_fraction_xy).
+COMPARE_STEPS_KEY = {"wetted_fraction": "theta_hist"}
 
 
 def _positive_int(text: str) -> int:
@@ -337,8 +359,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--n-workers", type=int, default=None,
-        help="poincare steps rendered concurrently (default: site.toml's "
-        "[diagnostics] n_workers)",
+        help="poincare steps rendered concurrently, and steps gathered "
+        "concurrently under --analyse (default: site.toml's [diagnostics] "
+        "n_workers)",
+    )
+    parser.add_argument(
+        "--analyse", action="store_true",
+        help="first gather what the figures read, as `analyse` would (four, "
+        "poincare, profiles, re_current), for the steps they draw; cached "
+        "steps are kept unless --force",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="with --analyse: regather the steps even where a cache exists",
     )
     parser.add_argument(
         "--linear", action="store_true",
@@ -3473,6 +3506,123 @@ def _comparison_from_cases(selector: str, cases: dict[str, Case]) -> Comparison 
     )
 
 
+#: {case name: {analyse diag: steps}} -- what --analyse gathers.
+GatherPlan = dict[str, dict[str, set[int]]]
+
+
+def _plan_add(
+    plan: GatherPlan, case: Case, steps_key: str, steps: list[int] | str | None,
+) -> None:
+    """Add to `plan` the steps a figure reading `steps_key`'s steps draws for
+    `case`: --step's numbers if given, else the case's [cases.NAME.<key>]
+    steps or its plain steps -- the same resolution _diag_steps and
+    _quantity_context make when drawing, so what is gathered is what is
+    read. A key no analyse diag serves adds nothing."""
+    analyse_diag = ANALYSE_FOR_DIAG.get(steps_key)
+    if analyse_diag is None:
+        return
+    wanted = steps if isinstance(steps, list) else case.steps_for(steps_key)
+    plan.setdefault(case.name, {}).setdefault(analyse_diag, set()).update(wanted)
+
+
+def _case_gather_plan(
+    names: list[str], cases: dict[str, Case], diags: list[str],
+    steps: list[int] | str | None,
+) -> GatherPlan:
+    """What the per-case figures in `diags` read, for --analyse."""
+    plan: GatherPlan = {}
+    for name in names:
+        for diag in diags:
+            _plan_add(plan, cases[name], diag, steps)
+    return plan
+
+
+def _comparison_gather_plan(
+    chosen: list[Comparison],
+    cases: dict[str, Case],
+    diags: list[str],
+    steps: list[int] | str | None,
+    *,
+    dataset_names: list[str] | None,
+    x_quantity: str | None,
+    y_quantity: str | None,
+    c_quantity: str | None,
+) -> GatherPlan:
+    """What the --compare figures in `diags` read, for --analyse: theta_hist
+    and wetted_fraction read theta_hist's steps, four reads four's, and a
+    scan map reads each of its quantities' Quantity.steps_diag (the CLI's
+    quantity, else the comparison's)."""
+    plan: GatherPlan = {}
+    for comparison in chosen:
+        if comparison.datasets:
+            members = [
+                name for ds_name, ds in comparison.datasets.items()
+                if not dataset_names or ds_name in dataset_names
+                for name in ds.cases
+            ]
+        else:
+            members = list(comparison.cases)
+        keys: list[str] = []
+        for diag in diags:
+            if diag == "scan_map":
+                for cli_value, own in (
+                    (x_quantity, comparison.x_quantity),
+                    (y_quantity, comparison.y_quantity),
+                    (c_quantity, comparison.c_quantity),
+                ):
+                    name = _first_not_none(cli_value, own or None)
+                    if name and quantity(name).steps_diag:
+                        keys.append(quantity(name).steps_diag)
+            else:
+                keys.append(COMPARE_STEPS_KEY.get(diag, diag))
+        for name in members:
+            for key in keys:
+                _plan_add(plan, cases[name], key, steps)
+    return plan
+
+
+def _analyse_first(plan: GatherPlan, cases: dict[str, Case], args) -> list[str]:
+    """Gather `plan` with analyse's own per-case gather (cli.analyse.
+    _run_case), so --analyse gathers exactly as `analyse --diag ...` does --
+    the same caches, the same cache-gating and --force, the same
+    q-profile beside four and zeroD beside poincare. Each analyse diag
+    gathers the steps the plan names for it, which may differ from the
+    case's own [cases.NAME.<diag>] steps (a theta_hist override, --step).
+
+    Returns the cases whose gather failed; each is reported, and plotting
+    goes on without it, as analyse's loop does."""
+    # analyse imports this module (its -plot chain), so it is imported here
+    from ashen.cli import analyse as analyse_cli
+
+    if not plan:
+        print("--analyse: these figures read nothing analyse gathers")
+        return []
+    n_workers, omp_threads = analyse_cli._resolve_parallelism(SimpleNamespace(
+        site=args.site, n_workers=args.n_workers, omp_threads=None,
+        tool_output=args.tool_output,
+    ))
+    failed: list[str] = []
+    for name, by_diag in plan.items():
+        wanted = {diag: sorted(steps) for diag, steps in by_diag.items() if steps}
+        if not wanted:
+            continue
+        summary = ", ".join(f"{diag} {len(steps)} step(s)" for diag, steps in wanted.items())
+        print(f"==== analyse: {name} ({summary}) ====")
+        case = cases[name]
+        case = dataclasses.replace(case, diag_steps={**case.diag_steps, **wanted})
+        try:
+            analyse_cli._run_case(
+                case, diags=[d for d in analyse_cli.DIAG_CHOICES if d in wanted],
+                force=args.force, n_workers=n_workers, omp_threads=omp_threads,
+            )
+        except CASE_ERRORS as exc:
+            error(f"{name}: {exc}")
+            failed.append(name)
+    if failed:
+        error(f"--analyse: {len(failed)} case(s) failed to gather: {', '.join(failed)}")
+    return failed
+
+
 def _run_comparisons(
     names: list[str],
     comparisons: dict[str, Comparison],
@@ -3506,7 +3656,11 @@ def _run_comparisons(
     exit_psi_n: float | None = None,
     ptrace_exit_bins: int | None = None,
     compare_colors: list[str] | None = None,
+    gather: Callable[[list[Comparison], list[str]], list[str]] | None = None,
 ) -> int:
+    """`gather(chosen, comparable)`, if given (--analyse), runs once the
+    comparisons are resolved and before any is drawn; it returns the cases
+    that failed to gather, which makes the exit status 1."""
     # A defined [comparisons.NAME] wins; any other value is a case selector.
     chosen: list[Comparison] = []
     unknown = []
@@ -3532,6 +3686,8 @@ def _run_comparisons(
         print(f"  diag(s) {not_comparable} have no comparison renderer, skipped")
     if not comparable:
         return 0
+
+    gather_failed = gather(chosen, comparable) if gather is not None else []
 
     for comparison in chosen:
         print(f"==== compare: {comparison.name} ====")
@@ -3573,7 +3729,7 @@ def _run_comparisons(
                 dpi=dpi, steps=steps, n_workers=n_workers,
                 dataset_names=dataset_names, explicit=explicit_diags, si=si,
             )
-    return 0
+    return 1 if gather_failed else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3662,6 +3818,15 @@ def main(argv: list[str] | None = None) -> int:
         error(str(exc))
         return 1
 
+    if args.force and not args.analyse:
+        error("--force regathers under --analyse; add --analyse "
+              "(or run `analyse --force`)")
+        return 1
+    if args.analyse and args.steps == ALL_STEPS:
+        error("--step all draws only what is already cached, so there is "
+              "nothing for --analyse to gather; name the steps, or leave --step out")
+        return 1
+
     diags = args.diags or list(DIAG_CHOICES)
     # Whether the user named diags explicitly. A default-everything run must
     # not print a "scan_map is comparison-only" or "no x_quantity configured"
@@ -3722,11 +3887,29 @@ def main(argv: list[str] | None = None) -> int:
             exit_psi_n=args.exit_psi_n,
             ptrace_exit_bins=args.ptrace_exit_bins,
             compare_colors=args.compare_colors,
+            gather=(
+                (lambda chosen, comparable: _analyse_first(
+                    _comparison_gather_plan(
+                        chosen, cases, comparable, args.steps,
+                        dataset_names=args.datasets_selected,
+                        x_quantity=args.x_quantity, y_quantity=args.y_quantity,
+                        c_quantity=args.c_quantity,
+                    ),
+                    cases, args,
+                ))
+                if args.analyse else None
+            ),
         )
 
     selected = resolve_selection(args.selected, cases)
     if selected is None:
         return 1
+
+    gather_failed: list[str] = []
+    if args.analyse:
+        gather_failed = _analyse_first(
+            _case_gather_plan(selected, cases, diags, args.steps), cases, args,
+        )
 
     psi_range = tuple(args.psi_range) if args.psi_range is not None else None
 
@@ -3775,4 +3958,4 @@ def main(argv: list[str] | None = None) -> int:
         error(f"{len(failed)} of {len(selected)} case(s) failed: {', '.join(failed)}")
         return 1
 
-    return 0
+    return 1 if gather_failed else 0

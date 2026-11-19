@@ -3663,3 +3663,101 @@ def test_re_current_is_silent_for_a_case_without_it_unless_asked(campaign, capsy
 
     plot_cli._plot_re_current(case, paths, [100, 200], dpi=None, explicit=True)
     assert "run analyse --diag re_current" in capsys.readouterr().out
+
+
+# --- --analyse: gather what the figures read, then draw ----------------------
+
+
+@pytest.fixture
+def gathered(monkeypatch):
+    """Record analyse's per-case gather instead of running jorek2_*: one
+    (case name, {diag: steps}, force) per call."""
+    from ashen.cli import analyse as analyse_cli
+
+    calls = []
+
+    def fake_run_case(case, *, diags, force, n_workers, omp_threads):
+        calls.append((case.name, {d: case.steps_for(d) for d in diags}, force))
+
+    monkeypatch.setattr(analyse_cli, "_run_case", fake_run_case)
+    return calls
+
+
+def test_analyse_gathers_four_for_a_delta_b_scan_map(scan_campaign, gathered):
+    assert plot_cli.main([
+        "--compare", "scan/*", "--diag", "scan_map",
+        "--x-quantity", "li3", "--y-quantity", "delta_b_max", "--analyse",
+    ]) == 0
+    assert gathered == [
+        ("scan/eta1e-3", {"four": [100]}, False),
+        ("scan/eta1e-4", {"four": [100]}, False),
+    ]
+    assert (scan_campaign / "figures" / "scan_scan_map_delta_b_max_vs_li3.png").is_file()
+
+
+def test_analyse_reads_a_comparisons_own_quantities(scan_campaign, gathered):
+    # [comparisons.scan] has c_quantity = "delta_b_max": four, nothing else
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map", "--analyse"]) == 0
+    assert [diags for _, diags, _ in gathered] == [{"four": [100]}, {"four": [100]}]
+
+
+def test_analyse_gathers_nothing_for_equilibrium_quantities(scan_campaign, gathered, capsys):
+    assert plot_cli.main([
+        "--compare", "scan/*", "--diag", "scan_map",
+        "--x-quantity", "eta", "--y-quantity", "q95", "--analyse",
+    ]) == 0
+    assert gathered == []
+    assert "read nothing analyse gathers" in capsys.readouterr().out
+
+
+def test_analyse_gathers_the_cli_steps_and_passes_force(scan_campaign, gathered):
+    plot_cli.main([
+        "--compare", "scan/*", "--diag", "four", "--step", "100", "--step", "200",
+        "--analyse", "--force",
+    ])
+    assert gathered[0] == ("scan/eta1e-3", {"four": [100, 200]}, True)
+
+
+def test_analyse_gathers_the_steps_a_diag_override_names(scan_campaign):
+    # theta_hist's own steps are what its figure reads, so they are what
+    # poincare gathers -- not the case's poincare steps
+    cases = plot_cli.load_cases_or_exit(scan_campaign / "cases.toml")
+    case = cases["scan/eta1e-3"]
+    cases["scan/eta1e-3"] = plot_cli.dataclasses.replace(
+        case, diag_steps={"theta_hist": [300, 400]},
+    )
+    plan = plot_cli._case_gather_plan(
+        ["scan/eta1e-3"], cases, ["poincare", "theta_hist", "four", "particles"], None,
+    )
+    assert plan == {"scan/eta1e-3": {"poincare": {100, 300, 400}, "four": {100}}}
+
+
+def test_analyse_per_case_gathers_then_plots(scan_campaign, gathered):
+    assert plot_cli.main(["--case", "scan/eta1e-3", "--diag", "four", "--analyse"]) == 0
+    assert gathered == [("scan/eta1e-3", {"four": [100]}, False)]
+
+
+def test_analyse_failure_still_plots_and_exits_1(scan_campaign, monkeypatch, capsys):
+    from ashen.cli import analyse as analyse_cli
+
+    def failing(case, **kwargs):
+        if case.name == "scan/eta1e-4":
+            raise FileNotFoundError("no jorek2_four")
+
+    monkeypatch.setattr(analyse_cli, "_run_case", failing)
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map", "--analyse"]) == 1
+    captured = capsys.readouterr()
+    assert "scan/eta1e-4: no jorek2_four" in captured.err
+    assert (scan_campaign / "figures" / "scan_scan_map_q95_vs_eta_delta_b_max.png").is_file()
+
+
+def test_force_without_analyse_is_an_error(scan_campaign, gathered):
+    assert plot_cli.main(["--compare", "scan", "--diag", "scan_map", "--force"]) == 1
+    assert gathered == []
+
+
+def test_analyse_with_step_all_is_an_error(scan_campaign, gathered):
+    assert plot_cli.main([
+        "--compare", "scan", "--diag", "scan_map", "--analyse", "--step", "all",
+    ]) == 1
+    assert gathered == []

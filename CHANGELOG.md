@@ -4,6 +4,39 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-18: plot --analyse gathers first
+
+- `plot --analyse` runs `analyse`'s own gather before drawing, for the
+  cases being plotted and only the steps their figures read. It works with
+  `--case` and `--compare`, including case patterns:
+
+  ```bash
+  python ~/ashen/bin/plot --compare 'qa3.1_g*/eta1e-3_adv0.1' --diag scan_map \
+      --x-quantity li --y-quantity delta_b_max --analyse
+  ```
+
+- Which gather each figure needs:
+  - `four` (per case or compared) and scan-map delta-B and energy
+    quantities gather `four`, with the q-profile beside it as `analyse`
+    gathers it.
+  - `poincare`, `connection_length`, `theta_hist`, `wetted_fraction`, and
+    the scan-map `wetted_fraction`/`lc_finite_*` quantities gather
+    `poincare`, with zeroD beside it.
+  - `profiles` and `re_current` gather themselves.
+  - The particle figures and equilibrium quantities (`li`, `q95`, `eta`,
+    ...) gather nothing extra.
+- Steps follow the figure, not the gather: `--step` if given, else the
+  figure's own `[cases.NAME.<diag>]` steps. So a `theta_hist` steps
+  override is traced by `poincare` even where `poincare`'s own steps
+  differ.
+- Cached steps are skipped. `--force` (only with `--analyse`) regathers
+  them. `--n-workers` is shared with the gather. `--step all` with
+  `--analyse` is refused, since it draws only what is cached.
+- A case whose gather fails is reported, plotting continues without it,
+  and the exit status is 1.
+- Unverified: tested with the gather mocked. Not yet run against real
+  `jorek2_four` on toki.
+
 ## 2026-11-12: particle_wetted up to an earlier step
 
 - New case key `ptrace_wetted_end_step = STEP`: `plot --diag
