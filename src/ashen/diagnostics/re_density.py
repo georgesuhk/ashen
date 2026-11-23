@@ -26,7 +26,7 @@ import numpy as np
 
 from ashen.physics import ELEMENTARY_CHARGE, MU_0
 
-__all__ = ["DensityChange", "ReDensity", "density_change", "read_re_density"]
+__all__ = ["DensityChange", "ReDensity", "density_change", "read_re_density", "sample_nodes"]
 
 _SPEED_OF_LIGHT = 299792458.0
 _ATOMIC_MASS_UNIT = 1.66053906660e-27
@@ -86,6 +86,36 @@ class ReDensity:
             (r[:, 1] - r[:, 0]) * (z[:, 2] - z[:, 0]) - (r[:, 2] - r[:, 0]) * (z[:, 1] - z[:, 0])
         )
         return float(ELEMENTARY_CHARGE * _SPEED_OF_LIGHT * (self.n0[t].mean(axis=1) * area).sum())
+
+
+def sample_nodes(
+    R: np.ndarray, Z: np.ndarray, triangles: np.ndarray, values: np.ndarray,
+    r: np.ndarray, z: np.ndarray,
+) -> np.ndarray:
+    """Node ``values`` at the points (r, z), linear over the triangle each
+    point falls in; nan outside the grid. Triangles of zero area (the
+    collapsed elements at a polar grid's centre) are skipped, which
+    matplotlib's TriFinder cannot do: it rejects such a grid outright."""
+    r, z = np.atleast_1d(np.asarray(r, float)), np.atleast_1d(np.asarray(z, float))
+    tr, tz = R[triangles], Z[triangles]
+    x0, y0 = tr[:, 0], tz[:, 0]
+    a, b = tr[:, 1] - x0, tr[:, 2] - x0
+    c, d = tz[:, 1] - y0, tz[:, 2] - y0
+    det = a * d - b * c
+    keep = np.abs(det) > 1e-14 * np.abs(det).max()
+    tri, x0, y0, a, b, c, d, det = (v[keep] for v in (triangles, x0, y0, a, b, c, d, det))
+    out = np.full(r.shape, np.nan)
+    eps = 1e-10
+    for i, (px, py) in enumerate(zip(r, z)):
+        dx, dy = px - x0, py - y0
+        u = (d * dx - b * dy) / det
+        v = (-c * dx + a * dy) / det
+        inside = np.flatnonzero((u >= -eps) & (v >= -eps) & (u + v <= 1 + eps))
+        if inside.size:
+            k = inside[0]
+            n0, n1, n2 = values[tri[k]]
+            out[i] = n0 + u[k] * (n1 - n0) + v[k] * (n2 - n0)
+    return out
 
 
 def _at(harmonics: np.ndarray, n_period: int, phi: float, *, perturbation: bool = False) -> np.ndarray:

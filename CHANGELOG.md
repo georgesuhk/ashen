@@ -4,6 +4,22 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-23: case viewer runaway density: n_RE against R through the axis
+
+- The top-right panel of the "Runaway density" section used to show the
+  axisymmetric (n = 0) density of every node against psi_N. It now shows the
+  density along the horizontal line through the magnetic axis, against R, at
+  the selected toroidal angle. That is the field the map shows: every
+  harmonic, or the n > 0 part alone when "n > 0 part only" is ticked. The
+  first restart is in grey at the same angle; the axis is dotted and the
+  plasma edge dashed.
+- New `ashen.diagnostics.re_density.sample_nodes(R, Z, triangles, values,
+  r, z)`: node values interpolated linearly inside the grid, nan outside.
+  It skips the zero-area triangles at a polar grid's centre, which make
+  matplotlib's TriFinder reject the grid.
+- Checked on the local qa2.1_g1.8/eta1e-5_adv0.1 restarts (0.4 s per
+  redraw). Not yet seen in VS Code on the HPC.
+
 ## 2026-11-23: case viewer says how much n_RE has changed
 
 - The runaway-density section of the case viewer (`re_density_figure`) now

@@ -133,6 +133,21 @@ def test_change_refuses_two_different_grids(tmp_path):
         density_change(moved, a)
 
 
+def test_sampling_is_linear_inside_skips_collapsed_triangles_and_is_nan_outside():
+    from ashen.diagnostics.re_density import sample_nodes
+
+    # a unit square as two triangles, plus a zero-area triangle on its corner
+    R = np.array([0.0, 1.0, 1.0, 0.0])
+    Z = np.array([0.0, 0.0, 1.0, 1.0])
+    tri = np.array([[0, 0, 1], [0, 1, 2], [0, 2, 3]])
+    values = 2.0 + 3.0 * R - 5.0 * Z                                # linear: reproduced exactly
+    r = np.array([0.25, 0.9, 0.5, 1.5, 0.0])
+    z = np.array([0.5, 0.1, 0.5, 0.5, 0.0])
+    got = sample_nodes(R, Z, tri, values, r, z)
+    np.testing.assert_allclose(got[[0, 1, 2, 4]], (2.0 + 3.0 * r - 5.0 * z)[[0, 1, 2, 4]], rtol=1e-12)
+    assert np.isnan(got[3])
+
+
 def test_a_file_without_the_normalisation_says_so(tmp_path):
     with h5py.File(tmp_path / "jorek00000.h5", "w") as f:
         f["values"], f["x"] = np.zeros((8, 4, 1, 5)), np.zeros((2, 4, 1, 5))
@@ -159,15 +174,23 @@ def test_figure_shows_the_map_the_profile_and_what_was_lost(run):
     assert "-25.00% against step 0" in fig._suptitle.get_text()
     assert "Ipre_tot at this step: 420.00 kA" in fig._suptitle.get_text()
     assert [t.get_text() for t in ax_n.get_legend().get_texts()] == ["step 0", "step 200"]
-    now = ax_n.collections[-1].get_offsets()
-    assert now[:, 1].max() == pytest.approx(0.75 * 5.0)          # in units of 1e16 m^-3
+    # the total n_RE at phi = 0 along Z through the axis: n0 (1 + 1e-3 cos phi), units of 1e16 m^-3
+    r, cut = ax_n.get_lines()[1].get_data()
+    assert np.nanmax(cut) == pytest.approx(0.75 * 5.0 * 1.001, rel=1e-3)
+    assert r[np.nanargmax(cut)] == pytest.approx(1.5, abs=0.01)
+    assert ax_n.get_xlabel() == "R [m]" and "Z = 0.000 m" in ax_n.get_title(loc="left")
+    np.testing.assert_allclose(ax_n.get_lines()[0].get_data()[1], cut / 0.75, rtol=1e-9, atol=1e-12)   # step 0, same phi
     assert [t.get_text() for t in ax_modes.get_xticklabels()] == ["0", "1"]
 
     part = viewer.re_density_figure(run, 200, phi=180, perturbation=True)
     assert "n > 0 part" in part.axes[3].get_ylabel() and "180°" in part.axes[0].get_title(loc="left")
+    # the n > 0 part at phi = 180 deg is -1e-3 n0, in its own power of ten (1e13 m^-3 here)
+    assert np.nanmin(part.axes[1].get_lines()[1].get_data()[1]) == pytest.approx(-0.75 * 5.0, rel=1e-3)
+    assert "n > 0 part" in part.axes[1].get_ylabel()
     # the first restart against itself: no reference curve, no percentage
     first = viewer.re_density_figure(run, 0)
-    assert "against" not in first._suptitle.get_text() and len(first.axes[1].collections) == 1
+    assert "against" not in first._suptitle.get_text()
+    assert [t.get_text() for t in first.axes[1].get_legend().get_texts()] == ["step 0"]
     assert "first restart, nothing to compare with" in first._suptitle.get_text()
 
 

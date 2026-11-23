@@ -703,8 +703,11 @@ jumps to any, and **point size** sets the marker size. **Run analyse
 **Runaway density.** For a run with the RE fluid, the "Runaway density
 (from the restart files)" section maps n_RE in the poloidal plane at a
 chosen step and toroidal angle, read from the restart itself (no gather
-step). Beside the map are the axisymmetric density against psi_N, with the
-first restart in grey, and the size of each toroidal mode. The line above
+step). Beside the map are the map's density along the horizontal line
+through the magnetic axis against R (same toroidal angle; every harmonic,
+or the n > 0 part when that is ticked), with the first restart in grey,
+the axis dotted and the plasma edge dashed, and the size of each toroidal
+mode. The line above
 the figure gives e c ∫ n_RE dA, its change since the first restart, and
 JOREK's own `Ipre_tot`: if runaways leave the domain, the first two fall.
 The next two lines say how much n_RE has changed since the first restart
