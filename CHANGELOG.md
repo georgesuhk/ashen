@@ -4,6 +4,20 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-23: shotfile `jorek_source`: the JOREK checkout the exe was built from
+
+- New shotfile key `jorek_source` (path; absolute, or relative to the folder
+  holding site.toml). `namelist_options` is checked against that checkout's
+  `models/model<N>/initialise_parameters.f90` instead of site.toml's
+  `jorek_re`/`jorek`, and its `util/` is linked into the run folder.
+- Why: a binary built from a patched branch in its own folder (here the
+  n_RE transport switches `nre_exb_compr_fix`, `nre_par_stream_fix` in
+  Columbia/jorek_george) declares namelist keys the site tree does not, and
+  run_jorek refused them.
+- A folder without `models/` is refused before anything is written. The
+  "not declared" error now says to set `jorek_source` when it is unset.
+- Not yet run on the HPC.
+
 ## 2026-11-23: case viewer runaway density: n_RE against R through the axis
 
 - The top-right panel of the "Runaway density" section used to show the

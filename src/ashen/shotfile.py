@@ -120,6 +120,14 @@ class ShotParams:
     #: still follows with_refluid.
     diag_exe_folder: str | None = None
 
+    #: The JOREK checkout this run's exe was built from, when it is not
+    #: site.toml's jorek_re (with_refluid) or jorek -- e.g. a build of a
+    #: patched branch in its own folder. namelist_options is checked against
+    #: this tree's models/model<N>/initialise_parameters.f90, and its util/
+    #: is linked into the run folder. Absolute, or relative to the folder
+    #: holding site.toml. None = site.toml's tree.
+    jorek_source: str | None = None
+
     #: `run_jorek --suggest-tstep`: aim for at most this fraction of
     #: gmres_max_iter GMRES iterations per step (ashen.tstep_suggest).
     tstep_safety: float = 0.5

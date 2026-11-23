@@ -1025,6 +1025,27 @@ diag_exe_folder = "model600_fixed_T_rho"
   by hand: `ln -sf <template>/symlink/<folder>/jorek2_postproc .` (and
   the same for `jorek2_four`).
 
+### A binary built from another JOREK checkout (`jorek_source`)
+
+`namelist_options` keys are checked against `namelist /in1/` in
+`models/model<N>/initialise_parameters.f90` of the JOREK checkout in
+site.toml (`jorek_re` with `with_refluid`, else `jorek`), and that
+checkout's `util/` is linked into the run folder. If the run's `exe` was
+built from a different checkout, e.g. a patched branch in its own folder,
+name that checkout in the shotfile:
+
+```python
+exe = "jorek_model600_RE_ntor5_nrefix"
+jorek_source = "/tokp/work/geosu/Columbia/jorek_george"
+namelist_options = {"nre_exb_compr_fix": True, "nre_par_stream_fix": True}
+```
+
+- Absolute, or relative to the folder holding site.toml.
+- A folder without `models/` stops `run_jorek` before anything is written.
+- Without it, a key only the other checkout declares is refused, and the
+  message says to set `jorek_source`.
+- Diagnostic tools still come from `template/symlink/` (`diag_exe_folder`).
+
 ### Seeing what the jorek2_* tools are doing
 
 By default a tool's stdout is discarded and its stderr kept back to be quoted
