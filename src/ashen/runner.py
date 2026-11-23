@@ -273,6 +273,22 @@ def _j_prof_text(params: ShotParams, geometry, made, current_R0: float) -> str:
 _MODEL_NUMBER = re.compile(r"model(\d+)")
 
 
+def jorek_tree(params: ShotParams, site: Site) -> Path:
+    """The JOREK checkout this run's exe comes from: the shotfile's
+    jorek_source (absolute, or relative to site.toml's folder), else
+    site.toml's jorek_re (with_refluid) or jorek."""
+    if params.jorek_source is None:
+        return site.jorek_re if params.with_refluid else site.jorek
+    tree = Path(params.jorek_source).expanduser()
+    if not tree.is_absolute():
+        tree = site.root / tree
+    if not (tree / "models").is_dir():
+        raise ShotfileError(
+            f"jorek_source={params.jorek_source!r}: {tree} is not a JOREK checkout (no models/ in it)"
+        )
+    return tree
+
+
 def _validate_namelist_options(params: ShotParams, site: Site) -> None:
     """Refuse a shotfile's ``namelist_options`` up front if any key isn't a
     parameter JOREK's own model declares -- catches typos before anything is
@@ -284,7 +300,7 @@ def _validate_namelist_options(params: ShotParams, site: Site) -> None:
             f"namelist_options is set but the JOREK model number could not be "
             f"parsed out of exe={params.exe!r} (expected e.g. 'jorek_model600_...')"
         )
-    model_root = site.jorek_re if params.with_refluid else site.jorek
+    model_root = jorek_tree(params, site)
     model_source = model_root / "models" / f"model{match.group(1)}" / "initialise_parameters.f90"
     if not model_source.is_file():
         raise ShotfileError(
@@ -298,9 +314,13 @@ def _validate_namelist_options(params: ShotParams, site: Site) -> None:
         if nml.normalise_key(name) not in known
     )
     if unknown:
+        hint = "" if params.jorek_source is not None else (
+            ". If the exe was built from another JOREK checkout, name it in the shotfile: "
+            "jorek_source = \"/path/to/that/jorek\""
+        )
         raise ShotfileError(
             f"namelist_options has parameter(s) not declared in {model_source}'s "
-            f"'namelist /in1/': {', '.join(unknown)}"
+            f"'namelist /in1/': {', '.join(unknown)}{hint}"
         )
 
 
@@ -650,7 +670,7 @@ def prepare_run(
     if template_bnd is not None:
         disk.symlink_file(template_bnd, run_dir / params.bnd_file)
 
-    disk.symlink_dir(site.jorek_util(params.with_refluid), run_dir, "util")
+    disk.symlink_dir(jorek_tree(params, site) / "util", run_dir, "util")
     disk.symlink_files_in(diag_exe_dir, run_dir)
 
     disk.set_fields(

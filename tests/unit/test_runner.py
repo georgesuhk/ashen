@@ -252,6 +252,71 @@ def test_namelist_options_missing_model_source_raises(synthetic_campaign, tmp_pa
         prepare_run(params, site, tmp_path / "rundir", dry_run=True)
 
 
+PATCHED_MODEL_SOURCE = MODEL_SOURCE.replace(
+    "                Dre_num, Dre_par\n", "                Dre_num, Dre_par, nre_exb_compr_fix\n"
+)
+
+
+def _write_patched_tree(path):
+    model_dir = path / "models" / "model600"
+    model_dir.mkdir(parents=True)
+    (model_dir / "initialise_parameters.f90").write_text(PATCHED_MODEL_SOURCE, encoding="utf-8")
+    (path / "util").mkdir()
+    (path / "util" / "marker").write_text("patched tree\n")
+    return path
+
+
+def test_namelist_options_unknown_to_the_site_tree_say_where_to_point(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    _write_model(site)
+    params = dataclasses.replace(
+        params, exe="jorek_model600_fixed_T_rho", namelist_options={"nre_exb_compr_fix": True}
+    )
+    with pytest.raises(ShotfileError, match="nre_exb_compr_fix.*jorek_source"):
+        prepare_run(params, site, tmp_path / "rundir", dry_run=True)
+
+
+def test_jorek_source_validates_against_that_tree_and_links_its_util(
+    synthetic_campaign, tmp_path, symlinks_maybe_bypassed
+):
+    site, template_dir, params = synthetic_campaign
+    _write_model(site)                                   # the site tree: no nre_exb_compr_fix
+    patched = _write_patched_tree(tmp_path / "jorek_george")
+    params = dataclasses.replace(
+        params, exe="jorek_model600_fixed_T_rho", namelist_options={"nre_exb_compr_fix": True},
+        jorek_source=str(patched),
+    )
+    run_dir = tmp_path / "rundir"
+    (site.exe / "jorek_model600_fixed_T_rho").write_text("#!/bin/sh\n")
+
+    prepare_run(params, site, run_dir, dry_run=False)
+
+    for name in ("in_eq", "in_main", "in_main_r"):
+        assert effective_fields(run_dir / name)["nre_exb_compr_fix"] is True
+    assert (run_dir / "util" / "marker").read_text() == "patched tree\n"
+
+
+def test_jorek_source_relative_to_the_site_root(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    _write_patched_tree(site.root / "jorek_george")
+    params = dataclasses.replace(
+        params, exe="jorek_model600_fixed_T_rho", namelist_options={"nre_exb_compr_fix": True},
+        jorek_source="jorek_george",
+    )
+    prepare_run(params, site, tmp_path / "rundir", dry_run=True)       # must not raise
+
+
+def test_jorek_source_that_is_not_a_checkout_is_refused(synthetic_campaign, tmp_path):
+    site, template_dir, params = synthetic_campaign
+    (tmp_path / "empty").mkdir()
+    params = dataclasses.replace(
+        params, exe="jorek_model600_fixed_T_rho", namelist_options={"visco": 1e-6},
+        jorek_source=str(tmp_path / "empty"),
+    )
+    with pytest.raises(ShotfileError, match="not a JOREK checkout"):
+        prepare_run(params, site, tmp_path / "rundir", dry_run=True)
+
+
 def test_namelist_options_empty_dict_needs_no_model_source(synthetic_campaign, tmp_path):
     """The common case (no namelist_options at all) must not require a
     models/ tree to exist -- most dev clones won't have one."""
