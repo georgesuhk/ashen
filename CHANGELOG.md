@@ -4,6 +4,25 @@ What changed in ashen, newest first. Each entry gives the commit, what it
 does, and how to use it. The README has the full reference for every key
 and flag named here.
 
+## 2026-11-23: case viewer says how much n_RE has changed
+
+- The runaway-density section of the case viewer (`re_density_figure`) now
+  has two more title lines. They compare the selected restart's n_RE with
+  the first restart and with the previous restart. Each gives the relative
+  RMS of the difference over the torus (volume weighted, every toroidal
+  harmonic) and the relative peak |difference| (nodes x 32 toroidal
+  angles), each as a fraction of the reference step's, then the same two
+  for n = 0 alone. A step that matches exactly says "none, identical on
+  every node and harmonic". The first restart says there is nothing to
+  compare with. Two restarts on different grids say so instead of a number.
+- New `ashen.diagnostics.re_density.density_change(now, ref)` returns
+  these numbers (`DensityChange`) for scripts.
+- Comes from the n_RE transport investigation: a quick way to see whether
+  the RE density moves at all (e.g. `re_adv_fact` 0 vs 1 restarts).
+- Checked on the local qa2.1_g1.8/eta1e-5_adv0.1 restarts: step 4000 vs 0
+  is RMS 3.05e-2 (n = 0: 4.30e-3), vs step 3960 RMS 5.66e-5. Not yet seen
+  in VS Code on the HPC.
+
 ## 2026-11-18: scan-map datasets keep their colours without a third quantity
 
 - A `datasets` scan map with no `c_quantity` now draws each dataset in its

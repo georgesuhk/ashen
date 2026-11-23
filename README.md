@@ -707,7 +707,11 @@ step). Beside the map are the axisymmetric density against psi_N, with the
 first restart in grey, and the size of each toroidal mode. The line above
 the figure gives e c ∫ n_RE dA, its change since the first restart, and
 JOREK's own `Ipre_tot`: if runaways leave the domain, the first two fall.
-Values are on the grid nodes, linear in between.
+The next two lines say how much n_RE has changed since the first restart
+and since the previous one. Each gives the RMS and the peak of the
+difference as fractions of that step's density (all harmonics, then n = 0
+alone), or "none, identical" when nothing moved. Values are on the grid
+nodes, linear in between.
 
 **Setting the steps.** The "Steps to analyse (cases.toml)" section sets
 this run's `steps` in the campaign's cases.toml from a start step and a
