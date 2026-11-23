@@ -726,6 +726,21 @@ def _has_re_fluid(paths: RunPaths) -> bool:
     return False
 
 
+def _change_line(now, ref, label: str) -> str:
+    """One title line: how much ``now``'s n_RE differs from ``ref``'s
+    (diagnostics.re_density.density_change), or why it cannot say."""
+    from ashen.diagnostics.re_density import density_change
+
+    try:
+        c = density_change(now, ref)
+    except ValueError as exc:
+        return f"Change against the {label}: {exc}"
+    if c.identical:
+        return f"Change against the {label}: none, identical on every node and harmonic"
+    return (f"Change against the {label}: RMS {c.rms:.2e}, peak {c.peak:.2e} (fractions of that step's)"
+            f";  n = 0 alone: RMS {c.rms_n0:.2e}, peak {c.peak_n0:.2e}")
+
+
 def re_density_figure(
     run_dir: Path | str, step: int, *, phi: float = 0.0, perturbation: bool = False,
     reference_step: int | None = None, levels: int = 24,
@@ -739,7 +754,10 @@ def re_density_figure(
     axisymmetric density on the nodes against psi_N, with
     ``reference_step``'s (default: the first restart) in grey. Right,
     bottom: the largest amplitude of each toroidal mode. The title gives
-    e c times the density's integral next to JOREK's own Ipre_tot.
+    e c times the density's integral next to JOREK's own Ipre_tot, then how
+    much the density has changed (density_change: relative RMS and peak of
+    the difference, all harmonics and n = 0 alone) since the first restart
+    and since the previous one.
 
     Drawn on the grid nodes: good for looking, not for measuring.
     """
@@ -828,7 +846,20 @@ def re_density_figure(
         line += f" ({100 * (held - first) / first:+.2f}% against step {reference_step})"
     if np.isfinite(now.ipre_tot):
         line += f";  JOREK's Ipre_tot at this step: {now.ipre_tot / 1e3:.2f} kA"
-    fig.suptitle(line, x=0.01, ha="left", fontsize=10, color=_INK)
+    lines = [line]
+    steps = restart_steps(paths.run_dir)
+    first_step = steps[0] if steps else step
+    previous = [s for s in steps if s < step]
+    if step == first_step:
+        lines.append("Change in n_RE: this is the first restart, nothing to compare with")
+    else:
+        lines.append(_change_line(now, read_re_density(paths.restart(first_step)), f"first restart, step {first_step}"))
+        if previous and previous[-1] != first_step:
+            lines.append(_change_line(now, read_re_density(paths.restart(previous[-1])),
+                                      f"previous restart, step {previous[-1]}"))
+        elif previous:
+            lines.append(f"(the previous restart is the first one, step {first_step})")
+    fig.suptitle("\n".join(lines), x=0.01, ha="left", fontsize=10, color=_INK)
     fig.tight_layout()
     return fig
 

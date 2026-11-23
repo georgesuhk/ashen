@@ -93,6 +93,46 @@ def test_current_is_e_c_times_the_density_integral(tmp_path):
     assert read_re_density(tmp_path / "jorek00200.h5").current() == pytest.approx(0.75 * d.current())
 
 
+def test_change_is_zero_only_for_an_identical_density(tmp_path):
+    from ashen.diagnostics.re_density import density_change
+
+    _restart(tmp_path / "jorek00000.h5")
+    _restart(tmp_path / "jorek00100.h5", index=100, sign=+1.0)       # same density, other sign stored
+    a, same = read_re_density(tmp_path / "jorek00000.h5"), read_re_density(tmp_path / "jorek00100.h5")
+    c = density_change(same, a)
+    assert c.identical and c.rms == c.peak == c.rms_n0 == c.peak_n0 == 0.0 and c.reference_index == 0
+
+    # a quarter lost everywhere, every harmonic alike: RMS and peak both 25 %
+    _restart(tmp_path / "jorek00200.h5", index=200, lost=0.25)
+    c = density_change(read_re_density(tmp_path / "jorek00200.h5"), a)
+    assert not c.identical
+    assert c.rms == pytest.approx(0.25) and c.peak == pytest.approx(0.25)
+    assert c.rms_n0 == pytest.approx(0.25) and c.peak_n0 == pytest.approx(0.25)
+
+
+def test_change_in_the_n_gt_0_part_alone_leaves_n0_untouched(tmp_path):
+    from ashen.diagnostics.re_density import density_change
+
+    _restart(tmp_path / "jorek00000.h5")
+    _restart(tmp_path / "jorek00100.h5", index=100, n_tor=1)       # the n = 1 part gone
+    a, flat = read_re_density(tmp_path / "jorek00000.h5"), read_re_density(tmp_path / "jorek00100.h5")
+    c = density_change(flat, a)                                      # fewer harmonics: padded with zeros
+    assert c.rms_n0 == 0.0 and c.peak_n0 == 0.0
+    # the n = 1 cos part was 1e-3 of n0: its RMS over a turn is 1e-3/sqrt(2) of n0's (to first order)
+    assert c.rms == pytest.approx(1e-3 / np.sqrt(2), rel=1e-3)
+    assert c.peak == pytest.approx(1e-3 / 1.001, rel=1e-6)          # at phi = pi, against the peak at phi = 0
+
+
+def test_change_refuses_two_different_grids(tmp_path):
+    from ashen.diagnostics.re_density import density_change
+
+    _restart(tmp_path / "jorek00000.h5")
+    a = read_re_density(tmp_path / "jorek00000.h5")
+    moved = type(a)(**{**a.__dict__, "R": a.R + 0.01})
+    with pytest.raises(ValueError, match="different grids"):
+        density_change(moved, a)
+
+
 def test_a_file_without_the_normalisation_says_so(tmp_path):
     with h5py.File(tmp_path / "jorek00000.h5", "w") as f:
         f["values"], f["x"] = np.zeros((8, 4, 1, 5)), np.zeros((2, 4, 1, 5))
@@ -128,6 +168,22 @@ def test_figure_shows_the_map_the_profile_and_what_was_lost(run):
     # the first restart against itself: no reference curve, no percentage
     first = viewer.re_density_figure(run, 0)
     assert "against" not in first._suptitle.get_text() and len(first.axes[1].collections) == 1
+    assert "first restart, nothing to compare with" in first._suptitle.get_text()
+
+
+def test_figure_says_how_much_the_density_changed_since_the_first_and_previous_restart(run):
+    from ashen import viewer
+
+    title = viewer.re_density_figure(run, 200)._suptitle.get_text()
+    assert "Change against the first restart, step 0: RMS 2.50e-01, peak 2.50e-01" in title
+    assert "n = 0 alone: RMS 2.50e-01, peak 2.50e-01" in title
+    assert "(the previous restart is the first one, step 0)" in title
+
+    _restart(run / "jorek00400.h5", index=400, lost=0.25)          # nothing changed since 200
+    lines = viewer.re_density_figure(run, 400)._suptitle.get_text().splitlines()
+    assert lines[1].startswith("Change against the first restart, step 0: RMS 2.50e-01")
+    assert lines[2] == ("Change against the previous restart, step 200: "
+                        "none, identical on every node and harmonic")
 
 
 def test_view_redraws_on_each_control_and_refuses_a_run_without_the_re_fluid(run):

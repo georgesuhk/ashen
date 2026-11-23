@@ -26,7 +26,7 @@ import numpy as np
 
 from ashen.physics import ELEMENTARY_CHARGE, MU_0
 
-__all__ = ["ReDensity", "read_re_density"]
+__all__ = ["DensityChange", "ReDensity", "density_change", "read_re_density"]
 
 _SPEED_OF_LIGHT = 299792458.0
 _ATOMIC_MASS_UNIT = 1.66053906660e-27
@@ -62,11 +62,7 @@ class ReDensity:
     def at(self, phi: float, *, perturbation: bool = False) -> np.ndarray:
         """n_RE on the nodes at toroidal angle ``phi`` (radians).
         ``perturbation``: the n > 0 part alone."""
-        out = np.zeros_like(self.n0) if perturbation else self.n0.copy()
-        for i in range(1, (self.harmonics.shape[0] - 1) // 2 + 1):
-            angle = i * self.n_period * phi
-            out += self.harmonics[2 * i - 1] * np.cos(angle) + self.harmonics[2 * i] * np.sin(angle)
-        return out
+        return _at(self.harmonics, self.n_period, phi, perturbation=perturbation)
 
     def mode_amplitudes(self) -> dict[int, float]:
         """{toroidal mode number n: largest amplitude of that mode on any
@@ -90,6 +86,90 @@ class ReDensity:
             (r[:, 1] - r[:, 0]) * (z[:, 2] - z[:, 0]) - (r[:, 2] - r[:, 0]) * (z[:, 1] - z[:, 0])
         )
         return float(ELEMENTARY_CHARGE * _SPEED_OF_LIGHT * (self.n0[t].mean(axis=1) * area).sum())
+
+
+def _at(harmonics: np.ndarray, n_period: int, phi: float, *, perturbation: bool = False) -> np.ndarray:
+    """The field the harmonics (JOREK's toroidal basis) give at ``phi``."""
+    out = np.zeros_like(harmonics[0]) if perturbation else harmonics[0].copy()
+    for i in range(1, (harmonics.shape[0] - 1) // 2 + 1):
+        angle = i * n_period * phi
+        out += harmonics[2 * i - 1] * np.cos(angle) + harmonics[2 * i] * np.sin(angle)
+    return out
+
+
+@dataclass(frozen=True)
+class DensityChange:
+    """How much n_RE differs between two restarts on the same grid, relative
+    to the reference restart. Zero only when the two are identical node for
+    node, every harmonic."""
+
+    #: JOREK's index_now of the reference restart.
+    reference_index: int
+    #: RMS of the difference over the torus (volume weighted, every
+    #: harmonic) / RMS of the reference density.
+    rms: float
+    #: Largest |difference| on any node at any of the sampled toroidal
+    #: angles / largest reference density there.
+    peak: float
+    #: The same two for the axisymmetric (n = 0) part alone.
+    rms_n0: float
+    peak_n0: float
+
+    @property
+    def identical(self) -> bool:
+        return self.rms == 0.0 and self.peak == 0.0
+
+
+def _node_volumes(d: ReDensity) -> np.ndarray:
+    """Each node's share of the volume per radian, R dA with each triangle's
+    area split equally between its three corners."""
+    t = d.triangles
+    r, z = d.R[t], d.Z[t]
+    area = 0.5 * np.abs((r[:, 1] - r[:, 0]) * (z[:, 2] - z[:, 0]) - (r[:, 2] - r[:, 0]) * (z[:, 1] - z[:, 0]))
+    out = np.zeros_like(d.R)
+    np.add.at(out, t.ravel(), np.repeat(area / 3.0, 3))
+    return out * d.R
+
+
+def density_change(now: ReDensity, ref: ReDensity, *, n_phi: int = 32) -> DensityChange:
+    """How much ``now``'s n_RE differs from ``ref``'s (DensityChange).
+
+    The RMS is exact for the toroidal basis: over a full turn the n = 0
+    part counts once and each cos/sin part half. The peak samples ``n_phi``
+    toroidal angles. Raises ValueError for two different grids.
+    """
+    if now.R.shape != ref.R.shape or not (np.allclose(now.R, ref.R) and np.allclose(now.Z, ref.Z)):
+        raise ValueError(
+            f"steps {now.index} and {ref.index} are on different grids: their densities cannot be "
+            "compared node for node"
+        )
+    size = max(now.harmonics.shape[0], ref.harmonics.shape[0])
+
+    def padded(h):
+        return np.vstack([h, np.zeros((size - h.shape[0], h.shape[1]))])
+
+    a, b = padded(now.harmonics), padded(ref.harmonics)
+    diff = a - b
+    weights = _node_volumes(ref)
+    mode_weight = np.r_[1.0, np.full(size - 1, 0.5)][:, None]
+
+    def rms(h):
+        return float(np.sqrt((mode_weight * h**2 * weights).sum() / weights.sum()))
+
+    def ratio(x, y):
+        return 0.0 if x == 0.0 else (x / y if y > 0.0 else float("inf"))
+
+    phis = np.linspace(0.0, 2 * np.pi, n_phi, endpoint=False)
+    diff_peak = max(float(np.abs(_at(diff, ref.n_period, p)).max()) for p in phis)
+    ref_peak = max(float(np.abs(_at(b, ref.n_period, p)).max()) for p in phis)
+    d0 = diff[:1]
+    return DensityChange(
+        reference_index=ref.index,
+        rms=ratio(rms(diff), rms(b)),
+        peak=ratio(diff_peak, ref_peak),
+        rms_n0=ratio(rms(d0), rms(b[:1])),
+        peak_n0=ratio(float(np.abs(d0).max()), float(np.abs(b[0]).max())),
+    )
 
 
 def read_re_density(path: Path | str) -> ReDensity:
