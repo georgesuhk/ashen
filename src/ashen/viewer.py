@@ -763,7 +763,7 @@ def re_density_figure(
     """
     from matplotlib.tri import Triangulation
 
-    from ashen.diagnostics.re_density import read_re_density
+    from ashen.diagnostics.re_density import read_re_density, sample_nodes
 
     plt = _plt()
     paths = _paths(run_dir)
@@ -816,18 +816,27 @@ def re_density_figure(
     when = "" if not np.isfinite(now.time) else f", t = {now.time * 1e3:.4g} ms"
     _style(ax_map, "R [m]", "Z [m]", rf"Runaway density at $\phi$ = {phi:g}°, step {step}{when}")
 
+    # the map's field along the horizontal line through the magnetic axis
+    z_cut = float(now.Z[axis])
+    r_cut = np.linspace(float(now.R.min()), float(now.R.max()), 400)
+    own = scale if not perturbation else own
     if ref is not now:
-        _, ref_psi_n = _node_psi_n(ref.psi, ref.zj)
-        ax_n.scatter(ref_psi_n, ref.n0 / scale, s=3, color=_GREY, alpha=0.6, linewidths=0,
-                     label=f"step {reference_step}")
-    ax_n.scatter(psi_n, now.n0 / scale, s=3, color=_RED, alpha=0.7, linewidths=0,
-                 label=f"step {step}")
-    ax_n.set_xlim(0, 1)
+        ref_field = ref.at(np.deg2rad(phi), perturbation=perturbation)
+        ax_n.plot(r_cut, sample_nodes(ref.R, ref.Z, ref.triangles, ref_field, r_cut, np.full_like(r_cut, z_cut))
+                  / own, color=_GREY, lw=1.2, label=f"step {reference_step}")
+    ax_n.plot(r_cut, sample_nodes(now.R, now.Z, now.triangles, field, r_cut, np.full_like(r_cut, z_cut)) / own,
+              color=_RED, lw=1.6, label=f"step {step}")
+    ax_n.axvline(float(now.R[axis]), color=_INK, lw=0.8, ls=":")
     if edge < 1.0:
-        ax_n.axvline(edge, color=_GREY, lw=1, ls="--")
-    ax_n.legend(frameon=False, labelcolor=_INK, fontsize=8, markerscale=3)
-    _style(ax_n, r"$\psi_N$ (JOREK grid)", rf"$n_{{RE}}$, n = 0 [{unit}]",
-           "Axisymmetric runaway density on the nodes")
+        psi_cut = sample_nodes(now.R, now.Z, now.triangles, psi_n, r_cut, np.full_like(r_cut, z_cut))
+        side = np.sign(psi_cut - edge)
+        crossing = np.flatnonzero((side[:-1] * side[1:] < 0) & np.isfinite(side[:-1] * side[1:]))
+        for i in crossing:
+            ax_n.axvline(r_cut[i], color=_GREY, lw=1, ls="--")
+    if perturbation:
+        ax_n.axhline(0.0, color=_GREY, lw=0.6)
+    ax_n.legend(frameon=False, labelcolor=_INK, fontsize=8)
+    _style(ax_n, "R [m]", label, rf"Through the axis: Z = {z_cut:.3f} m, $\phi$ = {phi:g}°")
 
     modes = now.mode_amplitudes()
     shown = {n: a for n, a in modes.items() if a > 0.0}
